@@ -50,14 +50,14 @@ async function phone(browser, port, z, lang) {
 async function pc(browser, port, z, lang) {
   const L = (s) => `[${lang}-pc] ${s}`; const { page: p, errors } = await F.open(browser, { lang, pc: true, z });
   const where = async () => { const h = await p.evaluate(() => location.hash); const m = /[?&]p=([^&]*)/.exec(h); return m ? decodeURIComponent(m[1]) : h; };
-  const tap = async (name) => { await p.locator(`.files-row:has(.files-name[title="${name}"]) .files-main`).first().click(); await p.waitForTimeout(500); };
+  const tap = async (name) => { await p.locator(`.files-row:has(.files-name[title="${name}"])`).first().dispatchEvent('dblclick'); await p.waitForTimeout(500); }; // (a computer: a double-click opens)
   await p.goto(`http://localhost:${port}/#/files?p=${encodeURIComponent(K)}`); await p.waitForSelector('.files-row'); await p.waitForTimeout(500);
   await tap('Sub'); await tap('Deeper'); await tap('deep.txt').catch(() => undefined); await p.keyboard.press('Escape'); await p.waitForTimeout(300); if (await p.$('.sheet')) { await p.click('.sheet .sheet-head button'); await p.waitForTimeout(300); }
   await p.goBack(); await p.waitForTimeout(500); ok(L('the browser\'s Back: the folder before'), (await where()) === `${K}/Sub`, await where());
   await p.goBack(); await p.waitForTimeout(500); ok(L('…and the one before it'), (await where()) === K, await where());
   await p.goForward(); await p.waitForTimeout(500); ok(L('Forward: into the folder again'), (await where()) === `${K}/Sub`, await where());
   await p.keyboard.press('Alt+ArrowLeft'); await p.waitForTimeout(500); ok(L('Alt+←: up a folder'), (await where()) === K, await where());
-  await tap(ZIP); await p.click('.files-view .files-back'); await p.waitForTimeout(500); ok(L('the arrow from a zip\'s top: the folder holding it'), (await where()) === K, await where());
+  await tap(ZIP); await p.click('.files-view .pcx-bar button.pcx-up, .files-view .pcx-bar button[data-icon="arrowUp"]'); await p.waitForTimeout(500); ok(L('the arrow from a zip\'s top: the folder holding it'), (await where()) === K, await where());
   const errs = errors.filter((e) => !/favicon/.test(e)); ok(L('no page errors'), !errs.length, errs);
   await p.close();
 }

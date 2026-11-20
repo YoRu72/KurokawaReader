@@ -236,7 +236,7 @@ const dayOf = (ms: number): string => { const d = new Date(ms); const now = new 
 
 /** A pane of the Files page: its own place, selection and history. Standing alone it writes where it is into the
  *  address; embedded (two panes) it keeps quiet and tells the other pane through `peer`. */
-export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void; /** The view (list or grid) changed: button and rows redrawn in place. */ restyle: () => void };
+export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void; /** The view (list or grid) changed: button and rows redrawn in place. */ restyle: () => void; /** A computer's keyboard focus moved here from the other pane (F6, Tab). */ focusPc?: () => void };
 /** Another app's «pick a file» (views/pick.ts): the page as a picker — files of the kind asked chosen, folders walked. */
 export type PickMode = { req: PickRequest; done: (paths: string[]) => void; cancel: () => void };
 type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null; pick?: PickMode; /** Opened by another app («Open with»): its folders walked inside the page; Back at `start` hands back to that app. */ handedIn?: { start: string; leave: () => void } };
@@ -256,6 +256,8 @@ export function filesView(route: { p?: string; save?: string; c?: string }): HTM
 export function filesPane(route: { p?: string; save?: string; c?: string }, po: PaneOpts = {}): Pane {
   // (A picker, like a pane beside another, keeps the address as it is: its folders are walked inside the page.)
   const pk = po.pick; const quiet = !!po.embedded || !!pk || !!po.handedIn;
+  // (A computer's file manager — details list, navigation pane, address bar, status bar, keys — in views/filesPc.ts, loaded on the first folder shown there.)
+  let pcm: typeof import('./filesPc') | null = null; let pcCtl: import('./filesPc').PcCtl | null = null;
   const body = h('div', { class: 'files-body' }); const sizeNote = h('p', { class: 'hint files-sizenote', hidden: true });
   const crumbs = h('div', { class: 'files-crumbs', dir: 'ltr' }); const rootsRow = h('div', { class: 'chip-row files-roots' }); const kindRow = h('div', { class: 'chip-row files-kinds' });
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
@@ -412,9 +414,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const load = async () => {
     const my = ++loadSeq; const want = collection ? `c:${collection}` : at; const stale = () => gone || my !== loadSeq; const first = firstLoad; firstLoad = false;
+    if (!pcm && !phoneNow() && !pk && !po.handedIn) { try { pcm = await import('./filesPc'); } catch { /* the plain list */ } if (stale()) return; }
+    if (pcm && !pcCtl && !phoneNow() && !pk && !po.handedIn) pcCtl = pcm.mount(pcHost());
     if (want !== shownAt) { entries = []; picked.clear(); selecting = false; shownAt = want; }
     sortOver = collection || !phoneNow() ? null : sortFor(at); if (!collection && !pk && !isVirtual(at)) noteRecent(at);
-    try { drawCrumbs(); } catch { /* the way here is drawn again next time */ }
+    try { drawCrumbs(); pcCtl?.at(at); } catch { /* the way here is drawn again next time */ }
     void checkWritable(); drawPaste(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection || isArc(at);
     const still = window.setTimeout(() => { if (!stale()) listEl.replaceChildren(stateCard('still')); }, STILL_MS);
     let got: Entry[] = []; let note = ''; let missing = false;
@@ -435,7 +439,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (!quiet && !collection && !missing) keepResume(po.side === 'b' ? { b: at } : { at, y });
     if (y) requestAnimationFrame(() => { if (stale()) return; window.scrollTo(0, y); body.scrollTop = y; });
   };
-  const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || fold(e.name).includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
+  const shown = (): Entry[] => { if (pcCtl) sortOver = pcCtl.sortSet(); const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || fold(e.name).includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
   // ---- columns of the grid and the gallery: pinched (phone) or Ctrl + wheel (computer), kept per view and kind of folder
   let mediaFolder = false;
   const colKey = () => `${prefs.view}:${mediaFolder ? 'media' : 'plain'}`;
@@ -511,7 +515,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     }).catch(() => undefined);
   };
   /** A phone's list: «..» first when there is a folder above — its own row, in no selection, sort or count. */
-  const upRow = (): HTMLElement[] => { syncBack(); const up = collection || !phoneNow() || prefs.view !== 'list' ? null : upOf(at); return up ? [h('div', { class: 'files-uprow', role: 'button', tabindex: '0', 'aria-label': t('filesUpRow'), onclick: () => { if (!selecting) goUp(up); } }, h('span', { class: 'files-ic' }, folderIcon('', true)), h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'ltr' }, '..')))] : []; };
+  const upRow = (): HTMLElement[] => [...(pcCtl?.details() ? [pcCtl.header()] : []), ...upRow0()];
+  const upRow0 = (): HTMLElement[] => { syncBack(); const up = collection || !phoneNow() || prefs.view !== 'list' ? null : upOf(at); return up ? [h('div', { class: 'files-uprow', role: 'button', tabindex: '0', 'aria-label': t('filesUpRow'), onclick: () => { if (!selecting) goUp(up); } }, h('span', { class: 'files-ic' }, folderIcon('', true)), h('span', { class: 'grow files-main' }, h('span', { class: 'files-name', dir: 'ltr' }, '..')))] : []; };
   let moreIo: IntersectionObserver | null = null; let chunkIo: IntersectionObserver | null = null;
   // ---- child counts of folders, asked for on demand: only the folder rows on screen (and one screenful ahead), in batches
   // of 64, after the first paint; a folder left asks no more; answers are kept (cntCache), so coming back shows them at once.
@@ -544,7 +549,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const emptyBox = (): HTMLElement => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 96 72'); svg.setAttribute('aria-hidden', 'true'); svg.innerHTML = '<path d="M14 26 48 10l34 16v34L48 68 14 60z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M14 26l34 16 34-16M48 42v26" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>';
     return h('div', { class: 'files-empty empty', role: 'status' }, svg, h('b', null, t('fmEmpty')), h('div', { class: 'files-empty-btns' }, ...(isArc(at) || isVirtual(at) ? [] : [h('button', { type: 'button', class: 'btn tonal', onclick: () => newFolderSheet() }, icon('folderPlus'), t('newFolder'))]), ...(canPaste() ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => void paste() }, icon('copy'), t('filesPaste'))] : []))); };
   const draw = (minPx = 0, ensure = '') => {
-    const list = shown(); { const on = !search.hidden && phoneNow() && !pk; searchMeta.hidden = !on; if (on) { countEl.textContent = t('fmOf', { n: localDigits(list.length), m: localDigits(entries.length) }); clearBtn.hidden = !search.value; } else if (subSw.checked) { subSw.checked = false; runSub(); } } listEl.className = `files-list ${prefs.view === 'gallery' ? 'grid gallery' : prefs.view}${forcedCols(list) ? ' cols' : ''}${prefs.density === 'compact' ? ' compact' : ''}${denseNow() ? ' dense' : ''}${prefs.textSize ? ` ts-${prefs.textSize}` : ''}`; root.classList.toggle('eink', !!prefs.eink);
+    const list = shown(); pcCtl?.sync(list); { const on = !search.hidden && phoneNow() && !pk; searchMeta.hidden = !on; if (on) { countEl.textContent = t('fmOf', { n: localDigits(list.length), m: localDigits(entries.length) }); clearBtn.hidden = !search.value; } else if (subSw.checked) { subSw.checked = false; runSub(); } } listEl.className = `files-list ${prefs.view === 'gallery' ? 'grid gallery' : prefs.view}${forcedCols(list) ? ' cols' : ''}${prefs.density === 'compact' ? ' compact' : ''}${denseNow() ? ' dense' : ''}${prefs.textSize ? ` ts-${prefs.textSize}` : ''}`; root.classList.toggle('eink', !!prefs.eink);
     moreIo?.disconnect(); moreIo = null; chunkIo?.disconnect(); chunkIo = null; dropThumbs(listEl); rowEls.clear(); cntReset();
     paintSizeNote(list);
     if (!list.length) { fastList = []; syncFast(); subEl.textContent = ''; listEl.replaceChildren(...upRow(), query || !phoneNow() || collection || entries.length || pk ? h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty')) : emptyBox()); return; }
@@ -627,6 +632,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       if (canThumb && prefs.thumbs !== false) thumbInto(ic, e);
       return pr;
     }
+    if (pcCtl?.details()) { const pr = pcCtl.row(e, ic); rowEls.set(e.path, { el: pr, e }); return pr; }
     const el = h('div', { class: 'files-row' + (picked.has(e.path) ? ' picked' : '') + (e.hidden ? ' hidden-file' : ''), role: 'button', tabindex: '0', 'data-p': e.path, onclick: () => { if (selecting) { toggle(e); return; } void open(e); } },
       ic, h('span', { class: 'grow files-main' }, nameEl(e.name, e.dir), h('small', { class: waitCnt ? 'src cnt-wait' : 'src' }, ...metaNodes(metaD))),
       trail(e)); rowEls.set(e.path, { el, e });
@@ -655,10 +661,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const reorder = () => { orderOf = new Map(); let i = 0; for (const p of picked) orderOf.set(p, ++i); };
   const trail = (e: Entry): HTMLElement => { if (denseNow()) return h('span', { class: 'files-date' }, formatRowDate(e.mtime)); if (!selecting) return iconButton('more', t('more'), (ev) => { ev.stopPropagation(); itemSheet(e, ev); }); const on = picked.has(e.path); const n = orderOf.get(e.path); return on && picked.size > 1 && n ? h('span', { class: 'files-check order', 'data-on': 'true', 'data-n': String(n), 'aria-label': t('btPicked', { n: localDigits(n) }) }, localDigits(n)) : h('span', { class: 'files-check', 'data-on': String(on) }, icon(on ? 'check' : 'circle')); };
   const applySel = () => {
-    reorder();
+    reorder(); pcCtl?.sel();
     for (const [p, { el, e }] of rowEls) {
       if (!el.isConnected) { rowEls.delete(p); continue; }
-      const on = picked.has(p); el.classList.toggle('picked', on); if (denseNow()) continue; // (a phone's compact row: its date stays, the icon becomes the tick)
+      const on = picked.has(p); el.classList.toggle('picked', on); if (denseNow() || el.classList.contains('d-row')) continue; // (a phone's compact row: its date stays, the icon becomes the tick)
       const last = el.lastElementChild as HTMLElement | null; const wasCheck = !!last?.classList.contains('files-check');
       if (wasCheck !== selecting || (selecting && (last?.dataset.on !== String(on) || (last?.dataset.n ?? '') !== (on && picked.size > 1 ? String(orderOf.get(p)) : '')))) last?.replaceWith(trail(e));
     }
@@ -963,7 +969,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   const sortSheet = () => {
     const sh = openSheet(t('sortBy'), t('close'));
-    const opt = (key: Prefs['sort'], label: string) => h('button', { type: 'button', class: 'dest-row' + (prefs.sort === key ? ' on' : ''), onclick: () => { if (prefs.sort === key) prefs.desc = !prefs.desc; else { prefs.sort = key; prefs.desc = false; } savePrefs(); sh.close(); draw(); } }, icon(prefs.sort === key ? (prefs.desc ? 'arrowDown' : 'arrowUp') : 'circle'), h('span', { class: 'name' }, label));
+    const opt = (key: Prefs['sort'], label: string) => h('button', { type: 'button', class: 'dest-row' + (prefs.sort === key ? ' on' : ''), onclick: () => { if (prefs.sort === key) prefs.desc = !prefs.desc; else { prefs.sort = key; prefs.desc = false; } savePrefs(); pcCtl?.adopt(); sh.close(); draw(); } }, icon(prefs.sort === key ? (prefs.desc ? 'arrowDown' : 'arrowUp') : 'circle'), h('span', { class: 'name' }, label));
     sh.body.append(h('div', { class: 'dest-list' }, opt('name', t('sortName')), opt('date', t('sortDate')), opt('size', t('sortSize')), opt('type', t('sortType'))), h('p', { class: 'hint' }, t('filesSortHint')));
   };
   // (A phone's ⋮: one sheet — View, Sort, Show, This folder, Tools — built in views/filesMenu.ts; what it opens is this page's own.)
@@ -1427,6 +1433,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (po.peer?.() && !root.contains(document.activeElement) && !root.matches(':hover')) return;
     const mod = ev.ctrlKey || ev.metaKey; const k = ev.key.toLowerCase();
     const one = picked.size === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
+    if (pcCtl?.key(ev)) return;
     if (mod && k === 'a') { ev.preventDefault(); selecting = true; for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }
     else if (mod && (k === 'c' || k === 'x') && picked.size && canJobs()) { ev.preventDefault(); copyPicked(k === 'c' ? 'copy' : 'move'); }
     else if (mod && k === 'v' && clipboard && canJobs()) { ev.preventDefault(); void paste(); }
@@ -1444,8 +1451,25 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
-  const pane = root as unknown as Pane;
+  root.dispose = () => { pcCtl?.dispose(); keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  /** What the computer's file manager (views/filesPc.ts) may reach of this pane. */
+  const pcHost = (): import('./filesPc').PcHost => ({
+    root, body, listEl, side: po.side, dual: !!po.embedded, peer: () => po.peer?.() ?? null,
+    at: () => at, go: (p, how = 'push') => go(p, how), goUp: () => { const up = upOf(at); if (up) goUp(up); }, upOf: () => (collection ? null : upOf(at)), load: () => void load(), roots: () => roots,
+    shown, entries: () => entries, picked, setSel: (ps) => { picked.clear(); for (const x of ps) picked.add(x); selecting = picked.size > 0; applySel(); drawSel(); },
+    open: (e) => void open(e), itemMenu: (e, ev) => itemSheet(e, ev), rowOf: (p) => rowEls.get(p)?.el, redraw: () => draw(window.scrollY),
+    ensure: (p) => { let el = rowEls.get(p)?.el; if (!el?.isConnected) { draw(0, p); el = rowEls.get(p)?.el; } el?.scrollIntoView({ block: 'nearest' }); el?.focus({ preventScroll: true }); },
+    listDir: async (p) => { const r = await listDir(p); return { exists: r.exists, entries: sane(r.entries) }; },
+    stat: async (p) => { const fx = fsx(); if (!fx || isVirtual(p)) return null; try { const r = await fx.filesStat({ path: p }); return { exists: r.exists !== false, dir: !!r.dir }; } catch { return null; } },
+    rename: async (dir, from, to) => { await renameOne(dir, from, to); }, err: fsErr,
+    del: (ps) => void confirmDelete(ps),
+    forever: (ps) => { if (ps.some(isArc)) { toast(t('arcReadOnly'), 'info'); return; } const sh = openSheet(t('delete'), t('cancel')); sh.body.append(h('p', null, t('filesDeleteAsk', { n: localDigits(ps.length) })), h('p', { class: 'hint', dir: 'auto' }, ps.slice(0, 5).map(baseOf).join(' · ') + (ps.length > 5 ? ' …' : '')));
+      sh.actions.append(h('button', { type: 'button', class: 'btn primary danger', onclick: () => { sh.close(); leaveSel(); void startJob('delete', ps); } }, icon('trash'), t('filesDeleteForever'))); },
+    paste: () => void paste(), hasClip: () => canPaste(), newFolder: () => newFolderSheet(), props: (e) => void propertiesSheet(e),
+    filterShut: () => { if (search.hidden) return false; search.value = ''; query = ''; search.hidden = true; draw(); return true; },
+    setView: (v) => { prefs.view = v; savePrefs(); applyView(); po.peer?.()?.restyle(); },
+  });
+  const pane = root as unknown as Pane; pane.focusPc = () => pcCtl?.focus();
   pane.pathNow = () => at; pane.reload = () => { if (!gone) draw(); }; pane.restyle = () => { if (!gone) applyView(); };
   pane.dropIn = async (op, paths) => { if (!at || collection) { toast(t('filesNoStorage'), 'error'); return; } if (isArc(at)) { toast(t('arcNoPaste'), 'error'); return; } if (intoItself(paths, at)) { toast(t('filesIntoItself'), 'error'); return; } await startJob(paths.every(isArc) ? 'copy' : op, paths.filter((p) => parentOf(p) !== at), at); };
   if (po.embedded) {

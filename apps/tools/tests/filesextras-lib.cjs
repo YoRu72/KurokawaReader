@@ -21,7 +21,7 @@ async function page(browser, port, z, lang, o = {}) {
   return { p, errors };
 }
 const rowOf = (p, name) => p.locator('.files-row', { has: p.locator(`.files-name[title="${name}"]`) });
-const menu = async (p, name) => { await rowOf(p, name).locator('button.icon-btn[data-icon="more"]').click(); await p.waitForSelector('.sheet .dest-row'); };
+const menu = async (p, name) => { const more = rowOf(p, name).locator('button.icon-btn[data-icon="more"]'); if (await more.count()) await more.click(); else await rowOf(p, name).click({ button: 'right' }); await p.waitForSelector('.sheet .dest-row'); }; // (a computer's details row has no ⋮: the right-click opens the same sheet)
 const meta = (p, name) => rowOf(p, name).locator('.src').first().textContent();
 
 /** Copy or cut `names` from the folder now open, then open `dest` and paste. */

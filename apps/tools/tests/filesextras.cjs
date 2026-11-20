@@ -181,7 +181,7 @@ async function gallery(browser, port, z, lang) {
   // a computer: Ctrl + wheel in the grid
   const pc = await page(browser, port, z, lang, { at: K + '/Pics', seed: SEED_PICS, pc: true });
   await pc.p.click(btn); await pc.p.waitForTimeout(500); const g0 = await colsOf(pc.p);
-  await pc.p.mouse.move(500, 400); await pc.p.keyboard.down('Control'); await pc.p.mouse.wheel(0, 120); await pc.p.waitForTimeout(400); await pc.p.keyboard.up('Control'); const g1 = await colsOf(pc.p);
+  const lb = await pc.p.locator('.files-list').boundingBox(); await pc.p.mouse.move(lb.x + 120, lb.y + 80); await pc.p.keyboard.down('Control'); await pc.p.mouse.wheel(0, 120); await pc.p.waitForTimeout(400); await pc.p.keyboard.up('Control'); const g1 = await colsOf(pc.p);
   ok(L(`PC: Ctrl + wheel changes the columns in the grid (${g0} -> ${g1})`), g1 === g0 + 1, [g0, g1]);
   await pc.p.close();
 }
@@ -315,7 +315,7 @@ async function verify(browser, port, z, lang) {
   { const { p, errors } = await mk(); await p.evaluate(() => { window.__badNames = ['photo.jpg']; });
     await rowOf(p, 'Song.mp3').locator('.files-main').click({ delay: 800 }); await p.waitForTimeout(300);
     await p.touchscreen.tap(...await rowOf(p, 'photo.jpg').boundingBox().then((b) => [b.x + b.width / 2, b.y + b.height / 2])); await p.waitForTimeout(300);
-    await p.locator('.files-selbar .icon-btn[data-icon="scissors"]').click(); await p.waitForTimeout(250);
+    await p.locator('.files-selbar button[data-icon="scissors"]').click(); await p.waitForTimeout(250);
     await p.evaluate((d) => { location.hash = '#/files?p=' + encodeURIComponent(d); }, SD); await p.waitForSelector('.files-clip-paste:not([disabled])'); await p.click('.files-clip-paste'); await p.waitForSelector('.sheet .files-failed', { timeout: 8000 });
     ok(L('mismatch: the good file moved (copy there, original gone)'), (await treeHas(p, SD + '/Song.mp3')) && !(await treeHas(p, K + '/Song.mp3')));
     ok(L('mismatch: the differing copy is not at the destination; its original stays'), !(await treeHas(p, SD + '/photo.jpg')) && (await treeHas(p, K + '/photo.jpg')));
@@ -378,7 +378,7 @@ async function compare(browser, port, z, lang) {
   // one file picked: no Compare
   const r0 = await rowOf(p, 'a.txt').boundingBox(); await hold(cdp, r0.x + r0.width / 2, r0.y + r0.height / 2); await p.waitForTimeout(300);
   ok(L('one file picked: Compare is not offered'), (await p.locator('.files-selbar [data-icon="columns"]').count()) === 0);
-  await p.click('.files-selbar [data-icon="close"]').catch(() => undefined); await p.waitForTimeout(300);
+  await p.click('.files-selhead [data-icon="close"]').catch(() => undefined); await p.waitForTimeout(300);
   await pickTwo('a1.bin', 'a2.bin'); ok(L('identical files (2.5 MB, several chunks): said identical'), sameRe.test(await verdict()), await verdict());
   const reads = await p.evaluate(() => 0); void reads; await closeSheet();
   await pickTwo('a1.bin', 'a3.bin'); ok(L('same size, one byte differs: different, and where'), diffRe.test(await verdict()) && /1600000|1[,٬]?600[,٬]?000|١٦٠٠٠٠٠/.test(await verdict()), await verdict()); await closeSheet();

@@ -98,16 +98,16 @@ function fakeTauri({ lang, slow }) {
     await page.waitForSelector('.sheet', { timeout: 3000 }); await page.click(`.sheet button:has-text("${T.newFolder}")`); await page.waitForTimeout(250);
     await page.fill('.sheet input', 'Fresh'); await page.click(`.sheet button:has-text("${T.create}")`); await page.waitForTimeout(500);
     ok(L('New folder: made through filesMkdir, listed'), (await tree()).includes('/home/u/src/Fresh') && await row('Fresh').count() === 1, await tree());
-    await hold('Fresh'); await page.keyboard.press('F2'); await page.waitForSelector('.sheet input', { timeout: 3000 });
-    await page.fill('.sheet input', 'Renamed'); await page.click(`.sheet button.primary:has-text("${T.rename}")`); await page.waitForTimeout(500);
+    await hold('Fresh'); await page.keyboard.press('F2'); await page.waitForSelector('.pcx-rename', { timeout: 3000 });
+    await page.fill('.pcx-rename', 'Renamed'); await page.keyboard.press('Enter'); await page.waitForTimeout(500);
     ok(L('F2 → Rename: through filesRename, listed under its new name'), (await tree()).includes('/home/u/src/Renamed') && !(await tree()).includes('/home/u/src/Fresh') && await row('Renamed').count() === 1, await tree());
-    await hold('Renamed'); await page.keyboard.press('F2'); await page.waitForSelector('.sheet input', { timeout: 3000 });
-    await page.fill('.sheet input', 'a.txt'); await page.click(`.sheet button.primary:has-text("${T.rename}")`); await page.waitForTimeout(400);
+    await hold('Renamed'); await page.keyboard.press('F2'); await page.waitForSelector('.pcx-rename', { timeout: 3000 });
+    await page.fill('.pcx-rename', 'a.txt'); await page.keyboard.press('Enter'); await page.waitForTimeout(400);
     const taken = await page.evaluate(() => [...document.querySelectorAll('.toast')].map((x) => x.textContent).join(' '));
     ok(L('a name taken: said so, nothing renamed'), taken.includes(T.filesNameTaken) && (await tree()).includes('/home/u/src/Renamed'), taken);
     await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.keyboard.press('Escape'); await page.waitForTimeout(150);
     // properties of a file: through filesStat (shallow), its access said
-    await page.locator('.files-row:has(.files-name[title="a.txt"]) button[data-icon="more"]').first().click(); await page.waitForSelector('.sheet', { timeout: 3000 });
+    await row('a.txt').click({ button: 'right' }); await page.waitForSelector('.sheet', { timeout: 3000 });
     await page.click(`.sheet button:has-text("${T.properties}")`); await page.waitForTimeout(500);
     const props = await page.evaluate(() => document.querySelector('.files-props')?.textContent ?? '');
     ok(L('Properties: from filesStat — its access (writable)'), props.includes(T.filesWritable) && (await page.evaluate(() => window.__calls.includes('kt_files_stat'))), props.slice(0, 200));
@@ -151,7 +151,7 @@ function fakeTauri({ lang, slow }) {
     // archives (stage P7): an archive's own sheet offers Extract here / to and Compress; walked into as a folder; an
     // entry copied out the phone's way — into a hidden folder at the destination, moved in by a job, the folder gone
     await goTo('/home/u/src');
-    await page.locator('.files-row:has(.files-name[title="pack.zip"]) button[data-icon="more"]').first().click(); await page.waitForSelector('.sheet', { timeout: 3000 });
+    await row('pack.zip').click({ button: 'right' }); await page.waitForSelector('.sheet', { timeout: 3000 });
     const arcSheet = await page.evaluate(() => document.querySelector('.sheet')?.textContent ?? '');
     ok(L('an archive\'s sheet: Extract here, Extract to…, Compress (the Tauri shell has the archives)'), arcSheet.includes(T.extractHere) && arcSheet.includes(T.extractTo) && arcSheet.includes(T.filesCompress), arcSheet.slice(0, 200));
     await page.click(`.sheet button:has-text("${T.extractHere}")`); await page.waitForTimeout(600);
@@ -163,7 +163,7 @@ function fakeTauri({ lang, slow }) {
     t = await tree(); const ex = await page.evaluate(() => window.__extracts[window.__extracts.length - 1]);
     ok(L('Paste of an archive\'s entry: taken out (only it) into a hidden «.kurokawa-extract-*» folder there, moved in, the folder removed'), t.includes('/home/u/dst/two.txt') && /^\/home\/u\/dst\/\.kurokawa-extract-/.test(ex.dest) && JSON.stringify(ex.only) === '["two.txt"]' && !t.some((k) => k.includes('.kurokawa-extract-')), { t, ex });
     // compress: a zip made of the chosen
-    await goTo('/home/u/src'); await page.locator('.files-row:has(.files-name[title="a.txt"]) button[data-icon="more"]').first().click(); await page.waitForSelector('.sheet', { timeout: 3000 });
+    await goTo('/home/u/src'); await row('a.txt').click({ button: 'right' }); await page.waitForSelector('.sheet', { timeout: 3000 });
     await page.click(`.sheet button:has-text("${T.filesCompress}")`); await page.waitForTimeout(300);
     const fmts = await page.evaluate(() => document.querySelector('.sheet')?.textContent ?? '');
     const pwShown = await page.evaluate(() => [...document.querySelectorAll('.sheet input[type=password]')].some((e) => e.offsetParent !== null));
@@ -173,7 +173,7 @@ function fakeTauri({ lang, slow }) {
     // «Extract to…» → the engine's pre-flight; done → Undo sends the job's act; an unfinished job on the shelf → Finish
     await goTo('/home/u/src');
     ok(L('the shelf of unfinished extractions asked at start (kt_archive_shelf, atStart)'), await page.waitForFunction(() => (window.__shelfAsks || []).some((o) => o && o.atStart === true), null, { timeout: 8000 }).then(() => true).catch(() => false));
-    await page.locator('.files-row:has(.files-name[title="pack.zip"]) button[data-icon="more"]').first().click(); await page.waitForSelector('.sheet', { timeout: 3000 });
+    await row('pack.zip').click({ button: 'right' }); await page.waitForSelector('.sheet', { timeout: 3000 });
     await page.click(`.sheet button:has-text("${T.extractTo}")`);
     const pf = await page.waitForFunction(() => window.__pf, null, { timeout: 8000 }).then((h) => h.jsonValue()).catch(() => null);
     ok(L('«Extract to…»: the engine\'s pre-flight asked for this archive and folder (kt_archive_preflight)'), !!pf && pf.path === '/home/u/src/pack.zip' && typeof pf.dest === 'string' && pf.dest.startsWith('/home/u/src'), pf);
@@ -208,7 +208,7 @@ function fakeTauri({ lang, slow }) {
   ok('[electron] no Copy / Cut in the selection, no clipboard bar after Ctrl+C', await page.locator('.files-selbar button[data-icon="copy"]').count() === 0 && await page.locator('.files-selbar button[data-icon="scissors"]').count() === 0 && await page.evaluate(() => { const b = document.querySelector('.files-clipbar'); return !b || b.hidden; }));
   ok('[electron] no storages listed and no New folder there (its shell has neither)', await page.locator('.files-roots .chip').count() === 0);
   await page.keyboard.press('Escape'); await page.waitForTimeout(150);
-  await page.locator('.files-row button[data-icon="more"]').first().click(); await page.waitForSelector('.sheet', { timeout: 3000 });
+  await page.locator('.files-row').first().click({ button: 'right' }); await page.waitForSelector('.sheet', { timeout: 3000 });
   const eSheet = await page.evaluate(() => document.querySelector('.sheet')?.textContent ?? '');
   ok('[electron] the Files page as it was: no Extract here / Compress offered there', !eSheet.includes('Beside the archive') && !eSheet.includes('Compress') && eSheet.includes('Properties'), eSheet.slice(0, 160));
   ok('[electron] no page errors', !errors.length, errors);
