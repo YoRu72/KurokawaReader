@@ -60,14 +60,14 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('the app folder is listed, folders first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,app.apk,Movie.mkv,notes.txt,pack.zip,photo.jpg,Song.mp3', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(','));
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-list.png' });
   // sort by size, turned round
-  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Sort by")'); await p.waitForTimeout(300); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200); await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Sort by")'); await p.waitForTimeout(300); await p.click('.sheet .dest-row:nth-child(3)'); await p.waitForTimeout(200);
+  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet.files-menu'); await p.click('.files-menu [data-seg="sort"] [data-v="size"]'); await p.waitForTimeout(200); await p.click('.files-menu [data-seg="sort"] [data-v="size"]'); await p.waitForTimeout(200); await p.keyboard.press('Escape'); await p.waitForTimeout(300);
   ok('sorted by size, biggest first', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).slice(0, 2).join(',') === 'Sub,Movie.mkv');
   // kind filter
   await p.click('.files-kinds .chip:nth-child(3)'); await p.waitForTimeout(150);
   ok('the Music chip keeps the song (and folders)', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Sub,Song.mp3');
   await p.click('.files-kinds .chip:nth-child(1)'); await p.waitForTimeout(150);
   // search within
-  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet'); await p.click('.sheet .dest-row:has-text("Filter this folder")'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
+  await p.click('.topbar-actions [data-icon="search"]'); await p.fill('.files-search', 'mo'); await p.waitForTimeout(150);
   ok('the search narrows', (await p.$$eval('.files-row .files-name', (e) => e.map((x) => x.textContent))).join(',') === 'Movie.mkv');
   await p.fill('.files-search', ''); await p.waitForTimeout(150);
   // open a text file: the quick look
@@ -116,7 +116,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok('recent files in day sections', (await p.$$eval('.files-section', (e) => e.map((x) => x.textContent)))[0] === 'Today' && (await p.$$('.files-section')).length === 2 && (await p.textContent('.files-sub')).includes('2 files'));
   await p.screenshot({ path: '/tmp/claude-0/-home-claude/31db5f1c-a6c2-54e2-a5c4-2730cae2d727/scratchpad/files-recent.png' });
   // the analyzer
-  await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.click('.files-drawer .files-drawer-row:has-text("Storage analyzer")'); await p.click('.sheet:not(.files-drawer) .dest-row:has-text("Internal storage")'); await p.waitForSelector('.files-an-tabs'); await p.waitForTimeout(300);
+  await p.click('.topbar-actions [data-icon="more"]'); await p.waitForSelector('.sheet.files-menu'); await p.click('.files-menu .dest-row:has-text("Storage analyzer")'); await p.click('.sheet:not(.files-drawer) .dest-row:has-text("Internal storage")'); await p.waitForSelector('.files-an-tabs'); await p.waitForTimeout(300);
   ok('the analyzer reports by kind', (await p.textContent('.files-kinds-bars')).includes('Video'));
   await p.click('.files-an-tabs .chip:has-text("Doubles")'); await p.waitForTimeout(200); ok('doubles: all but the first ticked', (await p.$$eval('.files-dup-group input', (e) => e.map((x) => x.checked))).join() === 'false,true');
   await p.click('.files-an-tabs .chip:has-text("Biggest folders")'); await p.click('.files-analyzer .dest-row:has-text("Movies")'); await p.waitForTimeout(600); ok('a folder from the report is opened', (await p.textContent('.files-crumbs')).toLowerCase().includes('movies'), await p.textContent('.files-crumbs'));
@@ -180,14 +180,14 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
   ok("Back from an app's folder lists the apps again", !!(await p.$('.files-row:has-text("Notes")')) && !(await p.textContent('.files-view')).includes('Nothing here'));
   // recent files in the drawer
   await p.click('.topbar button[aria-label="Storages, bookmarks and collections"]'); await p.waitForSelector('.files-drawer'); await p.waitForTimeout(300);
-  ok("recent files sit in the drawer", !!(await p.$(".files-drawer .files-drawer-row:has-text(\"new.png\")")));
+  ok("recent files are one of the drawer's collections", !!(await p.$(".files-drawer .files-drawer-row:has-text(\"Recent files\")")));
   await p.keyboard.press('Escape');
   // the kinds in one line that scrolls sideways; an empty folder's message across the list, in the grid as well
-  await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa%2FSub'); await p.waitForSelector('.files-list .empty');
+  await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa%2FSub'); await p.waitForSelector('.files-list .empty, .files-empty');
   const look = async () => p.evaluate(() => { const tops = [...document.querySelectorAll('.files-kinds .chip')].map((c) => c.offsetTop); const e = document.querySelector('.files-list .empty'); const l = document.querySelector('.files-list'); return { oneLine: new Set(tops).size === 1, emptyWide: e.getBoundingClientRect().width > l.getBoundingClientRect().width * 0.9 }; });
   const l1 = await look(); ok('the kinds in one line; the empty message across the list', l1.oneLine && l1.emptyWide, l1);
   await p.evaluate(() => { const k = Object.keys(localStorage).find((x) => /files/.test(x) && /pref/.test(x)); const v = JSON.parse(localStorage.getItem(k) || '{}'); v.view = 'grid'; localStorage.setItem(k, JSON.stringify(v)); });
-  await p.reload(); await p.waitForSelector('.files-list .empty'); const l2 = await look(); ok('in the grid too', l2.emptyWide, l2);
+  await p.reload(); await p.waitForSelector('.files-list .empty, .files-empty'); const l2 = await look(); ok('in the grid too', l2.emptyWide, l2);
   await p.evaluate(() => { const k = Object.keys(localStorage).find((x) => /files/.test(x) && /pref/.test(x)); const v = JSON.parse(localStorage.getItem(k) || '{}'); v.view = 'list'; localStorage.setItem(k, JSON.stringify(v)); });
   // the drawer from the side: a finger swiped from the start side opens it; swiped back, it closes
   await p.goto('http://127.0.0.1:5481/#/files?p=%2Fstorage%2Femulated%2F0%2FDownload%2FKurokawa'); await p.waitForSelector('.files-row:has-text("photo.jpg")');
