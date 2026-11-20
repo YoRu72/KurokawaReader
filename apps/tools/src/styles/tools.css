@@ -755,7 +755,7 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .chip-row.files-kinds { display: flex; gap: 6px; padding: 6px 16px 2px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -webkit-mask: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
 [dir='rtl'] .chip-row.files-kinds { -webkit-mask: linear-gradient(270deg, #000 calc(100% - 24px), transparent); }
 .chip-row.files-kinds::-webkit-scrollbar { display: none; }
-.files-kinds .chip { flex: none; }
+.files-kinds .chip { flex: none; min-width: 40px; justify-content: center; }
 .files-body { padding: 6px 10px 96px; }
 .files-list { display: flex; flex-direction: column; }
 .files-row { display: flex; align-items: center; gap: 12px; padding: 8px 6px; border-radius: 14px; cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 60px; }
@@ -1553,7 +1553,7 @@ html.pc .sheet.mix-sheet { max-width: 640px; }
 .mix-actions > .btn { flex: 1 1 0; min-width: 0; }
 
 /* (With the Jobs button there are eight buttons on a phone's Files bar: each a little narrower so they stay on one row beside the back button.) */
-@media (max-width: 420px) { .view > .topbar:has(.files-jobs-btn:not([hidden])) :is(.icon-btn) { width: 36px; } .view > .topbar:has(.files-jobs-btn:not([hidden])) .topbar-actions { gap: 0; } }
+@media (max-width: 420px) { .view > .topbar:has(.files-jobs-btn:not([hidden])) :is(.icon-btn) { width: 40px; height: 40px; } .view > .topbar:has(.files-jobs-btn:not([hidden])) .topbar-actions { gap: 2px; } }
 /* (The unfinished-jobs bar: clear of the round add button, and its words kept a real gap from the buttons.) */
 .toast.files-unfinished { bottom: calc(var(--nav-h, 64px) + 90px + var(--safe-bottom, 0px)); gap: 8px; }
 .toast.files-unfinished > .grow { padding-inline-end: 12px; }
@@ -1687,7 +1687,7 @@ html[data-density='compact'] .te-row { min-height: 38px; }
   html:not(.pc) .files-view .topbar .topbar-actions > :is([data-icon='filter'], [data-icon='sort'], [data-icon='list'], [data-icon='grid'], [data-icon='images']) { display: none; }
   html:not(.pc) .files-chev { display: inline-flex; flex: none; align-self: center; margin-inline-start: 2px; opacity: .7; } html:not(.pc) .files-chev svg { width: 16px; height: 16px; transform: rotate(90deg); fill: none; stroke: currentColor; stroke-width: 2.2; }
   html:not(.pc) .files-view .topbar { gap: 0; padding-inline: 4px 6px; }
-  html:not(.pc) .files-view .topbar .topbar-actions { gap: 0; }
+  html:not(.pc) .files-view .topbar .topbar-actions { gap: 2px; }
   html:not(.pc) .files-view .topbar > .files-head { padding-inline: 2px; }
   html:not(.pc) .files-view .topbar .files-head { cursor: pointer; justify-content: center; gap: 2px; line-height: 1.3; min-width: 140px; overflow: visible; }
   html:not(.pc) .files-head2 { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
