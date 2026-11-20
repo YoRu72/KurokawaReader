@@ -21,7 +21,7 @@ package android.content.pm; public abstract class PackageManager { public static
 package android.content; public interface SharedPreferences { boolean getBoolean(String k, boolean d); int getInt(String k, int d); String getString(String k, String d); Editor edit();
   interface Editor { Editor putBoolean(String k, boolean v); Editor putInt(String k, int v); Editor putString(String k, String v); void apply(); } }
 //// android/content/Context.java
-package android.content; public abstract class Context { public static final String BLUETOOTH_SERVICE = "bluetooth"; public static final int MODE_PRIVATE = 0, RECEIVER_EXPORTED = 2;
+package android.content; public abstract class Context { public static final String BLUETOOTH_SERVICE = "bluetooth", AUDIO_SERVICE = "audio"; public static final int MODE_PRIVATE = 0, RECEIVER_EXPORTED = 2;
   public abstract SharedPreferences getSharedPreferences(String n, int m); public abstract int checkSelfPermission(String p); public abstract Object getSystemService(String n); public final <T> T getSystemService(Class<T> c) { return null; }
   public abstract String getPackageName(); public abstract void startActivity(Intent i); public abstract Context getApplicationContext();
   public abstract Intent registerReceiver(BroadcastReceiver r, IntentFilter f); public abstract Intent registerReceiver(BroadcastReceiver r, IntentFilter f, int flags);
@@ -49,11 +49,25 @@ package android.app; public class NotificationManager { public static final int 
 package android.bluetooth; public final class BluetoothClass { public int getMajorDeviceClass() { return 0; } public int getDeviceClass() { return 0; } }
 //// android/bluetooth/BluetoothDevice.java
 package android.bluetooth; public final class BluetoothDevice implements android.os.Parcelable { public static final String EXTRA_DEVICE = "d", ACTION_ACL_CONNECTED = "c", ACTION_ACL_DISCONNECTED = "x", ACTION_BOND_STATE_CHANGED = "b";
-  public String getAddress() { return null; } public String getAlias() { return null; } public String getName() { return null; } public BluetoothClass getBluetoothClass() { return null; } }
+  public String getAddress() { return null; } public String getAlias() { return null; } public String getName() { return null; } public BluetoothClass getBluetoothClass() { return null; }
+  public int getType() { return 0; } public int getBondState() { return 10; } public android.os.ParcelUuid[] getUuids() { return null; } }
 //// android/bluetooth/BluetoothAdapter.java
-package android.bluetooth; public final class BluetoothAdapter { public static final String ACTION_STATE_CHANGED = "s"; public boolean isEnabled() { return false; } public java.util.Set<BluetoothDevice> getBondedDevices() { return null; } }
+package android.bluetooth; public final class BluetoothAdapter { public static final String ACTION_STATE_CHANGED = "s", EXTRA_STATE = "e"; public static final int STATE_OFF = 10, STATE_TURNING_ON = 11, STATE_ON = 12, STATE_TURNING_OFF = 13;
+  public boolean isEnabled() { return false; } public java.util.Set<BluetoothDevice> getBondedDevices() { return null; }
+  public boolean getProfileProxy(android.content.Context c, BluetoothProfile.ServiceListener l, int profile) { return false; } public void closeProfileProxy(int profile, BluetoothProfile proxy) {} }
+//// android/bluetooth/BluetoothProfile.java
+package android.bluetooth; public interface BluetoothProfile { java.util.List<BluetoothDevice> getConnectedDevices();
+  interface ServiceListener { void onServiceConnected(int profile, BluetoothProfile proxy); void onServiceDisconnected(int profile); } }
 //// android/bluetooth/BluetoothManager.java
-package android.bluetooth; public final class BluetoothManager { public BluetoothAdapter getAdapter() { return null; } }
+package android.bluetooth; public final class BluetoothManager { public BluetoothAdapter getAdapter() { return null; } public java.util.List<BluetoothDevice> getConnectedDevices(int profile) { return null; } }
+//// android/os/ParcelUuid.java
+package android.os; public final class ParcelUuid { }
+//// android/media/AudioManager.java
+package android.media; public class AudioManager { public static final int GET_DEVICES_ALL = 3; public AudioDeviceInfo[] getDevices(int flags) { return new AudioDeviceInfo[0]; } }
+//// android/media/AudioDeviceInfo.java
+package android.media; public final class AudioDeviceInfo { public int getType() { return 0; } public String getAddress() { return ""; } public CharSequence getProductName() { return null; } }
+//// android/view/InputDevice.java
+package android.view; public final class InputDevice { public static int[] getDeviceIds() { return new int[0]; } public static InputDevice getDevice(int id) { return null; } public boolean isVirtual() { return false; } public boolean isExternal() { return false; } public String getName() { return null; } }
 //// androidx/core/app/NotificationCompat.java
 package androidx.core.app; public class NotificationCompat { public static final String CATEGORY_STATUS = "status";
   public static class Builder { public Builder(android.content.Context c, String ch) {} public Builder setSmallIcon(int i) { return this; } public Builder setContentTitle(CharSequence t) { return this; } public Builder setContentText(CharSequence t) { return this; }
@@ -66,7 +80,7 @@ package org.json; public class JSONException extends Exception { public JSONExce
 package org.json; public class JSONObject { public JSONObject() {} public JSONObject(String s) throws JSONException {}
   public JSONObject put(String k, Object v) throws JSONException { return this; } public JSONObject put(String k, int v) throws JSONException { return this; } public JSONObject put(String k, long v) throws JSONException { return this; } public JSONObject put(String k, boolean v) throws JSONException { return this; }
   public boolean has(String k) { return false; } public boolean optBoolean(String k) { return false; } public int optInt(String k) { return 0; } public int optInt(String k, int d) { return d; } public long optLong(String k, long d) { return d; }
-  public String optString(String k, String d) { return d; } public JSONObject optJSONObject(String k) { return null; } public java.util.Iterator<String> keys() { return null; } }
+  public String optString(String k, String d) { return d; } public JSONObject optJSONObject(String k) { return null; } public java.util.Iterator<String> keys() { return null; } public int length() { return 0; } }
 //// org/json/JSONArray.java
 package org.json; public class JSONArray { public JSONArray put(Object v) { return this; } }
 //// KtService.java

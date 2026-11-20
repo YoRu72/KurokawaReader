@@ -94,13 +94,23 @@ export async function link(tk: string): Promise<AlUser> {
 /* ---------- media ---------- */
 const strip = (html?: string | null) => (html ?? '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
 type RawEntry = { id: number; status: AlStatus; progress: number; score: number; startedAt?: AlDate; completedAt?: AlDate } | null;
+/** A cover's colour as a calm backdrop: the warm yellow / orange / amber range (hue 25-65) is not used by the app's design, so its saturation is cut to a fifth. */
+export function calmTint(c?: string | null): string | undefined {
+  const m = c ? /^#?([0-9a-f]{6})$/i.exec(c.trim()) : null; if (!m) return c ?? undefined;
+  const n = parseInt(m[1], 16); const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return c!;
+  let hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; hh = (hh * 60 + 360) % 360;
+  const l = (mx + mn) / 2; const sat = d / (1 - Math.abs(2 * l - 1));
+  if (hh < 20 || hh > 70 || sat <= 0.35) return c!;
+  return `hsl(${Math.round(hh)} ${Math.round(sat * 20)}% ${Math.round(Math.min(l, 0.45) * 100)}%)`;
+}
 type Raw = { id: number; idMal?: number; title: { romaji?: string; english?: string; native?: string; userPreferred?: string }; synonyms?: string[]; coverImage?: { large?: string; extraLarge?: string; color?: string }; bannerImage?: string; format?: string; status?: string; episodes?: number | null; duration?: number | null; season?: Season; seasonYear?: number; startDate?: AlDate; endDate?: AlDate; genres?: string[]; averageScore?: number; popularity?: number; description?: string; isAdult?: boolean; siteUrl: string; studios?: { nodes: { id?: number; name: string }[] }; trailer?: { id: string; site: string; thumbnail?: string } | null; nextAiringEpisode?: Airing | null; airingSchedule?: { nodes: Airing[] }; streamingEpisodes?: { title: string; url: string; site: string; thumbnail?: string }[]; externalLinks?: { site: string; url: string; type?: string }[]; relations?: { edges: { relationType: string; node: { id: number; title: { userPreferred?: string; romaji?: string }; format?: string } }[] }; mediaListEntry?: RawEntry };
 const entryOf = (e?: RawEntry): AlEntry | undefined => (e ? { id: e.id, status: e.status, progress: e.progress, score: e.score, startedAt: e.startedAt, completedAt: e.completedAt } : undefined);
 /** The title shown: the user's AniList preference when linked, else English, then romaji. */
 const pick = (m: Raw) => m.title.userPreferred || m.title.english || m.title.romaji || m.title.native || '';
 const toAnime = (m: Raw): Anime => ({
   id: m.id, idMal: m.idMal ?? undefined, title: pick(m), titleRomaji: m.title.romaji ?? undefined, titleEnglish: m.title.english ?? undefined, titleNative: m.title.native ?? undefined, synonyms: m.synonyms ?? [],
-  cover: m.coverImage?.extraLarge ?? m.coverImage?.large, banner: m.bannerImage ?? undefined, color: m.coverImage?.color ?? undefined,
+  cover: m.coverImage?.extraLarge ?? m.coverImage?.large, banner: m.bannerImage ?? undefined, color: calmTint(m.coverImage?.color),
   format: m.format, status: m.status, episodes: m.episodes, duration: m.duration, season: m.season, seasonYear: m.seasonYear, startDate: m.startDate, endDate: m.endDate,
   genres: m.genres ?? [], score: m.averageScore, popularity: m.popularity, description: strip(m.description), isAdult: !!m.isAdult, url: m.siteUrl,
   studio: m.studios?.nodes?.[0]?.name, studioId: m.studios?.nodes?.[0]?.id, trailer: m.trailer ?? undefined, nextAiring: m.nextAiringEpisode ?? undefined, schedule: m.airingSchedule?.nodes,
@@ -336,7 +346,7 @@ export async function tileArt(want: { key: string; filter: string }[]): Promise<
   const q = `query { ${missing.map((w) => `${alias(w.key)}: Page(perPage: 1) { media(type: ANIME, sort: [POPULARITY_DESC], isAdult: false, ${w.filter}) { bannerImage coverImage { extraLarge color } } }`).join(' ')} }`;
   const d = await gql<Record<string, { media: { bannerImage?: string; coverImage?: { extraLarge?: string; color?: string } }[] }>>(q, {}, false);
   const v = fresh ? { ...kept.v } : {};
-  for (const w of missing) { const m = d[alias(w.key)]?.media?.[0]; v[w.key] = { image: m?.bannerImage ?? m?.coverImage?.extraLarge, color: m?.coverImage?.color }; }
+  for (const w of missing) { const m = d[alias(w.key)]?.media?.[0]; v[w.key] = { image: m?.bannerImage ?? m?.coverImage?.extraLarge, color: calmTint(m?.coverImage?.color) }; }
   try { localStorage.setItem(ART_KEY, JSON.stringify({ at: fresh ? kept.at : Date.now(), v })); } catch { /* full */ }
   return v;
 }
@@ -359,7 +369,7 @@ export function studioList(): Promise<StudioEntry[]> {
   return studioListP;
 }
 type RawStudio = { id: number; name: string; isAnimationStudio: boolean; favourites?: number; media?: { pageInfo?: { total?: number }; nodes: { bannerImage?: string; coverImage?: { extraLarge?: string; color?: string } }[] } };
-const toStudio = (s: RawStudio): Studio => ({ id: s.id, name: s.name, animation: s.isAnimationStudio, favourites: s.favourites, image: s.media?.nodes?.[0]?.bannerImage ?? s.media?.nodes?.[0]?.coverImage?.extraLarge, color: s.media?.nodes?.[0]?.coverImage?.color, count: s.media?.pageInfo?.total });
+const toStudio = (s: RawStudio): Studio => ({ id: s.id, name: s.name, animation: s.isAnimationStudio, favourites: s.favourites, image: s.media?.nodes?.[0]?.bannerImage ?? s.media?.nodes?.[0]?.coverImage?.extraLarge, color: calmTint(s.media?.nodes?.[0]?.coverImage?.color), count: s.media?.pageInfo?.total });
 const STUDIO_FIELDS = 'id name isAnimationStudio favourites media(sort: [POPULARITY_DESC], isMain: true, perPage: 1) { nodes { bannerImage coverImage { extraLarge color } } }';
 /** Studios by name, the closest first (the animation studios before the producers). */
 export async function searchStudios(q: string): Promise<Studio[]> {

@@ -74,7 +74,7 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; applyPickerDefault(); KtBattery.sink = this::batteryEvent; try { KtBattery.watch(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
+    @Override public void load() { wireDoh(); self = this; applyPickerDefault(); KtBattery.sink = this::batteryEvent; try { KtBattery.reset(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
         // (0.21 P9: no automatic DoH probe on a metered connection.)
         try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
@@ -971,16 +971,18 @@ public class KtPlugin extends Plugin {
     }
     /* ---------- how Tools appears in other apps' file pickers: its own browser (the documents provider off) or storage places (on) ---------- */
     private android.content.ComponentName pickerProvider() { return new android.content.ComponentName(getContext(), KtDocumentsProvider.class); }
-    /** First run after the update: the default (its own browser: the provider off) applied once; a choice already made is kept. */
+    /** First run after the update to 0.22.1: «its own browser» (the provider off) applied once for everyone (a new key, so
+     *  it runs once more after 0.22.0's pass); a choice made after that is kept. */
     private void applyPickerDefault() {
         try {
             android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE);
-            // (Other apps already holding links or folder access on the provider: it stays on — «storage places» —, and the
-            // setting's sheet says why, once; else «its own browser», as for a fresh install.)
-            int choice = KtPickLogic.firstRunChoice(sp.getBoolean("pickerDefault", false), grantsOnOurs());
+            // (Other apps holding links or folder access on the provider: switched all the same, and the setting's sheet says,
+            // once, what stopped and how to bring it back.)
+            int grants = grantsOnOurs();
+            int choice = KtPickLogic.firstRunChoice(sp.getBoolean("pickerDefault0221", false), grants);
             if (choice == KtPickLogic.KEEP) return;
             if (choice == KtPickLogic.OWN_BROWSER) getContext().getPackageManager().setComponentEnabledSetting(pickerProvider(), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
-            sp.edit().putBoolean("pickerDefault", true).putBoolean("pickerKept", choice == KtPickLogic.STORAGE_PLACES).apply();
+            sp.edit().putBoolean("pickerDefault0221", true).putBoolean("pickerDefault", true).remove("pickerKept").putInt("pickerCut", KtPickLogic.switchedNote(choice, grants)).apply();
         } catch (Throwable ignored) {}
     }
     /** How many links or folder accesses other apps hold, persisted, on the provider (Android keeps the list). */
@@ -995,11 +997,11 @@ public class KtPlugin extends Plugin {
         try {
             if (want != null) {
                 pm.setComponentEnabledSetting(pickerProvider(), want ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
-                getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("pickerDefault", true).putBoolean("pickerKept", false).apply();
+                getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("pickerDefault", true).putBoolean("pickerDefault0221", true).remove("pickerKept").putInt("pickerCut", 0).apply();
             }
             JSObject r = new JSObject(); r.put("on", pm.getComponentEnabledSetting(pickerProvider()) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED);
             int grants = grantsOnOurs(); r.put("others", grants); r.put("ask", KtPickLogic.askBeforeOwnBrowser(grants));
-            r.put("kept", getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getBoolean("pickerKept", false)); call.resolve(r);
+            r.put("cut", getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getInt("pickerCut", 0)); call.resolve(r);
         } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /* ---------- others' «Open with» / «Share» (KtOpenActivity holds the request and its grant; openwith.json) ---------- */
@@ -1142,18 +1144,50 @@ public class KtPlugin extends Plugin {
     }
     /* Shared to «Save to device»: what other apps sent (kept until saved or dismissed), and the saving. */
     static final java.util.List<Uri> shared = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-    static void sharedIn(java.util.List<Uri> us) { shared.addAll(us); KtPlugin p = self; if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
+    /** How many saves of the sheet are running: a share arriving meanwhile is added to the list, not instead of it. */
+    static volatile int sharedSaving = 0;
+    /** The same file shared twice: the same link, or (when both can be read) the same name and size. */
+    private static boolean sameShared(KtPlugin p, Uri a, Uri b) {
+        if (a.equals(b)) return true;
+        if (p == null) return false;
+        try { java.util.Map<String, Object> x = KtFiles.nameAndSize(p.getContext(), a); java.util.Map<String, Object> y = KtFiles.nameAndSize(p.getContext(), b); Object sx = x.get("size"); Object sy = y.get("size"); return sx instanceof Long && sy instanceof Long && ((Long) sx) >= 0 && ((Long) sx).equals(sy) && x.get("name") != null && String.valueOf(x.get("name")).equals(String.valueOf(y.get("name"))); } catch (Throwable t) { return false; }
+    }
+    /** What other apps send: a NEW share replaces the whole list (old leftovers go), a repeat of one replaces it, never adds a second. */
+    static void sharedIn(java.util.List<Uri> us) {
+        KtPlugin p = self;
+        synchronized (shared) {
+            java.util.List<Uri> keep = sharedSaving > 0 ? new java.util.ArrayList<>(shared) : new java.util.ArrayList<Uri>();
+            for (Uri u : us) { for (java.util.Iterator<Uri> it = keep.iterator(); it.hasNext(); ) if (sameShared(p, it.next(), u)) it.remove(); keep.add(u); }
+            shared.clear(); shared.addAll(keep);
+        }
+        sharedNotify(p);
+    }
+    private static void sharedNotify(KtPlugin p) { if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
     @PluginMethod public void sharedPending(PluginCall call) {
         bg.execute(() -> { JSArray a = new JSArray(); synchronized (shared) { for (Uri u : shared) { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); JSObject o = new JSObject(); o.put("uri", u.toString()); o.put("name", String.valueOf(m.get("name"))); o.put("size", (Long) m.get("size")); o.put("mime", m.get("mime") == null ? "" : String.valueOf(m.get("mime"))); a.put(o); } } JSObject r = new JSObject(); r.put("items", a); call.resolve(r); });
     }
     @PluginMethod public void sharedSave(PluginCall call) {
         final File dir = fileOf(call.getString("dir", engine().defaultDir().getAbsolutePath())); final boolean clear = !Boolean.FALSE.equals(call.getBoolean("clear", true));
+        /* `uris`: save only those (and take only those off the list); without it, everything pending. */
+        final JSArray want = call.getArray("uris"); final java.util.Set<String> only = want == null ? null : new java.util.HashSet<String>();
+        if (want != null) for (int i = 0; i < want.length(); i++) only.add(want.optString(i, ""));
+        sharedSaving++;
         bg.execute(() -> {
-            JSArray saved = new JSArray(); JSArray failed = new JSArray(); java.util.List<Uri> us; synchronized (shared) { us = new java.util.ArrayList<>(shared); }
-            for (Uri u : us) { try { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); File f = KtFiles.saveShared(getContext(), u, dir, String.valueOf(m.get("name"))); saved.put(f.getAbsolutePath()); try { android.media.MediaScannerConnection.scanFile(getContext(), new String[] { f.getAbsolutePath() }, null, null); } catch (Throwable ignored) {} } catch (Exception e) { failed.put(String.valueOf(e.getMessage())); } }
-            if (clear) shared.clear();
+          try {
+            JSArray saved = new JSArray(); JSArray failed = new JSArray(); java.util.List<Uri> us = new java.util.ArrayList<>(); synchronized (shared) { for (Uri x : shared) if (only == null || only.contains(x.toString())) us.add(x); }
+            java.util.List<Uri> done = new java.util.ArrayList<>();
+            for (Uri u : us) { try { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); File f = KtFiles.saveShared(getContext(), u, dir, String.valueOf(m.get("name"))); saved.put(f.getAbsolutePath()); done.add(u); try { android.media.MediaScannerConnection.scanFile(getContext(), new String[] { f.getAbsolutePath() }, null, null); } catch (Throwable ignored) {} } catch (Exception e) { failed.put(String.valueOf(e.getMessage())); } }
+            if (clear) { if (only == null) shared.clear(); else synchronized (shared) { shared.removeAll(done); } }
             JSObject r = new JSObject(); r.put("saved", saved); r.put("failed", failed); r.put("dir", dir.getAbsolutePath()); call.resolve(r);
+          } catch (Throwable t) { call.reject(String.valueOf(t.getMessage())); }
+          finally { sharedSaving--; }
         });
+    }
+    /** Some of the pending files dropped from the list (the sheet's remove button). */
+    @PluginMethod public void sharedDrop(PluginCall call) {
+        JSArray want = call.getArray("uris"); java.util.Set<String> gone = new java.util.HashSet<String>(); if (want != null) for (int i = 0; i < want.length(); i++) gone.add(want.optString(i, ""));
+        synchronized (shared) { for (java.util.Iterator<Uri> it = shared.iterator(); it.hasNext(); ) if (gone.contains(it.next().toString())) it.remove(); }
+        call.resolve();
     }
     /** Several files to the system's share sheet at once. */
     @PluginMethod public void shareFiles(PluginCall call) {

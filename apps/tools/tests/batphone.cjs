@@ -10,12 +10,17 @@
 // while open and let go when left. None of the computer's options here (tray, taskbar, start with the system, family
 // switches, the Linux / macOS cards), and the reverse: the computer's page never opens the phone's. Settings on Android
 // lists it with the phone's words. 360×800, no sideways overflow, no touching buttons. Screenshots into KT_SHOTS
-// (light and dark), prefix batP2-. `node tests/batphone.cjs [en|ar]`.
+// (light and dark), prefix batP2-. `node tests/batphone.cjs [en|ar]` (KT_VIEW=412x915 for another phone size).
+// 0.22.1: connected as the public sources say (a device whose hidden call was refused but whose A2DP link is up reads
+// «Connected · Audio»), the links on the chip; an event changes one card and only that card is drawn again; a card
+// tapped opens its details (rows known only — none «unknown»); Bluetooth turned off by an event shows the off card, on
+// again the list; the page hidden lets Android's sources go and shown again takes them back.
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 const DIST = path.join(__dirname, '..', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ogg': 'audio/ogg' };
 const serve = () => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(DIST, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
 const errors = []; const check = (what, ok, x) => { console.log(ok ? 'ok  ' : 'FAIL', what, ok || x === undefined ? '' : JSON.stringify(x).slice(0, 300)); if (!ok) errors.push(what); };
+const VIEW = (process.env.KT_VIEW || '360x800').split('x').map(Number);
 const lang = process.argv[2] || 'en'; const AR = lang === 'ar'; const SHOTS = process.env.KT_SHOTS || '';
 const shot = async (p, name) => {
   if (!SHOTS) return; fs.mkdirSync(SHOTS, { recursive: true });
@@ -35,8 +40,11 @@ function fake({ lang, mode }) {
   const dev = (o) => ({ name: '', kind: 'other', connected: false, level: -1, source: '', seenAt: 0, lastLevel: -1, lastLevelAt: 0, ...o });
   const devices = mode === 'empty' ? [] : [
     dev({ key: 'AA:00:00:00:00:04', name: 'Runner Watch', kind: 'watch', connected: false, seenAt: NOW - 3 * min, lastLevel: 40, lastLevelAt: NOW - 3 * min }),
-    dev({ key: 'AA:00:00:00:00:01', name: 'Field Headset', kind: 'headset', connected: true, level: 82, source: 'system', seenAt: NOW }),
-    dev({ key: 'AA:00:00:00:00:02', name: 'Lake Buds', kind: 'earbuds', connected: true, level: 12, source: 'hfp', seenAt: NOW }),
+    // (Its hidden isConnected refused by Android, its A2DP and hands-free proxies saying connected: KtBattery sends connected.)
+    dev({ key: 'AA:00:00:00:00:01', name: 'Field Headset', kind: 'headset', connected: true, level: 82, source: 'system', seenAt: NOW, profiles: ['audio', 'calls'],
+      alias: 'Field Headset', sysName: 'FH-200 Test', type: 'dual', bond: 'bonded', major: 'audioVideo', minor: 'headphones', services: ['audioSink', 'handsFree', 'remote', 'battery'], codec: 'AAC',
+      lastLevel: 82, lastLevelAt: NOW - 2 * min, lastSource: 'system', firstSeen: NOW - 3 * 24 * 60 * min }),
+    dev({ key: 'AA:00:00:00:00:02', name: 'Lake Buds', kind: 'earbuds', connected: true, level: 12, source: 'hfp', seenAt: NOW, profiles: ['audio'], parts: { left: 70, right: 60, case: 40 } }),
     dev({ key: 'AA:00:00:00:00:03', name: 'Pad One', kind: 'controller', connected: true, level: -1, seenAt: NOW }),
     dev({ key: 'AA:00:00:00:00:05', name: 'Desk Keys', kind: 'keyboard', connected: false }),
     dev({ key: 'AA:00:00:00:00:06', name: 'Garden Box', kind: 'speaker', connected: false, seenAt: NOW - 26 * 60 * min }),
@@ -62,7 +70,7 @@ function fake({ lang, mode }) {
   const web = serve().listen(0); const base = `http://127.0.0.1:${web.address().port}/`;
   const br = await chromium.launch();
   const open = async (mode, route = '#/battery') => {
-    const ctx = await br.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true }); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.fulfill({ status: 404, body: '' }));
+    const ctx = await br.newContext({ viewport: { width: VIEW[0], height: VIEW[1] }, isMobile: true, hasTouch: true }); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.fulfill({ status: 404, body: '' }));
     const p = await ctx.newPage(); p.setDefaultTimeout(8000); p.on('pageerror', (e) => errors.push(`${mode}: ${e.message}`));
     await p.addInitScript(fake, { lang, mode }); await p.goto(base + route);
     return { ctx, p };
@@ -130,10 +138,51 @@ function fake({ lang, mode }) {
     const gap = await p.evaluate(() => { const a = document.querySelector('.bp-count').getBoundingClientRect(), b = document.querySelector('.bp-head [data-act="bluetooth"]').getBoundingClientRect(); return { overlap: !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top) }; });
     check('the count and «Bluetooth settings» do not touch', !gap.overlap, gap);
     await shot(p, 'list');
-    // A level changed (the event): redrawn.
-    await p.evaluate(() => { window.__bp.devices[2].level = 9; window.__bpFire(); });
+    // A level changed (the event): that card alone drawn again.
+    await p.evaluate(() => { for (const el of document.querySelectorAll('.bp-card')) el.__was = true; window.__bp.devices[2].level = 9; window.__bpFire(); });
     await p.waitForFunction(() => document.querySelector('.bp-card[data-key="AA:00:00:00:00:02"]')?.dataset.level === '9');
-    check('a level from the event redrawn', true);
+    const kept = await p.$$eval('.bp-card', (els) => els.map((e) => [e.dataset.key, !!e.__was]));
+    check('the event updated one card; the others untouched (not rebuilt)', kept.filter((x) => !x[1]).map((x) => x[0]).join() === 'AA:00:00:00:00:02' && kept.length === 6, kept);
+    // Connected by the public sources (hidden call refused): the chip says so, with its links.
+    check('refused hidden call + A2DP up: «Connected · Audio, Calls»', by['Field Headset'].con === 'true' && (await p.textContent('.bp-card[data-key="AA:00:00:00:00:01"] .bp-chip')) === (AR ? 'متصل · الصوت، المكالمات' : 'Connected · Audio, Calls'), await p.textContent('.bp-card[data-key="AA:00:00:00:00:01"] .bp-chip'));
+    check('a device away: «Not connected», no links', (await p.textContent('.bp-card[data-key="AA:00:00:00:00:06"] .bp-chip')) === (AR ? 'غير متصل' : 'Not connected'));
+    // Details.
+    await p.click('.bp-card[data-key="AA:00:00:00:00:01"]'); await p.waitForSelector('.sheet.bp-details');
+    const rows = await p.$$eval('.bp-details dt', (els) => els.map((e) => e.dataset.row));
+    const val = (id) => p.textContent(`.bp-details dd[data-row="${id}"]`);
+    check('details: the rows Android gave, in order', rows.join() === 'alias,name,type,class,bond,links,services,codec,source,read,last,first', rows);
+    check('details: words for type, class, links, services', (await val('type')) === (AR ? 'تقليدي ومنخفض الطاقة معًا' : 'Classic and Low Energy') && (await val('class')) === (AR ? 'صوت وصورة · سماعات رأس' : 'Audio and video · Headphones') && (await val('services')).includes(AR ? 'خدمة البطارية' : 'Battery service') && (await val('codec')) === 'AAC', [await val('type'), await val('class'), await val('services')]);
+    check('details: nothing said «unknown»', !/unknown|مجهول/i.test(await p.textContent('.bp-details')));
+    await noOverflow(p, 'details');
+    await shot(p, 'details');
+    await p.click('.bp-details .sheet-head [data-icon="close"]'); await p.waitForSelector('.sheet.bp-details', { state: 'detached' });
+    await p.click('.bp-card[data-key="AA:00:00:00:00:05"]'); await p.waitForSelector('.sheet.bp-details');
+    const few = await p.$$eval('.bp-details dt', (els) => els.map((e) => e.dataset.row));
+    check('details of a device Android knows little of: only what it gave (first listed at most)', few.every((r) => ['first', 'last'].includes(r)), few);
+    await p.click('.bp-details .sheet-head [data-icon="close"]'); await p.waitForSelector('.sheet.bp-details', { state: 'detached' });
+    await p.click('.bp-card[data-key="AA:00:00:00:00:02"]'); await p.waitForSelector('.sheet.bp-details');
+    check('true-wireless parts when Android gives them', (await val('parts')) === (AR ? 'اليسرى 70٪ · اليمنى 60٪ · العلبة 40٪' : 'Left 70% · Right 60% · Case 40%'), await val('parts'));
+    // (The open sheet follows its device: a new level read fills it again.)
+    await p.evaluate(() => { window.__bp.devices[2].parts = { left: 65, right: 60, case: 40 }; window.__bpFire(); });
+    await p.waitForFunction(() => /65/.test(document.querySelector('.bp-details dd[data-row="parts"]')?.textContent || ''));
+    check('the open details follow the event', true);
+    await p.click('.bp-details .sheet-head [data-icon="close"]'); await p.waitForSelector('.sheet.bp-details', { state: 'detached' });
+    // Bluetooth turned off (the adapter's broadcast → the event): the off card, not a stale list; on again: the list.
+    await p.evaluate(() => { window.__bp.on = false; window.__bpFire(); });
+    await p.waitForSelector('.bp-state[data-state="off"]');
+    check('Bluetooth off by the event: one clear card, no list left', !(await p.$('.bp-card')));
+    await p.evaluate(() => { window.__bp.on = true; window.__bpFire(); });
+    await p.waitForSelector('.bp-card');
+    check('on again: the list back', (await p.$$('.bp-card')).length === 6);
+    // Hidden: Android's sources let go; shown: taken back and read anew.
+    let w0 = (await calls(p)).filter((x) => x[0] === 'watch').length;
+    await p.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await p.waitForFunction((n) => window.__bp.calls.filter((x) => x[0] === 'watch').length > n, w0);
+    check('hidden: the watch let go', (await calls(p)).filter((x) => x[0] === 'watch').slice(-1)[0][1] === false);
+    w0 = (await calls(p)).filter((x) => x[0] === 'watch').length;
+    await p.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); document.dispatchEvent(new Event('visibilitychange')); });
+    await p.waitForFunction((n) => window.__bp.calls.filter((x) => x[0] === 'watch').length > n, w0);
+    check('shown again: watched again', (await calls(p)).filter((x) => x[0] === 'watch').slice(-1)[0][1] === true);
     // Refresh and «Bluetooth settings».
     const before = (await calls(p)).filter((x) => x[0] === 'state').length;
     await p.click('.bp-view .topbar [data-icon="refresh"]'); await p.waitForTimeout(200);

@@ -43,6 +43,14 @@ async function page(browser, port, z, lang, multiple) {
   if (lang === 'en') ok(L('who asked and for what'), multiple ? /Choose files/.test(head) && /Aegisub Mobile/.test(head) : /Choose a file/.test(head) && /For Telegram/.test(head) && /Images/.test(head), head);
   else ok(L('who asked and for what, in Arabic'), multiple ? /اختر ملفات/.test(head) : /اختر ملفًّا/.test(head) && /Telegram/.test(head), head);
   ok(L('the app\'s bottom bar and the + button gone'), !(await p.isVisible('.bottom-nav')) && !(await p.$('.files-view.picker .files-fab')));
+  // (0.22.1: as the reference pickers — a list with each folder's count and date, × to close, the path, search, a view switch.)
+  ok(L('a list (whatever the Files page uses), × at the start in place of the drawer, the path, search and the view switch there'), await p.$eval('.files-view.picker .files-list', (e) => e.classList.contains('list')) && !!(await p.$('.files-view.picker .topbar .pick-close')) && !(await p.$('.files-view.picker .topbar [data-icon="menu"]')) && !!(await p.$('.files-view.picker .crumbs, .files-view.picker .files-strip')) && !!(await p.$('.files-view.picker .topbar [data-icon="search"]')) && (await p.$$('.files-view.picker .topbar-actions .icon-btn')).length >= 2);
+  const fmeta = await p.$$eval('.files-view.picker .files-row', (rs) => rs.filter((r) => !r.hasAttribute('aria-pressed')).map((r) => r.querySelector('small.src')?.textContent || ''));
+  ok(L('a folder\'s line: its count and its date'), fmeta.length > 0 && fmeta.some((x) => x.includes(' · ') && /\d/.test(x)), fmeta.slice(0, 3));
+  await p.click('.files-view.picker .topbar [data-icon="search"]'); await p.waitForSelector('.files-view.picker .files-search:not([hidden])');
+  const nBefore = (await p.$$('.files-view.picker .files-row')).length; await p.fill('.files-view.picker .files-search', 'zzzz-none'); await p.waitForTimeout(250);
+  ok(L('search filters this folder (nothing opened elsewhere), still picking'), (await p.$$('.files-view.picker .files-row')).length < nBefore && !!(await p.$('.files-view.picker')));
+  await p.click('.files-view.picker .topbar [data-icon="search"]'); await p.waitForTimeout(250);
   const row = (name) => p.locator(`.files-row:has(.files-name[title="${name}"])`).first();
   if (!multiple) {
     ok(L('another kind greyed (Song.mp3), the kind asked not (photo.jpg)'), await row('Song.mp3').evaluate((e) => e.classList.contains('pick-off')) && !(await row('photo.jpg').evaluate((e) => e.classList.contains('pick-off'))));

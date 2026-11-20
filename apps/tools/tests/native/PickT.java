@@ -30,7 +30,9 @@ public class PickT {
         ok("the walk stops at the entries bound", KtPickLogic.recents(Arrays.asList(new File(d, "Download")), 64, 10, 6).size() <= 10);
         ok("no folders: nothing", KtPickLogic.recents(new ArrayList<File>(), 64, 100, 6).isEmpty());
         ok("first run, no other app holds anything on the provider: its own browser", KtPickLogic.firstRunChoice(false, 0) == KtPickLogic.OWN_BROWSER);
-        ok("first run, other apps hold links or folder access: storage places kept", KtPickLogic.firstRunChoice(false, 3) == KtPickLogic.STORAGE_PLACES);
+        ok("0.22.1: first run, other apps hold links or folder access: its own browser all the same", KtPickLogic.firstRunChoice(false, 3) == KtPickLogic.OWN_BROWSER);
+        ok("…and the one-time note says how many links stopped", KtPickLogic.switchedNote(KtPickLogic.OWN_BROWSER, 3) == 3);
+        ok("no grants: no note; nothing switched: no note", KtPickLogic.switchedNote(KtPickLogic.OWN_BROWSER, 0) == 0 && KtPickLogic.switchedNote(KtPickLogic.KEEP, 4) == 0);
         ok("a choice already made: kept, whatever is held", KtPickLogic.firstRunChoice(true, 0) == KtPickLogic.KEEP && KtPickLogic.firstRunChoice(true, 5) == KtPickLogic.KEEP);
         ok("switching to its own browser by hand asks only when something is held", KtPickLogic.askBeforeOwnBrowser(2) && !KtPickLogic.askBeforeOwnBrowser(0));
         // (A symlink inside the folder leading out of it: neither followed nor listed.)

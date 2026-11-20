@@ -83,6 +83,51 @@ public class BatT {
         check("unknown level changes nothing", !n.feed("C", -1, 20) && !n.told("C"));
         check("mark 0 (no notice) never tells", !n.feed("D", 3, 0));
 
+        // 0.22.1: connected from the public sources (made-up addresses and names).
+        KtBatPure.Presence pr = new KtBatPure.Presence();
+        pr.add("aa:00:00:00:00:01", KtBatPure.profileTag(KtBatPure.P_A2DP));
+        check("refused reflection (null) + the A2DP proxy says connected → connected", pr.connected("AA:00:00:00:00:01", "Lake Buds", "Lake Buds", null));
+        eq("…its links: audio", "[audio]", pr.profiles("AA:00:00:00:00:01", null, "Lake Buds").toString());
+        check("refused reflection and no source → not connected", !pr.connected("AA:00:00:00:00:09", null, "Nobody", null));
+        check("the hidden call alone still counts (one voice)", pr.connected("AA:00:00:00:00:09", null, "Nobody", Boolean.TRUE));
+        check("the hidden call saying no does not overrule a profile", pr.connected("AA:00:00:00:00:01", null, null, Boolean.FALSE));
+        pr.add("AA:00:00:00:00:01", KtBatPure.profileTag(KtBatPure.P_HEADSET)); pr.add("AA:00:00:00:00:01", KtBatPure.audioTag(8));
+        eq("A2DP + hands-free + the audio route: audio, calls (each once, in order)", "[audio, calls]", pr.profiles("AA:00:00:00:00:01", null, null).toString());
+        pr.addByName("  Desk   KEYS ", "input");
+        eq("an input device matched by name (case and spaces aside)", "[input]", pr.profiles("AA:00:00:00:00:05", "desk keys", null).toString());
+        check("…and so connected", pr.connected("AA:00:00:00:00:05", null, "Desk Keys", null));
+        pr.add("AA:00:00:00:00:07", KtBatPure.profileTag(KtBatPure.P_GATT));
+        eq("an LE device on GATT", "[le]", pr.profiles("AA:00:00:00:00:07", null, null).toString());
+        pr.add("AA:00:00:00:00:08", KtBatPure.Presence.LINK);
+        check("a link heard up without a profile: connected, no link word shown", pr.connected("AA:00:00:00:00:08", null, null, null) && pr.profiles("AA:00:00:00:00:08", null, null).isEmpty());
+        pr.add("not an address", "audio"); pr.add("02:00:00:00:00:00", "audio");
+        check("junk and the hidden placeholder address ignored", !pr.connected("02:00:00:00:00:00", null, null, null));
+        eq("profile numbers: hearing aid 21, LE audio 22, input 4", "hearingAid leAudio input", KtBatPure.profileTag(21) + " " + KtBatPure.profileTag(22) + " " + KtBatPure.profileTag(4));
+        check("unknown profile and audio types: none", KtBatPure.profileTag(99) == null && KtBatPure.audioTag(2) == null);
+        eq("audio types: SCO calls, LE headset", "calls leAudio hearingAid", KtBatPure.audioTag(7) + " " + KtBatPure.audioTag(26) + " " + KtBatPure.audioTag(23));
+        // The broadcasts heard.
+        KtBatPure.Live live = new KtBatPure.Live();
+        live.heard("AA:00:00:00:00:01", "audio", true); live.heard("AA:00:00:00:00:01", "calls", true); live.heard("AA:00:00:00:00:02", KtBatPure.Presence.LINK, true);
+        KtBatPure.Presence p2 = new KtBatPure.Presence(); live.into(p2);
+        check("broadcasts: audio and calls up, a link up", p2.profiles("AA:00:00:00:00:01", null, null).size() == 2 && p2.connected("AA:00:00:00:00:02", null, null, null));
+        live.heard("AA:00:00:00:00:01", "calls", false); live.heard("AA:00:00:00:00:02", KtBatPure.Presence.LINK, false);
+        p2 = new KtBatPure.Presence(); live.into(p2);
+        check("a profile down, a link down", "[audio]".equals(p2.profiles("AA:00:00:00:00:01", null, null).toString()) && !p2.connected("AA:00:00:00:00:02", null, null, null));
+        live.clear(); p2 = new KtBatPure.Presence(); live.into(p2);
+        check("Bluetooth off: nothing left connected", !p2.connected("AA:00:00:00:00:01", null, null, null));
+        check("profile states: 2 up, 0 down, 1 (connecting) nothing", Boolean.TRUE.equals(KtBatPure.profileState(2)) && Boolean.FALSE.equals(KtBatPure.profileState(0)) && KtBatPure.profileState(1) == null);
+        // The details' words.
+        eq("types", "classic le dual null", KtBatPure.typeKey(1) + " " + KtBatPure.typeKey(2) + " " + KtBatPure.typeKey(3) + " " + KtBatPure.typeKey(0));
+        eq("bond", "bonded bonding none", KtBatPure.bondKey(12) + " " + KtBatPure.bondKey(11) + " " + KtBatPure.bondKey(10));
+        eq("class words: audio/video, headphones", "audioVideo headphones", KtBatPure.majorKey(0x0400) + " " + KtBatPure.minorKey(0x0400, 0x0418));
+        eq("class words: peripheral combo, gamepad, uncategorized", "combo gamepad null", KtBatPure.minorKey(0x0500, 0x05C0) + " " + KtBatPure.minorKey(0x0500, 0x0508) + " " + KtBatPure.majorKey(0x1F00));
+        eq("services: sink, hands-free, HID, battery; unknown and doubles left out", "[audioSink, handsFree, hid, battery]", KtBatPure.services(new String[] {
+            "0000110b-0000-1000-8000-00805f9b34fb", "0000111E-0000-1000-8000-00805F9B34FB", "00001124-0000-1000-8000-00805f9b34fb", "00001812-0000-1000-8000-00805f9b34fb", "0000180f-0000-1000-8000-00805f9b34fb", "12345678-0000-1000-8000-00805f9b34fb", "0000abcd-0000-1000-8000-00805f9b34fb", null }).toString());
+        eq("services: none", "[]", KtBatPure.services(null).toString());
+        eq("codecs", "SBC AAC LDAC LC3 null", KtBatPure.codecName(0) + " " + KtBatPure.codecName(1) + " " + KtBatPure.codecName(4) + " " + KtBatPure.codecName(5) + " " + KtBatPure.codecName(1000000));
+        eq("a part's level (ASCII)", 70, KtBatPure.metaLevel("70".getBytes()));
+        eq("a part's level: junk, too big, none", "-1 -1 -1", KtBatPure.metaLevel("x".getBytes()) + " " + KtBatPure.metaLevel("101".getBytes()) + " " + KtBatPure.metaLevel(null));
+
         System.out.println(fails == 0 ? "device battery (phone): all passed" : "device battery (phone): " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }

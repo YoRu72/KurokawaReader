@@ -7,14 +7,24 @@
 // explained calmly and asked only when «Allow» is tapped; refused, a calm card with «Ask again» or App info.
 // Notices: on or off, one low mark — told once per drop, while the app runs (no service of its own: the page says so).
 // None of the computer's options (tray, taskbar, start with the system, families, Linux / macOS cards) are here.
-import { h, icon, iconButton, pickButton, toast } from '../ui/dom';
-import { t, localDigits } from '../i18n';
+// 0.22.1: «connected» from Android's public sources together, with the links in use on the chip (KtBattery.presence);
+// Android's broadcasts push a fresh reading by themselves (the «btBattery» event); a card tapped opens its details
+// (only what Android already holds — unknown values left out); only the cards that changed are drawn again, and nothing
+// runs while the page is hidden.
+import { h, icon, iconButton, openSheet, pickButton, toast } from '../ui/dom';
+import { t, localDigits, getLang } from '../i18n';
+import type { Strings } from '../i18n/en';
 import { back } from '../router';
 import { ktPlugin, listen } from '../native';
 import { picSvg } from './btconnect';
 import { ageText } from './battery';
 
-export type PhoneDev = { key: string; name: string; kind: string; connected: boolean; level: number; source: '' | 'system' | 'hfp'; seenAt: number; lastLevel: number; lastLevelAt: number };
+export type PhoneDev = {
+  key: string; name: string; kind: string; connected: boolean; level: number; source: '' | 'system' | 'hfp'; seenAt: number; lastLevel: number; lastLevelAt: number;
+  // (0.22.1, each left out when Android does not say: the links up, the details.)
+  profiles?: string[]; lastSource?: '' | 'system' | 'hfp'; firstSeen?: number; alias?: string; sysName?: string; type?: 'classic' | 'le' | 'dual'; bond?: 'bonded' | 'bonding' | 'none';
+  major?: string; minor?: string; services?: string[]; codec?: string; parts?: { left?: number; right?: number; case?: number };
+};
 export type PhoneCfg = { notify: boolean; low: number; marks?: Record<string, number> };
 export type PhoneState = { sdk: number; now: number; adapter: boolean; on: boolean; access: 'granted' | 'ask' | 'refused' | 'blocked'; config: PhoneCfg; devices: PhoneDev[] };
 /** KtPlugin's methods (native/android/KtPlugin.java — the same names and arguments; tests/batphone.cjs fakes them). */
@@ -39,6 +49,15 @@ function kindPic(kind: string): SVGElement {
   if (kind === 'watch') { s.innerHTML = WATCH; s.dataset.picture = 'watch'; }
   return s;
 }
+/** A word from one of the details' families; '' when the key is not one the page knows. */
+const word = (family: string, key: string | undefined): string => {
+  if (!key) return '';
+  const k = `${family}_${key}` as keyof Strings; const v = t(k);
+  return v && v !== k ? v : '';
+};
+/** A short list in the language's own separator (Arabic «، », Japanese «・», Chinese «、»). */
+const SEP: Record<string, string> = { ar: '، ', ja: '・', zh: '、' };
+const list = (xs: string[]): string => xs.filter(Boolean).join(SEP[getLang()] ?? ', ');
 const kindWord = (kind: string): string => (kind === 'watch' ? t('bphWatch') : t(`batKind_${PIC[kind] ? kind : 'other'}` as 'batKind_other'));
 
 const CSS = `
@@ -80,6 +99,10 @@ const CSS = `
 .bp-view .bp-row > span { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 3px; color: var(--md-on-surface); }
 .bp-view .bp-row .pick-btn { flex: 0 0 140px; width: 140px; }
 .bp-view .bp-note { margin: 8px 0 0; font-size: 13px; color: var(--md-on-surface-variant); line-height: 1.55; }
+.bp-card[role="button"] { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.bp-card[role="button"]:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.bp-card .bp-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-details .kv dd { color: var(--md-on-surface); }
 `;
 function style(): void {
   if (document.getElementById('kt-batphone-css')) return;
@@ -125,6 +148,14 @@ export function batPhoneView(): HTMLElement & { dispose?: () => void } {
 
   const pct = (n: number) => t('batPct', { n: localDigits(n) });
   const markOf = (c: PhoneCfg, key: string) => { const v = c.marks?.[key]; return typeof v === 'number' ? v : c.low; };
+  /** The chip: «Connected · Audio, Calls» — the links in use said compactly. */
+  const chipText = (x: PhoneDev): string => {
+    if (!x.connected) return t('bphNotConnected');
+    const links = (x.profiles ?? []).map((k) => word('bphLinks', k)).filter(Boolean);
+    return links.length ? `${t('bphConnected')} · ${list(links)}` : t('bphConnected');
+  };
+  /** What a card shows, as one string: the card is drawn again only when this changed (the ages included). */
+  const cardSig = (x: PhoneDev, now: number, c: PhoneCfg): string => JSON.stringify([x, markOf(c, x.key), x.lastLevelAt ? ageText(x.lastLevelAt, now) : '', x.seenAt ? ageText(x.seenAt, now) : '']);
   const card = (x: PhoneDev, now: number, c: PhoneCfg): HTMLElement => {
     const has = x.level >= 0 && x.connected; const mk = markOf(c, x.key);
     const low = has && mk > 0 && x.level <= mk;
@@ -132,12 +163,49 @@ export function batPhoneView(): HTMLElement & { dispose?: () => void } {
       ? h('div', { class: 'bp-level' }, h('span', { class: 'bp-pct' }, pct(x.level)), h('span', { class: 'bp-meter', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(x.level), 'aria-label': pct(x.level) }, h('i', { style: { width: `${Math.max(2, Math.min(100, x.level))}%` } })))
       : h('div', { class: 'bp-level' }, h('span', { class: 'bp-unknown' }, !x.connected && x.lastLevel >= 0 && x.lastLevelAt > 0 ? t('bphLastKnown', { level: pct(x.lastLevel), age: ageText(x.lastLevelAt, now) }) : t('batLevelUnknown')));
     const foot = x.connected ? (has ? null : t('bphNoLevel')) : x.seenAt > 0 ? t('bphSeen', { age: ageText(x.seenAt, now) }) : t('bphNeverSeen');
-    return h('section', { class: 'card bp-card' + (low ? ' low' : '') + (x.connected ? '' : ' away'), 'data-key': x.key, 'data-kind': x.kind, 'data-connected': String(x.connected), 'data-level': String(has ? x.level : -1) },
+    const el = h('section', { class: 'card bp-card' + (low ? ' low' : '') + (x.connected ? '' : ' away'), role: 'button', tabindex: '0', 'aria-haspopup': 'dialog', 'data-key': x.key, 'data-kind': x.kind, 'data-connected': String(x.connected), 'data-level': String(has ? x.level : -1), 'data-profiles': (x.profiles ?? []).join(' '),
+      onclick: () => details(x.key), onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); details(x.key); } } },
       h('div', { class: 'bp-ic' }, kindPic(x.kind)),
       h('div', { class: 'bp-who' }, h('span', { class: 'bp-name', dir: 'auto' }, x.name || t('batUnnamed')),
-        h('span', { class: 'bp-sub' }, h('span', null, kindWord(x.kind)), h('span', { class: 'bp-chip' + (x.connected ? ' on' : '') }, x.connected ? t('bphConnected') : t('bphNotConnected')))),
+        h('span', { class: 'bp-sub' }, h('span', null, kindWord(x.kind)), h('span', { class: 'bp-chip' + (x.connected ? ' on' : '') }, chipText(x)))),
       level, foot ? h('p', { class: 'bp-foot' }, foot) : null);
+    return el;
   };
+
+  /** The details' rows, read only: what Android already holds; a value it does not give is left out, never «unknown». */
+  const detailRows = (x: PhoneDev, now: number): [string, string, string][] => {
+    const rows: [string, string, string][] = [];
+    const add = (id: string, k: keyof Strings, v: string | undefined) => { if (v) rows.push([id, t(k), v]); };
+    const alias = x.alias?.trim(), sys = x.sysName?.trim();
+    add('alias', 'bphRowAlias', alias && alias !== sys ? alias : undefined);
+    add('name', 'bphRowName', sys);
+    add('type', 'bphRowType', word('bphType', x.type));
+    add('class', 'bphRowClass', [word('bphMajor', x.major), word('bphMinor', x.minor)].filter(Boolean).join(' · '));
+    add('bond', 'bphRowBond', word('bphBond', x.bond));
+    add('links', 'bphRowLinks', x.connected ? list((x.profiles ?? []).map((k) => word('bphLinks', k))) : '');
+    add('services', 'bphRowServices', list((x.services ?? []).map((k) => word('bphSvc', k))));
+    add('codec', 'bphRowCodec', x.connected ? x.codec : undefined);
+    const pt = x.parts ?? {}; const part = (k: keyof Strings, v?: number) => (typeof v === 'number' && v >= 0 ? t(k, { n: pct(v) }) : '');
+    add('parts', 'bphRowParts', x.connected ? [part('bphPartLeft', pt.left), part('bphPartRight', pt.right), part('bphPartCase', pt.case)].filter(Boolean).join(' · ') : '');
+    const src = x.connected && x.level >= 0 ? x.source : x.lastSource;
+    add('source', 'bphRowSource', word('bphSrc', src || undefined));
+    add('read', 'bphRowRead', x.lastLevelAt > 0 ? ageText(x.lastLevelAt, now) : '');
+    add('last', 'bphRowLast', x.connected ? t('bphConnectedNow') : x.seenAt > 0 ? ageText(x.seenAt, now) : '');
+    add('first', 'bphRowFirst', x.firstSeen && x.firstSeen > 0 ? ageText(x.firstSeen, now) : '');
+    return rows;
+  };
+  /** The open details sheet (one at a time): filled again when its device's reading changes. */
+  let sheet: { key: string; body: HTMLElement; close: () => void } | null = null;
+  const fillDetails = (x: PhoneDev, now: number) => {
+    if (!sheet) return;
+    sheet.body.replaceChildren(h('dl', { class: 'kv' }, ...detailRows(x, now).flatMap(([id, k, v]) => [h('dt', { 'data-row': id }, k), h('dd', { dir: 'auto', 'data-row': id }, v)])));
+  };
+  function details(key: string): void {
+    const x = st?.devices.find((d) => d.key === key); if (!x || !st) return;
+    const sh = openSheet(x.name || t('batUnnamed'), t('close'), { onClose: () => { if (sheet?.key === key) sheet = null; } });
+    sh.el.classList.add('bp-details'); sh.el.dataset.key = key;
+    sheet = { key, body: sh.body, close: sh.close }; fillDetails(x, st.now);
+  }
 
   const settingsCard = (c: PhoneCfg): HTMLElement => {
     const sw = h('input', { type: 'checkbox', role: 'switch', checked: c.notify, 'aria-label': t('bphNotify'), onchange: () => {
@@ -154,44 +222,84 @@ export function batPhoneView(): HTMLElement & { dispose?: () => void } {
       h('p', { class: 'bp-note', 'data-note': 'limits' }, t('bphLimits')));
   };
 
+  /** The frame of the list and its cards, kept between readings (Part D: only the cards that changed are drawn again). */
+  type Shell = { mode: 'list' | 'empty'; count: HTMLElement; grid: HTMLElement; settings: HTMLElement; cfgSig: string };
+  let shell: Shell | null = null; const cards = new Map<string, { sig: string; el: HTMLElement }>();
+  /** One clear card in place of the list (off, not allowed, no Bluetooth): the list forgotten, an open details sheet closed. */
+  const plain = (...els: HTMLElement[]) => { shell = null; cards.clear(); if (sheet) { const c = sheet.close; sheet = null; c(); } body.replaceChildren(...els); };
   function draw(): void {
     if (!st || gone) return;
     const s = st;
     refreshBtn.hidden = !(s.adapter && s.on && s.access === 'granted');
-    if (!s.adapter) { body.replaceChildren(stateCard('noBluetooth', 'other', t('bphNoBtTitle'), t('bphNoBtBody'))); return; }
+    if (!s.adapter) { plain(stateCard('noBluetooth', 'other', t('bphNoBtTitle'), t('bphNoBtBody'))); return; }
     if (s.access === 'ask' || (asking && s.access !== 'granted')) {
       const allow = btn('filled', 'allow', asking ? t('bphAsking') : t('bphAllow'), () => void ask());
       if (asking) allow.setAttribute('disabled', '');
-      body.replaceChildren(stateCard('permission', 'earbuds', t('bphIntroTitle'), t('bphIntroBody'), h('p', { class: 'bp-safe' }, t('bphIntroSafe')), acts(allow)));
+      plain(stateCard('permission', 'earbuds', t('bphIntroTitle'), t('bphIntroBody'), h('p', { class: 'bp-safe' }, t('bphIntroSafe')), acts(allow)));
       return;
     }
     if (s.access === 'refused' || s.access === 'blocked') {
       const blocked = s.access === 'blocked';
-      body.replaceChildren(stateCard(blocked ? 'blocked' : 'refused', 'earbuds', t('bphRefusedTitle'), blocked ? t('bphBlockedBody') : t('bphRefusedBody'),
+      plain(stateCard(blocked ? 'blocked' : 'refused', 'earbuds', t('bphRefusedTitle'), blocked ? t('bphBlockedBody') : t('bphRefusedBody'),
         acts(blocked ? btn('filled', 'app', t('bphAppSettings'), () => open('app')) : btn('filled', 'allow', t('bphAskAgain'), () => void ask()))));
       return;
     }
-    if (!s.on) { body.replaceChildren(stateCard('off', 'headset', t('bphOffTitle'), t('bphOffBody'), acts(btn('filled', 'bluetooth', t('bphBtSettings'), () => open('bluetooth'))))); return; }
+    if (!s.on) { plain(stateCard('off', 'headset', t('bphOffTitle'), t('bphOffBody'), acts(btn('filled', 'bluetooth', t('bphBtSettings'), () => open('bluetooth'))))); return; }
     // (Connected first, then by name.)
-    const list = s.devices.slice().sort((a, b) => Number(b.connected) - Number(a.connected) || (a.name || '').localeCompare(b.name || ''));
-    const btSettings = btn('tonal', 'bluetooth', t('bphBtSettings'), () => open('bluetooth'), 'settings');
-    const top = list.length
-      ? [h('div', { class: 'bp-head' }, h('p', { class: 'bp-count' }, t('bphCount', { n: localDigits(list.length) })), btSettings), h('div', { class: 'bp-grid' }, ...list.map((x) => card(x, s.now, s.config)))]
-      : [stateCard('empty', 'headset', t('bphEmptyTitle'), t('bphEmptyBody'), acts(btSettings))];
-    body.replaceChildren(...top, settingsCard(s.config), h('p', { class: 'bp-note', 'data-note': 'about' }, t('bphAbout')));
+    const devs = s.devices.slice().sort((a, b) => Number(b.connected) - Number(a.connected) || (a.name || '').localeCompare(b.name || ''));
+    const mode = devs.length ? 'list' : 'empty';
+    if (!shell || shell.mode !== mode) {
+      // (The page's frame for the list, made once; afterwards only what changed is touched.)
+      cards.clear();
+      const btSettings = btn('tonal', 'bluetooth', t('bphBtSettings'), () => open('bluetooth'), 'settings');
+      const count = h('p', { class: 'bp-count' }); const grid = h('div', { class: 'bp-grid' });
+      const settings = h('div', { class: 'bp-set-slot' });
+      const top = mode === 'list' ? [h('div', { class: 'bp-head' }, count, btSettings), grid] : [stateCard('empty', 'headset', t('bphEmptyTitle'), t('bphEmptyBody'), acts(btSettings))];
+      shell = { mode, count, grid, settings, cfgSig: '' };
+      body.replaceChildren(...top, settings, h('p', { class: 'bp-note', 'data-note': 'about' }, t('bphAbout')));
+    }
+    const sh = shell;
+    const cfgSig = JSON.stringify(s.config);
+    if (sh.cfgSig !== cfgSig) { sh.cfgSig = cfgSig; sh.settings.replaceChildren(settingsCard(s.config)); }
+    if (mode === 'empty') return;
+    const countText = t('bphCount', { n: localDigits(devs.length) }); if (sh.count.textContent !== countText) sh.count.textContent = countText;
+    const keep = new Set<string>();
+    devs.forEach((x, i) => {
+      keep.add(x.key);
+      const sig = cardSig(x, s.now, s.config); let c = cards.get(x.key);
+      if (!c || c.sig !== sig) {
+        const el = card(x, s.now, s.config);
+        if (c) c.el.replaceWith(el);
+        c = { sig, el }; cards.set(x.key, c);
+        if (sheet?.key === x.key) fillDetails(x, s.now);
+      }
+      // (Moved only when out of place.)
+      if (sh.grid.children[i] !== c.el) sh.grid.insertBefore(c.el, sh.grid.children[i] ?? null);
+    });
+    for (const [k, c] of cards) if (!keep.has(k)) { c.el.remove(); cards.delete(k); }
   }
 
   // (Android's answers: the plugin's event — a level changed, a device came or went, back from the permission dialog —
   // and coming back to the app from its settings.)
   let off: { remove(): void } | null = null;
   void listen(p as unknown as { addListener(ev: string, fn: (d: PhoneState) => void): unknown }, 'btBattery', (e) => { if (gone || !e) return; st = e; if (e.access !== 'ask') asking = false; draw(); }).then((l) => { if (gone) l.remove(); else off = l; });
-  const again = () => { if (!document.hidden) void load(); };
-  document.addEventListener('visibilitychange', again); window.addEventListener('focus', again);
-  // (The ages move on while the page is open: redrawn every half minute — no per-second timer.)
-  const tick = window.setInterval(() => { if (st) { st.now += 30_000; draw(); } }, 30_000);
+  // (Hidden — another app in front, the screen off —: nothing runs, Android's sources let go; shown again: read anew.)
+  let hidden = document.hidden;
+  const vis = () => {
+    if (gone) return;
+    if (document.hidden) { if (!hidden) { hidden = true; void p.batteryPhoneWatch({ on: false }).catch(() => undefined); } return; }
+    if (hidden) { hidden = false; void p.batteryPhoneWatch({ on: true }).catch(() => undefined); }
+    void load();
+  };
+  const focus = () => { if (!document.hidden) void load(); };
+  document.addEventListener('visibilitychange', vis); window.addEventListener('focus', focus);
+  // (The ages move on while the list is shown: every half minute — no per-second timer, nothing while hidden, off or
+  // not allowed; only cards whose words changed are drawn again.)
+  const tick = window.setInterval(() => { if (!st || document.hidden || !shell || shell.mode !== 'list') return; st.now += 30_000; draw(); }, 30_000);
   void load();
   root.dispose = () => {
-    gone = true; off?.remove(); document.removeEventListener('visibilitychange', again); window.removeEventListener('focus', again); clearInterval(tick);
+    gone = true; off?.remove(); document.removeEventListener('visibilitychange', vis); window.removeEventListener('focus', focus); clearInterval(tick);
+    if (sheet) { const c = sheet.close; sheet = null; c(); }
     void p.batteryPhoneWatch({ on: false }).catch(() => undefined);
   };
   return root;

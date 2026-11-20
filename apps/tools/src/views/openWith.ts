@@ -183,12 +183,15 @@ export async function otherAppsSheet(): Promise<void> {
 /** «In other apps' file pickers, Kurokawa Tools appears as»: its own browser (the documents provider off — Android
  *  then lists Tools as an app and opens Files as a picker) or storage places (the provider on — the only way to save
  *  into Tools' folders from another app). The state shown is read back from the phone, never assumed. */
-type PmState = { on: boolean; others?: number; ask?: boolean; kept?: boolean };
+/** `cut`: the update to 0.22.1 switched everyone to its own browser once, and this many links other apps had saved on the
+ *  storage places stopped working then (0 or absent: none, or the person has chosen since). */
+type PmState = { on: boolean; others?: number; ask?: boolean; cut?: number };
 function pickerModeBlock(call: (o: { on?: boolean }) => Promise<PmState>): HTMLElement {
   const note = h('p', { class: 'hint pm-error', hidden: true }); const chips = h('div', { class: 'pm-chips' });
-  // (The update found other apps already using the storage places: they were kept on — one calm line says so.)
-  const kept = h('p', { class: 'hint pm-kept', hidden: true }, t('pmKeptForOthers')); let last: PmState = { on: false };
-  const seen = (r: PmState) => { last = r; kept.hidden = !(r.kept && r.on); draw(!!r.on); };
+  // (The update switched to its own browser while other apps held links on the storage places: one calm line says what
+  // stopped and how to bring it back — until a choice is made here.)
+  const kept = h('p', { class: 'hint pm-kept', hidden: true }); let last: PmState = { on: false };
+  const seen = (r: PmState) => { last = r; const n = r.cut ?? 0; kept.hidden = !(n > 0 && !r.on); if (n > 0) kept.textContent = t('pmSwitchedNote', { n: String(n) }); draw(!!r.on); };
   const draw = (on: boolean) => chips.replaceChildren(...([['own', t('pmOwn'), !on], ['storage', t('pmStorage'), on]] as [string, string, boolean][]).map(([id, label, sel]) =>
     h('button', { type: 'button', class: 'chip' + (sel ? ' on' : ''), 'data-pm': id, 'aria-pressed': String(sel), onclick: () => void change(id === 'storage') }, label)));
   const change = async (on: boolean) => {

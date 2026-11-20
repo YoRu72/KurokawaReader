@@ -70,10 +70,18 @@ final class KtPickLogic {
     /** First run after the update: the default («its own browser», the provider off) is applied once; a choice made
      *  since is never overridden. */
     static boolean applyDefaultNow(boolean alreadyApplied) { return !alreadyApplied; }
-    /** The first run's choice: nothing (made already), «its own browser» (the provider off), or — other apps already
-     *  holding links or folder access on the provider (`grants`) — «storage places» kept on, so nothing they hold breaks. */
+    /**
+     * The first run's choice (0.22.1, once more under a new key): nothing (made already) or «its own browser» (the
+     * provider off) — for everyone, other apps' saved access on the provider (`grants`) included: the owner wants the
+     * browser, and 0.22.0's «kept for other apps» left him with Android's picker. We delete none of those grants
+     * (disabling the component does not release them: the platform drops persisted grants when the package is removed
+     * or its data cleared), so «Storage places» on again should serve them; not verified on a device, and an app may
+     * have dropped a link that failed meanwhile — hence the note's «some may need choosing again».
+     */
     static final int KEEP = 0, OWN_BROWSER = 1, STORAGE_PLACES = 2;
-    static int firstRunChoice(boolean alreadyApplied, int grants) { if (alreadyApplied) return KEEP; return grants > 0 ? STORAGE_PLACES : OWN_BROWSER; }
+    static int firstRunChoice(boolean alreadyApplied, int grants) { return alreadyApplied ? KEEP : OWN_BROWSER; }
+    /** The one-time note in the setting's sheet after that switch: shown (with their count) only when such grants existed. */
+    static int switchedNote(int choice, int grants) { return choice == OWN_BROWSER && grants > 0 ? grants : 0; }
     /** Switching to «its own browser» by hand asks first (naming what breaks) when other apps hold such grants. */
     static boolean askBeforeOwnBrowser(int grants) { return grants > 0; }
 }

@@ -1655,6 +1655,8 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .src-hit .ctx { font-size: 14px; line-height: 1.6; }
 .src-hit mark { background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: 3px; padding: 0 2px; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
+/* A hint under a switch's label always sits on its own line (not only in sheets and the settings page). */
+.switch-row > span > small { display: block; margin-top: 2px; }
 /* Repositories of extensions in the hub: a section each, its extensions as small cards. */
 .sheet-body .source-row, .sheet-body .plain-list, .sheet-body .switch-row, .sheet-body .field, .sheet-body .section-title, .sheet-body .empty { font-family: var(--font-ui); font-size: 15px; line-height: 1.45; }
 
@@ -1766,17 +1768,17 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 
 /* Switches, the same everywhere (a Material 3 switch drawn on the checkbox): in sheets' switch rows and in
    Settings' rows — a long label wrapping no longer shrinks the box beside it. */
-.switch-row input[type=checkbox], .settings-view .row > input[type=checkbox], .settings-view label.row input[type=checkbox] {
+.switch-row input[type=checkbox], .settings-view .row > input[type=checkbox], .settings-view label.row input[type=checkbox], .check-row > input[type=checkbox] {
   -webkit-appearance: none; appearance: none; flex: none; position: relative; width: 52px; height: 32px; margin: 0; border-radius: 16px; cursor: pointer;
   background: var(--md-surface-container-highest); border: 2px solid var(--md-outline); transition: background var(--dur-short, .15s) ease, border-color var(--dur-short, .15s) ease;
 }
-.switch-row input[type=checkbox]::before, .settings-view .row > input[type=checkbox]::before, .settings-view label.row input[type=checkbox]::before {
+.switch-row input[type=checkbox]::before, .settings-view .row > input[type=checkbox]::before, .settings-view label.row input[type=checkbox]::before, .check-row > input[type=checkbox]::before {
   content: ''; position: absolute; top: 50%; inset-inline-start: 6px; width: 16px; height: 16px; border-radius: 50%; background: var(--md-outline); transform: translateY(-50%); transition: all var(--dur-short, .15s) ease;
 }
-.switch-row input[type=checkbox]:checked, .settings-view .row > input[type=checkbox]:checked, .settings-view label.row input[type=checkbox]:checked { background: var(--md-primary); border-color: var(--md-primary); }
-.switch-row input[type=checkbox]:checked::before, .settings-view .row > input[type=checkbox]:checked::before, .settings-view label.row input[type=checkbox]:checked::before { inset-inline-start: 24px; width: 24px; height: 24px; background: var(--md-on-primary); }
-.switch-row input[type=checkbox]:focus-visible, .settings-view .row > input[type=checkbox]:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
-.switch-row input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+.switch-row input[type=checkbox]:checked, .settings-view .row > input[type=checkbox]:checked, .settings-view label.row input[type=checkbox]:checked, .check-row > input[type=checkbox]:checked { background: var(--md-primary); border-color: var(--md-primary); }
+.switch-row input[type=checkbox]:checked::before, .settings-view .row > input[type=checkbox]:checked::before, .settings-view label.row input[type=checkbox]:checked::before, .check-row > input[type=checkbox]:checked::before { inset-inline-start: 24px; width: 24px; height: 24px; background: var(--md-on-primary); }
+.switch-row input[type=checkbox]:focus-visible, .settings-view .row > input[type=checkbox]:focus-visible, .check-row > input[type=checkbox]:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.switch-row input[type=checkbox]:disabled , .check-row > input[type=checkbox]:disabled { opacity: .45; cursor: default; }
 
 /* The What's new sheet: the state, then what is new (each row opened or marked seen), the failures with their
    reason, the settings folded. */
@@ -2067,3 +2069,12 @@ html.winbar.wb-clear.wb-mac:not(.wb-hide):not([dir='rtl']) .nav-rail { padding-t
 /* No browser spinner arrows on number fields (white boxes inside the rounded field). */
 input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Phone only (never on a computer): small buttons and chips reach 40 px, a swatch and a small icon button get their
+   hit area from a pseudo box without changing how they look. */
+html:not(.pc) .btn.small, html:not(.pc) .chip.small { min-height: 40px; min-width: 40px; }
+/* A bare row of chips (no gap of its own): wraps, with room between. */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+html:not(.pc) .row-actions .icon-btn, html:not(.pc) .icon-btn.small { min-width: 40px; min-height: 40px; }
+/* Buttons in one row of actions: equal widths. */
+.row-actions > .btn { flex: 1 1 140px; justify-content: center; }
