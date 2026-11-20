@@ -131,7 +131,10 @@ const subJobs = new Map<string, (ev: JobEvent) => void>();
 /** Jobs started plainly (the engine checked the sizes), and moves that were a rename on one storage (nothing copied to check). */
 const sizeChecked = new Set<string>(); const renamedMoves = new Set<string>();
 let stagesSwept = false;
-const setClip = (c: typeof clipboard) => { clipboard = c; keepResume({ clip: c ? { op: c.op, paths: c.paths } : null }); for (const f of clipWatch) f(); };
+/** What a paste found gone from the clipboard (said on its bar): '' none, 'all' every item, else how many. Any new
+ *  clipboard puts it down. */
+let clipGone = '';
+const setClip = (c: typeof clipboard, gone = '') => { clipboard = c; clipGone = c ? gone : ''; keepResume({ clip: c ? { op: c.op, paths: c.paths, ...(c.busy ? { busy: c.busy } : {}) } : null }); for (const f of clipWatch) f(); };
 /** `dest` is one of `paths` or lies inside one — a folder pasted into itself (whole names compared, letter case aside:
  *  the phone's storage ignores it; /a/b and /a/bc are strangers; a computer's «\\» is a «/»). */
 export const intoItself = (paths: string[], dest: string): boolean => { const norm = (x: string) => x.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() + '/'; const d = norm(dest); return paths.some((p) => d.startsWith(norm(p))); };
@@ -149,12 +152,12 @@ const liveNote = (id: string, n: LiveNote | null) => { const all = liveNotes(); 
 /** Where the page stood — the folder (and the other pane's), its scroll, the clipboard —, kept small, for the page that
  *  comes back after Android ended its renderer (ui/restore.ts reads it once, then only on such a return). */
 const RESUME = 'kt.resume.files';
-type ResumeFiles = { at?: string; b?: string; y?: number; clip?: { op: 'copy' | 'move'; paths: string[] } | null };
+type ResumeFiles = { at?: string; b?: string; y?: number; clip?: { op: 'copy' | 'move'; paths: string[]; busy?: string } | null };
 let resumeTimer = 0; let resumeNext: ResumeFiles | null = null;
 const keepResume = (part: Partial<ResumeFiles>) => {
   if (!plug()) return; // (the phone only: a computer's page is never ended this way)
   if (!resumeNext) { try { resumeNext = JSON.parse(localStorage.getItem(RESUME) ?? '{}') as ResumeFiles; } catch { resumeNext = {}; } }
-  const next: ResumeFiles = { ...resumeNext, ...part }; if (next.clip) next.clip = { op: next.clip.op, paths: next.clip.paths.slice(0, 500) }; resumeNext = next;
+  const next: ResumeFiles = { ...resumeNext, ...part }; if (next.clip) next.clip = { op: next.clip.op, paths: next.clip.paths.slice(0, 500), ...(next.clip.busy ? { busy: next.clip.busy } : {}) }; resumeNext = next;
   window.clearTimeout(resumeTimer); resumeTimer = window.setTimeout(() => { try { const t0 = JSON.stringify(next); if (t0.length < 200000) localStorage.setItem(RESUME, t0); } catch { /* none */ } }, 300);
 };
 /** What ui/restore.ts handed over for the page that came back (taken once). */
@@ -1225,6 +1228,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const pasteBlock = (): string | null => {
     const c = clipboard; if (!c) return null;
     if (c.busy) return t('filesPasteBusy');
+    if (clipGone === 'all') return t('filesClipAllGone');
     if (!at || collection || isApps(at)) return t('filesPasteNoFolder');
     if (isArc(at)) return t('arcNoPaste');
     if (writable === false) return t('filesPasteReadOnly');
@@ -1232,6 +1236,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (c.op === 'move' && c.paths.every((p) => parentOf(p) === at)) return t('filesPasteSameFolder');
     if (c.paths.some(isVirtual) && !c.paths.every(isArc) && isVirtual(at)) return t('remoteNoBetween');
     return null;
+  };
+  /** Which of `paths` are no longer there (the storage says so; an unknown answer counts as there: the job tells). */
+  const gonePaths = async (paths: string[]): Promise<string[]> => {
+    const fx = fsx(); if (!fx) return []; const out: string[] = [];
+    for (const p of paths.slice(0, 200)) { if (isArc(p) || isVirtual(p)) continue; try { const r = await fx.filesStat({ path: p, shallow: true } as never); if (r && r.exists === false) out.push(p); } catch { /* unknown */ } }
+    return out;
   };
   const canPaste = (): boolean => !!clipboard && canJobs() && !pasteBlock();
   // (Whether this folder takes new files: asked of the phone once per folder — its own facts, not its contents.)
@@ -1246,7 +1256,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (!c || !show) { clipBar.replaceChildren(); return; }
     const why = pasteBlock(); const one = c.paths.length === 1; const fromArc = c.paths.every(isArc);
     const what = one ? nameEl(baseOf(c.paths[0]), false, 'files-clip-name') : h('b', { class: 'files-clip-name' }, t('filesClipCount', { n: localDigits(c.paths.length) }));
-    const how = c.busy ? t('filesPasteBusy') : fromArc ? t('filesClipExtract') : c.op === 'copy' ? t('filesClipCopy') : t('filesClipMove');
+    const how = c.busy ? t('filesPasteBusy') : clipGone ? t('filesClipSomeGone', { n: localDigits(Number(clipGone)) }) : fromArc ? t('filesClipExtract') : c.op === 'copy' ? t('filesClipCopy') : t('filesClipMove');
     const pasteB = h('button', { type: 'button', class: 'btn filled small files-clip-paste', title: why ?? t('filesPaste'), onclick: () => void paste() }, icon('paste'), h('span', null, t('filesPaste'))) as HTMLButtonElement;
     pasteB.disabled = !!why;
     clipBar.replaceChildren(h('span', { class: 'files-clip-ic' }, icon(c.op === 'move' ? 'scissors' : 'copy')),
@@ -1265,6 +1275,10 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const pasteNow = async (c: NonNullable<typeof clipboard>) => {
     const why = pasteBlock(); if (why) { toast(why, 'error'); return; }
     if (c.paths.every(isArc)) { await extractEntries(c.paths, at); return; }
+    // (Items gone since they were put on the clipboard — moved or deleted elsewhere, or a cut half-moved before the
+    // page was ended —: the bar says so, and no job starts; what is still there stays on it for the next Paste.)
+    const missing = await gonePaths(c.paths); if (clipboard !== c) return;
+    if (missing.length) { const rest = c.paths.filter((p) => !missing.includes(p)); setClip(rest.length ? { op: c.op, paths: rest } : c, rest.length ? String(missing.length) : 'all'); return; }
     if (c.op === 'copy') { await startJob('copy', c.paths, at); return; }
     const id = nid('fj'); setClip({ ...c, busy: id });
     if (!(await startJob('move', c.paths, at, id)) && clipboard?.busy === id) setClip({ op: 'move', paths: c.paths });
@@ -1311,6 +1325,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const onJob = (ev: JobEvent) => {
     if (ends(ev)) Q?.finish(ev.id);
     const subJob = subJobs.get(ev.id); if (subJob) { subJob(ev); return; }
+    // (A cut whose move ended — this page's, or one a page Android ended had started —: what the move left stays cut.)
+    if (ends(ev)) { const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); } }
     const rec = liveJobs.get(ev.id);
     if (rec && rec.owner !== me) {
       if (rec.owner || rec.ended) { if (ends(ev)) void load(); return; }
@@ -1326,7 +1342,6 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     liveNote(ev.id, null);
     // (An archive's entries moved in from their hidden folder: the folder goes, whatever happened.)
     const stage = stagings.get(ev.id); if (stage) { stagings.delete(ev.id); void jobs()?.filesJob({ id: nid('fq'), op: 'delete', paths: [stage] }).catch(() => undefined); }
-    const c = clipboard; if (c?.busy === ev.id) { const rest = ev.remaining ?? (ev.status === 'done' && !ev.failed?.length ? [] : c.paths); setClip(rest.length ? { op: 'move', paths: rest } : null); }
     if (ev.status === 'done') { if (ev.failed?.length) summarySheet(ev); else if (ev.left) toast(t('filesLeftInPlace', { n: localDigits(ev.left) }), 'info', 5000); else if (ev.skipped) toast(t('filesDoneSkipped', { n: localDigits(ev.skipped) })); else if (renamedMoves.has(ev.id)) toast(t('filesVerifyRenamed'), 'info', 5000); else if (ev.verified !== undefined) toast(t('filesVerifiedDone', { n: localDigits(ev.verified) })); else if (sizeChecked.has(ev.id)) toast(t('filesDoneSizes')); else toast(t('filesDone')); sizeChecked.delete(ev.id); renamedMoves.delete(ev.id); }
     else if (ev.status === 'cancelled') { if (ev.failed?.length) summarySheet(ev); else toast(ev.left ? t('filesCancelledLeft', { n: localDigits(ev.left) }) : t('filesCancelled')); }
     else if (ev.status === 'failed') toast(ev.message ?? t('filesFailed'), 'error');
@@ -1384,12 +1399,17 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let sub: { remove(): void } | null = null;
   // (Back after Android ended the page: the clipboard as it was, the folder's scroll; the engine's jobs still running
   // shown again — their rows, the Jobs sheet, a name-taken question they wait on asked again.)
+  let restoredBusy = '';
   { const back = !quiet && !pk ? takeResume() : null;
-    if (back?.clip && !clipboard && Array.isArray(back.clip.paths) && back.clip.paths.length) setClip({ op: back.clip.op === 'move' ? 'move' : 'copy', paths: back.clip.paths.filter((x) => typeof x === 'string') });
+    // (A cut whose move was running stays busy — no second Paste — while the engine still runs that move, and goes
+    // when it does not: its items are moved, or half moved. A copy comes back as it was.)
+    if (back?.clip && !clipboard && Array.isArray(back.clip.paths) && back.clip.paths.length) { const op = back.clip.op === 'move' ? 'move' : 'copy'; const busy = op === 'move' && typeof back.clip.busy === 'string' ? back.clip.busy : ''; setClip({ op, paths: back.clip.paths.filter((x) => typeof x === 'string'), ...(busy ? { busy } : {}) }); restoredBusy = busy; }
     if (back?.y && back.at === at) scrollMemo.set(at, back.y); }
   const pfl = plug() as unknown as { filesLive?(): Promise<{ jobs?: { id: string; asking?: JobEvent | null }[] }> } | null;
+  const dropBusy = (live: { id: string }[]) => { if (restoredBusy && clipboard?.busy === restoredBusy && !live.some((j) => j.id === restoredBusy)) setClip(null); restoredBusy = ''; };
+  if (restoredBusy && !pfl?.filesLive) dropBusy([]);
   if (!quiet && !pk && pfl?.filesLive) void pfl.filesLive().then(async (r) => {
-    const live = Array.isArray(r?.jobs) ? r.jobs : []; const notes = liveNotes();
+    const live = Array.isArray(r?.jobs) ? r.jobs : []; const notes = liveNotes(); dropBusy(live);
     for (const id of Object.keys(notes)) if (!live.some((j) => j.id === id)) liveNote(id, null);
     for (const j of live) {
       const n = notes[j.id]; if (gone || !n || liveJobs.has(j.id)) continue;
@@ -1397,7 +1417,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
       (await useQueue()).adopt({ id: j.id, kind: n.kind, label: n.label, what: n.what, from: n.from, to: n.to, cancel, start: async () => true }, qhost);
       if (j.asking && !gone) conflictSheet({ ...j.asking, id: j.id, status: 'conflict' });
     }
-  }).catch(() => undefined);
+  }).catch(() => dropBusy([]));
   const jp = jobs(); if (jp) void listen<JobEvent>(jp as never, 'files', onJob).then((s) => { sub = s as { remove(): void }; });
   // (The queue: another pane's jobs show here too; jobs an earlier run left waiting are offered — never run — once per start.)
   if (Q) { offQ = Q.subscribe(drawJobsBadge); drawJobsBadge(); }

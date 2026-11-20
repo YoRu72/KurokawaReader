@@ -98,6 +98,24 @@ async function phone(browser, port, z, lang) {
   ok(L('another page: the pill does not follow; the held action done once'), !(await p.$('.toast.undo-snack:not(.files-unfinished)')) && (await p.evaluate(() => window.__cleared)) === 4);
   await p.evaluate(() => new Promise((r) => setTimeout(r, 300)));
   ok(L('…and never a second time'), (await p.evaluate(() => window.__cleared)) === 4);
+  // behind a sheet opened after it, the pill's time stands still (the clock may run past it); seen again, it has what
+  // was left — 3 s at least — and then the held action is done, once
+  await offer(); const c0 = await p.evaluate(() => window.__cleared);
+  await p.evaluate(() => { const d = document.createElement('div'); d.className = 'sheet test-sheet'; document.body.append(d); });
+  await p.waitForFunction(() => document.querySelector('.undo-snack')?.classList.contains('behind-sheet'));
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+  await p.evaluate(() => { const now = Date.now; window.__realNow = now; Date.now = () => now() + 60000; });
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 700)));
+  const waits = !!(await p.$('.toast.undo-snack:not(.files-unfinished)')) && (await p.evaluate(() => window.__cleared)) === c0;
+  await p.evaluate(() => document.querySelector('.test-sheet').remove());
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 900)));
+  const back = !!(await p.$('.toast.undo-snack:not(.files-unfinished):not(.behind-sheet)')) && (await p.evaluate(() => window.__cleared)) === c0;
+  await p.waitForFunction((c) => window.__cleared > c, c0, { timeout: 8000 }).catch(() => undefined); await p.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+  const doneOnce = (await p.evaluate(() => window.__cleared)) === c0 + 1 && !(await p.$('.toast.undo-snack:not(.files-unfinished)'));
+  await p.evaluate(() => { Date.now = window.__realNow; });
+  ok(L('behind a sheet: the pill\'s time stands still, the held action waits'), waits);
+  ok(L('…seen again: still offered for a while'), back);
+  ok(L('…then done, once'), doneOnce, await p.evaluate(() => window.__cleared));
 
   // above the selection bar
   await go(`/files?p=${encodeURIComponent(K)}`); await p.waitForSelector(rowSel('Song.mp3')); await offer();

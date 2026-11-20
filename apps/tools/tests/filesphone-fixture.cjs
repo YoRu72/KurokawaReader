@@ -55,7 +55,7 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
   const subtree = (p) => [...tree.keys()].filter((k) => k === p || k.startsWith(p + '/'));
   const copyTree = (from, to) => { for (const k of subtree(from)) { const n = tree.get(k); tree.set(to + k.slice(from.length), { ...n }); } };
   const removeTree = (p) => { for (const k of subtree(p)) tree.delete(k); };
-  const ls = {}; const emit = (ev, o) => (ls[ev] || []).forEach((f) => f(o));
+  const ls = {}; const emit = (ev, o) => (ls[ev] || []).forEach((f) => f(o)); window.__emit = emit;
   const jobs = new Map(); const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const runJob = async ({ id, op, paths, dest, conflict }) => {
     const j = { cancel: false, standing: conflict && conflict !== 'ask' ? conflict : null, answer: null, wake: null }; jobs.set(id, j);

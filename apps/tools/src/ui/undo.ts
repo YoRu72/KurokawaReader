@@ -36,7 +36,7 @@ const run = async (f: Fn | undefined): Promise<boolean> => { try { await f?.(); 
 // pill is up, which also keeps it above the bars along the bottom as they come and go. It can always be closed: its ×
 // (48 px) or a swipe aside; closing a held action does it then, exactly once.)
 let snack: { el: HTMLElement; tick: number; until: number; entry: Entry } | null = null;
-function hideSnack(): void { if (!snack) return; window.clearInterval(snack.tick); snack.el.remove(); snack = null; }
+function hideSnack(): void { pausedAtLast = false; if (!snack) return; window.clearInterval(snack.tick); snack.el.remove(); snack = null; }
 /** The snackbar closed by hand (its ×, a swipe): a held action is done now; an Undo offer simply ends. */
 function closeSnack(e: Entry): void { if (snack?.entry === e) hideSnack(); if (e.state === 'done' && e.commit) void settle(e); }
 function showSnack(e: Entry, mode: 'undo' | 'redo', ms: number): void {
@@ -52,7 +52,7 @@ function showSnack(e: Entry, mode: 'undo' | 'redo', ms: number): void {
   swipeAway(el, () => closeSnack(e));
   document.body.appendChild(el);
   const tick = window.setInterval(() => { sweep(); if (snack?.el === el) placePill(el); }, 250);
-  snack = { el, entry: e, tick, until: ms ? Date.now() + ms : Infinity };
+  snack = { el, entry: e, tick, until: ms ? Date.now() + ms : Infinity }; lastTick = Date.now(); pausedAtLast = false;
   placePill(el); requestAnimationFrame(() => placePill(el));
 }
 
@@ -62,15 +62,28 @@ function drop(e: Entry): void { const i = entries.indexOf(e); if (i >= 0) entrie
 async function settle(e: Entry): Promise<void> { window.clearTimeout(e.timer); e.until = undefined; const c = e.commit; e.commit = undefined; drop(e); if (c) await run(c); }
 function arm(e: Entry, ms: number): void { window.clearTimeout(e.timer); e.until = undefined; if (e.commit && ms) { e.until = Date.now() + ms; e.timer = window.setTimeout(sweep, ms + 20); } }
 /** Whatever's time is over goes now: held actions done, the snackbar gone (a timer late or never run changes nothing). */
+// (The snackbar's time runs only while it is SEEN: behind a sheet opened after it, or with the page hidden, it stands
+// still, and seen again it has what was left — 3 s at least. The time between two looks counts as the first look
+// found it.)
+let lastTick = 0; let pausedAtLast = false;
 function sweep(): void {
-  const now = Date.now();
+  const now = Date.now(); const s = snack;
+  if (s) {
+    const e = s.entry; const paused = document.visibilityState === 'hidden' || s.el.classList.contains('behind-sheet');
+    if (pausedAtLast && lastTick) {
+      const dt = Math.max(0, now - lastTick); if (s.until !== Infinity) s.until += dt; if (e.until !== undefined) e.until += dt;
+      if (!paused) { const min = now + 3000; if (s.until !== Infinity && s.until < min) s.until = min; if (e.until !== undefined && e.until < min) e.until = min; }
+      if (e.until !== undefined) { window.clearTimeout(e.timer); e.timer = window.setTimeout(sweep, Math.max(0, e.until - now) + 20); }
+    }
+    pausedAtLast = paused; lastTick = now;
+  }
   for (const e of [...entries]) if (e.commit && e.state === 'done' && e.until !== undefined && e.until <= now) void settle(e);
   if (snack && snack.until <= now) hideSnack();
 }
 let clockWired = false;
 function wireClock(): void {
   if (clockWired) return; clockWired = true;
-  const seenAgain = () => { if (document.visibilityState !== 'hidden') sweep(); };
+  const seenAgain = () => sweep(); // (hidden too: from then on its time stands still)
   document.addEventListener('visibilitychange', seenAgain); addEventListener('focus', seenAgain); addEventListener('pageshow', seenAgain); document.addEventListener('resume', seenAgain);
   // (Another page: its snackbar does not follow — a held action of the page left is done then, as its comment says.)
   addEventListener('hashchange', () => {
