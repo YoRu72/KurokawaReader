@@ -98,7 +98,7 @@ const canEverywhere = (): boolean => !plug() && !!(window.kurokawaTools as unkno
 const rootIcon = (kind: string): string => ({ app: 'download', downloads: 'download', home: 'user', desktop: 'layout', documents: 'file' } as Record<string, string>)[kind] ?? 'storage';
 
 /* ---------- what is kept: the view, the sort, hidden files, the last folder, the clipboard ---------- */
-export type Prefs = { view: 'list' | 'grid' | 'gallery'; /** Columns chosen by pinching, per view and kind of folder (`grid:media`, `gallery:plain`…). */ cols?: Record<string, number>; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string;
+export type Prefs = { view: 'list' | 'grid' | 'gallery'; /** Columns chosen by pinching, per view and kind of folder (`grid:media`, `gallery:plain`…). */ cols?: Record<string, number>; sort: 'name' | 'date' | 'size' | 'type'; desc: boolean; /** Folders listed before files (on unless off). */ foldersFirst?: boolean; hidden: boolean; last?: string; kind: string; /** Two panes side by side on a wide screen. */ dual?: boolean; lastB?: string;
   /** The folder the page opens on (empty: the last one when `rememberLast`, else the first storage). */ home?: string; rememberLast?: boolean; counts?: boolean; thumbs?: boolean; density?: 'comfortable' | 'compact'; /** The text of names and details in the lists (normal when not set). */ textSize?: 'small' | 'large' | 'larger'; confirmDelete?: boolean; /** A folder's size shown in its row once counted (Calculate size); on unless off. */ dirSizes?: boolean; keepOn?: boolean; eink?: boolean; backUp?: boolean; /** After copying or moving: the engine's size check (the default), or the content compared too. */ verify?: 'size' | 'full'; /** Copy, move, delete and extract jobs: one at a time (waiting in the queue, the default) or together. */ jobsMode?: 'one' | 'together' };
 const PREFS = 'kt.files.prefs';
 /** The view button cycles list, grid, gallery; each says what a tap switches TO. */
@@ -106,6 +106,15 @@ const NEXT_VIEW: Record<Prefs['view'], Prefs['view']> = { list: 'grid', grid: 'g
 const VIEW_TO = { list: 'filesViewToList', grid: 'filesViewToGrid', gallery: 'filesViewToGallery' } as const;
 export const prefs: Prefs = { view: 'grid', sort: 'name', desc: false, hidden: false, kind: 'all', ...(() => { try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Partial<Prefs>; } catch { return {}; } })() };
 export const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch { /* none */ } };
+/** A name folded for searching: letter case, diacritics and the Arabic marks and letter forms aside. */
+const fold = (s: string): string => s.normalize('NFD').replace(/[\u0300-\u036f\u064B-\u065F\u0670\u0640]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').toLowerCase();
+/** The sort of the folder shown when it was chosen to be remembered (views/filesMenu.ts keeps the store), else the global one. */
+export type SortSet = { sort: Prefs['sort']; desc: boolean; ff: boolean };
+export const SORTS = 'kt.files.sorts'; export const RECENT = 'kt.files.recent';
+let sortOver: SortSet | null = null;
+const sortFor = (p: string): SortSet | null => { try { return (JSON.parse(localStorage.getItem(SORTS) ?? '{}') as Record<string, SortSet>)[p] ?? null; } catch { return null; } };
+/** The last 8 folders visited, the latest first. */
+const noteRecent = (p: string): void => { try { const a = JSON.parse(localStorage.getItem(RECENT) ?? '[]') as string[]; if (a[0] === p) return; localStorage.setItem(RECENT, JSON.stringify([p, ...a.filter((x) => x !== p)].slice(0, 8))); } catch { /* none */ } };
 // (One clipboard for the page — both panes —: a copy stays on it until replaced or cleared; a cut until its move has gone
 // through — what was left behind stays cut. `busy`: the move under way, while it runs nothing more is pasted from it.)
 let clipboard: { op: 'copy' | 'move'; paths: string[]; busy?: string } | null = null;
@@ -209,10 +218,11 @@ const cntPut = (path: string, m: number, n: number) => { cntCache.delete(path); 
 let collator: Intl.Collator | null = null;
 function sortEntries(list: Entry[]): Entry[] {
   const col = collator ?? (collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }));
-  const szs = prefs.sort === 'size' ? new Map<string, number>() : null;
+  const S = sortOver ?? { sort: prefs.sort, desc: prefs.desc, ff: prefs.foldersFirst !== false };
+  const szs = S.sort === 'size' ? new Map<string, number>() : null;
   const sz = (e: Entry): number => { if (!e.dir) return e.size; let v = szs!.get(e.path); if (v === undefined) { v = sizeOf(e.path, e.mtime)?.bytes ?? -1; szs!.set(e.path, v); } return v; };
-  const by = (a: Entry, b: Entry): number => prefs.sort === 'date' ? (a.mtime - b.mtime) || col.compare(a.name, b.name) : prefs.sort === 'size' ? (sz(a) - sz(b)) || col.compare(a.name, b.name) : prefs.sort === 'type' ? col.compare(a.ext ?? '', b.ext ?? '') || col.compare(a.name, b.name) : col.compare(a.name, b.name);
-  return list.sort((a, b) => Number(b.dir) - Number(a.dir) || (prefs.desc ? -by(a, b) : by(a, b)));
+  const by = (a: Entry, b: Entry): number => S.sort === 'date' ? (a.mtime - b.mtime) || col.compare(a.name, b.name) : S.sort === 'size' ? (sz(a) - sz(b)) || col.compare(a.name, b.name) : S.sort === 'type' ? col.compare(a.ext ?? '', b.ext ?? '') || col.compare(a.name, b.name) : col.compare(a.name, b.name);
+  return list.sort((a, b) => (S.ff ? Number(b.dir) - Number(a.dir) : 0) || (S.desc ? -by(a, b) : by(a, b)));
 }
 const kindRe = (): RegExp | null => KINDS.find(([k]) => k === prefs.kind)?.[2] ?? null;
 
@@ -249,7 +259,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const body = h('div', { class: 'files-body' }); const sizeNote = h('p', { class: 'hint files-sizenote', hidden: true });
   const crumbs = h('div', { class: 'files-crumbs', dir: 'ltr' }); const rootsRow = h('div', { class: 'chip-row files-roots' }); const kindRow = h('div', { class: 'chip-row files-kinds' });
   const listEl = h('div', { class: 'files-list' }); const status = h('p', { class: 'hint files-status' }); const jobsEl = h('div', { class: 'files-jobs' });
-  const search = h('input', { type: 'search', class: 'files-search', placeholder: t('filesSearchHere'), hidden: true, oninput: () => { query = search.value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
+  const search = h('input', { type: 'search', class: 'files-search', placeholder: t('filesSearchHere'), hidden: true, oninput: () => { query = fold(search.value.trim()); draw(); } }) as HTMLInputElement;
   const selBar = h('div', { class: 'files-selbar', hidden: true });
   // (A phone's header while choosing: close, the count, select all, invert — in the one bar's place.)
   const selHead = h('div', { class: 'files-selhead' });
@@ -268,6 +278,15 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const headEl = h('div', { class: 'title files-head', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-label': t('filesPathMenu'), onclick: () => { if (phoneNow()) setPath(!pathOpen); } }, titleEl, h('span', { class: 'files-head2' }, pathEl, subEl, h('span', { class: 'files-chev' }, icon('chevronRight')))) as HTMLElement;
   /** The title, a long name cut in its middle so its end (the extension) stays in sight. */
   const setTitle = (text: string, isDir = true) => { const np = nameParts(text, isDir); titleEl.setAttribute('dir', np.dir); titleEl.title = text; titleEl.replaceChildren(h('span', { class: 'mid-head' }, np.head), h('span', { class: 'mid-tail' }, np.tail)); };
+  // (A phone's search: «N of M», a clear button, and the switch that takes the search into the sub-folders — streamed under the list.)
+  const countEl = h('span', { class: 'files-search-count', 'aria-live': 'polite' }); let stopSub: (() => void) | null = null; const subHost = h('div', { class: 'files-subres', hidden: true });
+  const runSub = () => { stopSub?.(); stopSub = null; if (!subSw.checked || !query) { subHost.hidden = true; subHost.replaceChildren(); return; } subHost.hidden = false; void import('./filesMenu').then((m) => { if (gone || !subSw.checked) return; stopSub?.(); stopSub = m.subSearch(subHost, { at, q: search.value.trim(), hidden: !!prefs.hidden, find: (o) => plug()!.filesSearch(o), open: (e) => void open(e), goTo: (d) => { search.value = ''; query = ''; search.hidden = true; subSw.checked = false; go(d); } }); }); };
+  const subSw = h('input', { type: 'checkbox', onchange: runSub }) as HTMLInputElement; search.addEventListener('input', () => { if (subSw.checked) runSub(); });
+  const clearBtn = iconButton('close', t('fmClear'), () => { search.value = ''; query = ''; search.focus(); draw(); runSub(); });
+  const searchMeta = h('div', { class: 'files-search-meta', hidden: true }, h('div', { class: 'files-search-line' }, countEl, clearBtn), h('label', { class: 'switch-row files-sub-row' }, h('span', { class: 'grow' }, t('fmSubToo')), subSw));
+  // (The keyboard over the lower part of the page: the list gets that much room under its last rows, following the visual viewport.)
+  const onVv = () => { const v = window.visualViewport; if (v) listEl.style.paddingBottom = `${Math.max(0, Math.round(window.innerHeight - v.height - v.offsetTop))}px`; };
+  search.addEventListener('focus', () => { window.visualViewport?.addEventListener('resize', onVv); onVv(); }); search.addEventListener('blur', () => { window.visualViewport?.removeEventListener('resize', onVv); listEl.style.paddingBottom = ''; });
   const fab = h('button', { type: 'button', class: 'fab files-fab', 'aria-label': t('newFolder'), onclick: () => fabSheet() }, icon('plus'));
   // (The list/grid button: the same button for good — its focus stays —, showing the view a tap switches TO, named by
   // what it does; it redraws the folder in place — the address stays the same, so a navigate() to it would draw nothing.)
@@ -280,16 +299,16 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   let filterBtn!: HTMLElement; let sortBtn!: HTMLElement; // (on a phone these three live in the ⋮ sheet: the bar keeps the name its room)
   const root = h('div', { class: 'view files-view' },
     h('header', { class: 'topbar' }, iconButton('menu', t('filesDrawer'), () => drawer()), backBtn, headEl, h('div', { class: 'topbar-actions' }, jobsBtn,
-      iconButton('search', t('search'), () => { if (canEverywhere() && !pk) { void everywhere(); return; } if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
+      iconButton('search', t('search'), () => { if (canEverywhere() && !pk) { void everywhere(); return; } if (phoneNow() && !pk) { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; } draw(); return; } if (plug() && !collection) { void import('./filesMore').then((m) => m.searchSheet(at, roots.find((x) => at === x.path || at.startsWith(x.path + '/'))?.path ?? at, prefs.hidden, (e) => void open(e), (d) => go(d))); return; } search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       filterBtn = iconButton('filter', t('filesFilterHere'), () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); else { search.value = ''; query = ''; draw(); } }),
       viewBtn,
       sortBtn = iconButton('sort', t('sortBy'), () => sortSheet()),
       iconButton('more', t('more'), () => moreSheet()))),
-    clipBar, search, shelfEl, h('div', { class: 'files-strip' }, rootsRow, crumbs, kindRow), body, selBar, fab) as HTMLElement & { dispose?: () => void };
+    clipBar, search, searchMeta, shelfEl, h('div', { class: 'files-strip' }, rootsRow, crumbs, kindRow), body, selBar, fab) as HTMLElement & { dispose?: () => void };
   root.querySelector('.topbar')?.append(selHead);
   // (Extractions left half done — a stop, a crash, a full disk: Finish, Restore the archive, or Leave as is.)
   if (!quiet) void import('./extractShelf').then((m) => m.shelfBanner(shelfEl)).catch(() => {});
-  body.append(sizeNote, listEl, status, jobsEl);
+  body.append(sizeNote, listEl, subHost, status, jobsEl);
   // (A phone's button tapped twice in a blink — a thumb's bounce —: done once. Only a finger's taps; a mouse's are its own.)
   { let byTouch = false; let last: { el: Element | null; at: number } = { el: null, at: 0 };
     root.addEventListener('pointerdown', (e) => { byTouch = e.pointerType === 'touch'; }, true);
@@ -394,6 +413,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const load = async () => {
     const my = ++loadSeq; const want = collection ? `c:${collection}` : at; const stale = () => gone || my !== loadSeq; const first = firstLoad; firstLoad = false;
     if (want !== shownAt) { entries = []; picked.clear(); selecting = false; shownAt = want; }
+    sortOver = collection || !phoneNow() ? null : sortFor(at); if (!collection && !pk && !isVirtual(at)) noteRecent(at);
     try { drawCrumbs(); } catch { /* the way here is drawn again next time */ }
     void checkWritable(); drawPaste(); listEl.replaceChildren(h('div', { class: 'center' }, h('div', { class: 'spinner small' }))); status.textContent = ''; fab.hidden = !!collection || isArc(at);
     const still = window.setTimeout(() => { if (!stale()) listEl.replaceChildren(stateCard('still')); }, STILL_MS);
@@ -415,7 +435,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (!quiet && !collection && !missing) keepResume(po.side === 'b' ? { b: at } : { at, y });
     if (y) requestAnimationFrame(() => { if (stale()) return; window.scrollTo(0, y); body.scrollTop = y; });
   };
-  const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || e.name.toLowerCase().includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
+  const shown = (): Entry[] => { const re = kindRe(); const list = entries.filter((e) => (!re || e.dir || re.test(e.ext ?? '')) && (!query || fold(e.name).includes(query))); return collection ? list.sort((a, b) => b.mtime - a.mtime) : sortEntries(list); };
   // ---- columns of the grid and the gallery: pinched (phone) or Ctrl + wheel (computer), kept per view and kind of folder
   let mediaFolder = false;
   const colKey = () => `${prefs.view}:${mediaFolder ? 'media' : 'plain'}`;
@@ -520,11 +540,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     }, { root: null, rootMargin: `${Math.max(400, window.innerHeight)}px 0px` });
     cntWatch.set(el, e); cntIo.observe(el);
   };
+  // (A phone's empty folder: a calm drawn box, what it says, and what can be done: a new folder, paste what was copied.)
+  const emptyBox = (): HTMLElement => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 96 72'); svg.setAttribute('aria-hidden', 'true'); svg.innerHTML = '<path d="M14 26 48 10l34 16v34L48 68 14 60z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M14 26l34 16 34-16M48 42v26" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>';
+    return h('div', { class: 'files-empty empty', role: 'status' }, svg, h('b', null, t('fmEmpty')), h('div', { class: 'files-empty-btns' }, ...(isArc(at) || isVirtual(at) ? [] : [h('button', { type: 'button', class: 'btn tonal', onclick: () => newFolderSheet() }, icon('folderPlus'), t('newFolder'))]), ...(canPaste() ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => void paste() }, icon('copy'), t('filesPaste'))] : []))); };
   const draw = (minPx = 0, ensure = '') => {
-    const list = shown(); listEl.className = `files-list ${prefs.view === 'gallery' ? 'grid gallery' : prefs.view}${forcedCols(list) ? ' cols' : ''}${prefs.density === 'compact' ? ' compact' : ''}${denseNow() ? ' dense' : ''}${prefs.textSize ? ` ts-${prefs.textSize}` : ''}`; root.classList.toggle('eink', !!prefs.eink);
+    const list = shown(); { const on = !search.hidden && phoneNow() && !pk; searchMeta.hidden = !on; if (on) { countEl.textContent = t('fmOf', { n: localDigits(list.length), m: localDigits(entries.length) }); clearBtn.hidden = !search.value; } else if (subSw.checked) { subSw.checked = false; runSub(); } } listEl.className = `files-list ${prefs.view === 'gallery' ? 'grid gallery' : prefs.view}${forcedCols(list) ? ' cols' : ''}${prefs.density === 'compact' ? ' compact' : ''}${denseNow() ? ' dense' : ''}${prefs.textSize ? ` ts-${prefs.textSize}` : ''}`; root.classList.toggle('eink', !!prefs.eink);
     moreIo?.disconnect(); moreIo = null; chunkIo?.disconnect(); chunkIo = null; dropThumbs(listEl); rowEls.clear(); cntReset();
     paintSizeNote(list);
-    if (!list.length) { fastList = []; syncFast(); subEl.textContent = ''; listEl.replaceChildren(...upRow(), h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty'))); return; }
+    if (!list.length) { fastList = []; syncFast(); subEl.textContent = ''; listEl.replaceChildren(...upRow(), query || !phoneNow() || collection || entries.length || pk ? h('p', { class: 'empty small' }, query ? t('filesNothingMatches') : t('folderEmpty')) : emptyBox()); return; }
     // (Big folders drawn in slices: the first screenfuls at once, the rest as the list is scrolled towards — a folder of
     // twenty thousand entries opens as fast as one of twenty. Each slice is a block of its own, and a block a few screens
     // away from what is seen keeps only its height — its rows let go, drawn again when it comes back near —: the page
@@ -818,12 +841,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const drawer = () => {
     const sh = openSheet(t('navFiles'), t('close')); sh.el.classList.add('files-drawer'); sideDrawer(sh.el, sh.close);
     const section = (label: string, ...kids: (HTMLElement | null)[]) => h('div', { class: 'files-drawer-section' }, h('small', { class: 'src files-drawer-label' }, label), ...kids);
-    const item = (ic: string, name: string, sub: string | HTMLElement | null, fn: () => void, extra?: HTMLElement) => h('button', { type: 'button', class: 'dest-row files-drawer-row', onclick: () => { sh.close(); fn(); } }, h('span', { class: 'files-drawer-ic' }, icon(ic)), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, name), sub ? (typeof sub === 'string' ? h('small', { class: 'src', dir: 'ltr' }, sub) : sub) : null), extra ?? null);
-    const storage = (r: Root) => { const used = r.total && r.free !== undefined ? Math.round(((r.total - r.free) / r.total) * 100) : null; return item(rootIcon(r.kind), r.name, used === null ? r.path : h('span', { class: 'files-usage' }, h('span', { class: 'files-usage-bar' }, h('i', { style: { width: `${used}%` } })), h('small', { class: 'src' }, t('filesFreeOf', { free: formatBytes(r.free!), total: formatBytes(r.total!) }))), () => { if (!r.readable) { void askAccess(); return; } go(r.path); }); };
+    const item = (ic: string, name: string, sub: string | HTMLElement | null, fn: () => void, extra?: HTMLElement, cur = false, more?: () => void) => h('button', { type: 'button', class: 'dest-row files-drawer-row' + (cur ? ' on' : ''), ...(cur ? { 'aria-current': 'true' } : {}), ...(more ? { oncontextmenu: (ev: Event) => { ev.preventDefault(); more(); } } : {}), onclick: () => { sh.close(); fn(); } }, h('span', { class: 'files-drawer-ic' }, icon(ic)), h('span', { class: 'grow files-main' }, h('span', { class: 'name', dir: 'auto' }, name), sub ? (typeof sub === 'string' ? h('small', { class: 'src', dir: 'ltr' }, sub) : sub) : null), extra ?? null);
+    const here = roots.filter((r) => !collection && (at === r.path || at.startsWith(r.path.replace(/\/+$/, '') + '/'))).sort((a, b) => b.path.length - a.path.length)[0];
+    const storage = (r: Root) => { const used = r.total && r.free !== undefined ? Math.round(((r.total - r.free) / r.total) * 100) : null; return item(rootIcon(r.kind), r.name, used === null ? r.path : h('span', { class: 'files-usage' }, h('span', { class: 'files-usage-bar' + (used > 90 ? ' full' : '') }, h('i', { style: { width: `${used}%` } })), h('small', { class: 'src' }, t('filesFreeOf', { free: formatBytes(r.free!), total: formatBytes(r.total!) }))), () => { if (!r.readable) { void askAccess(); return; } go(r.path); }, undefined, r === here && at === r.path); };
     const bm = bookmarks();
-    sh.body.append(section(t('filesStorages'), ...roots.map(storage), ...(plug() ? [item('chart', t('filesAnalyzer'), t('filesAnalyzerHint'), () => pickSheet(t('filesAnalyzer'), roots.filter((r) => r.readable).map((r): [string, string, string] => [r.path, r.name, 'storage']), roots[0]?.path ?? '', (path) => { const r = roots.find((x) => x.path === path)!; void import('./filesMore').then((m) => m.analyzerSheet(r, (e) => void open(e), (d) => go(d), (paths) => void confirmDelete(paths))); }, t('close')))] : [])));
-    // Recent files (Solid Explorer's way): the latest few right in the drawer, each opened by a tap; «all» opens the collection.
-    if (plug()) { const recentSec = section(t('filesRecentMenu'), h('div', { class: 'center small' }, h('div', { class: 'spinner small' }))); sh.body.append(recentSec); void plug()!.filesCollection({ kind: 'recent', limit: 6 }).then((r) => { if (!recentSec.isConnected) return; const rows = (r.entries ?? []).slice(0, 6).map((e) => item(ICON[kindOfFile(e.name)] ?? 'file', e.name, parentOf(e.path).split('/').pop() || parentOf(e.path), () => void open(e))); recentSec.replaceChildren(h('small', { class: 'src files-drawer-label' }, t('filesRecentMenu')), ...rows, item('history', t('filesRecent'), null, () => openCollection('recent'))); }).catch(() => recentSec.remove()); }
+    sh.body.append(section(t('filesStorages'), ...roots.map(storage)));
     // Bookmarks: opened by a tap; the kebab edits (a name, pinned to the home screen, moved up, removed).
     const bmMenu = (b: { name: string; path: string }) => {
       const m = openSheet(b.name, t('close')); const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { m.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
@@ -831,9 +853,12 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
         row('pen', t('rename'), () => { const r = openSheet(t('rename'), t('cancel')); const inp = h('input', { type: 'text', value: b.name, dir: 'auto' }) as HTMLInputElement; r.body.append(h('label', { class: 'field' }, h('span', null, t('fileName')), inp)); r.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { const name = inp.value.trim() || b.name; saveBookmarks(bookmarks().map((x) => (x.path === b.path ? { ...x, name } : x))); r.close(); sh.close(); drawer(); } }, icon('check'), t('rename'))); setTimeout(() => inp.focus(), 50); }),
         ...(plug() ? [row('pin', t('filesPinHome'), () => void pinHome(b.path, b.name))] : []),
         row('up', t('filesMoveUp'), () => { const a = bookmarks(); const i = a.findIndex((x) => x.path === b.path); if (i > 0) { [a[i - 1], a[i]] = [a[i], a[i - 1]]; saveBookmarks(a); } sh.close(); drawer(); }),
+        row('down', t('fmMoveDown'), () => { const a = bookmarks(); const i = a.findIndex((x) => x.path === b.path); if (i >= 0 && i < a.length - 1) { [a[i + 1], a[i]] = [a[i], a[i + 1]]; saveBookmarks(a); } sh.close(); drawer(); }),
         row('trash', t('delete'), () => { saveBookmarks(bookmarks().filter((x) => x.path !== b.path)); sh.close(); drawer(); })));
     };
-    if (bm.length) sh.body.append(section(t('filesBookmarks'), ...bm.map((b) => item('bookmark', b.name, readablePath(b.path), () => go(b.path), iconButton('more', t('more'), (ev) => { ev.stopPropagation(); bmMenu(b); })))));
+    if (bm.length) sh.body.append(section(t('fmFav'), ...bm.map((b) => item('bookmark', b.name, readablePath(b.path), () => go(b.path), iconButton('more', t('more'), (ev) => { ev.stopPropagation(); bmMenu(b); }), !collection && b.path === at, () => bmMenu(b)))));
+    { let rc: string[] = []; try { rc = (JSON.parse(localStorage.getItem(RECENT) ?? '[]') as string[]).slice(0, 8); } catch { /* none */ } if (rc.length) sh.body.append(section(t('fmRecentFolders'), ...rc.map((p) => item('history', placeName(p), readablePath(p), () => go(p), undefined, !collection && p === at)))); }
+    if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k), undefined, collection === k))), section('', item('trash', t('filesTrash'), null, () => void import('./filesMore').then((m) => m.trashSheet(() => void load())))));
     if (rplug()) {
       const redo = () => { sh.close(); void loadRoots().then(() => drawer()); };
       sh.body.append(section(t('remoteNetwork'), ...remotes.map((c) => item(kindIcon(c.kind), c.name, describe(c), () => go(`remote://${c.id}`), iconButton('more', t('more'), (ev) => { ev.stopPropagation(); connectionMenu(c, () => void loadRoots()); }))),
@@ -847,8 +872,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
         item('key', t('filesGrantAndroidData'), t('filesGrantHint'), () => void vplug()!.vfsGrant({ start: 'Android/data' }).then(redo).catch(() => undefined)),
         item('folderPlus', t('filesGrantAny'), null, () => void vplug()!.vfsGrant({}).then(redo).catch(() => undefined))));
     }
-    if (appsAvailable()) sh.body.append(section(t('appsTitle'), item('apps', t('appsTitle'), t('appsHint'), () => go('apps://'))));
-    if (plug()) sh.body.append(section(t('filesCollections'), ...COLLECTIONS.map(([k, label, ic]) => item(ic, t(label as 'filesRecent'), null, () => openCollection(k)))), section('', item('trash', t('filesTrash'), null, () => void import('./filesMore').then((m) => m.trashSheet(() => void load())))));
+    if (appsAvailable()) sh.body.append(section(t('appsTitle'), item('apps', t('appsTitle'), t('appsHint'), () => go('apps://'), undefined, at === 'apps://')));
   };
   /** chmod / chown / a symbolic link on a root:// entry, and the mounts (remounted read-write or back). */
   const rootOpsSheet = (e: Entry) => {
@@ -942,7 +966,26 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const opt = (key: Prefs['sort'], label: string) => h('button', { type: 'button', class: 'dest-row' + (prefs.sort === key ? ' on' : ''), onclick: () => { if (prefs.sort === key) prefs.desc = !prefs.desc; else { prefs.sort = key; prefs.desc = false; } savePrefs(); sh.close(); draw(); } }, icon(prefs.sort === key ? (prefs.desc ? 'arrowDown' : 'arrowUp') : 'circle'), h('span', { class: 'name' }, label));
     sh.body.append(h('div', { class: 'dest-list' }, opt('name', t('sortName')), opt('date', t('sortDate')), opt('size', t('sortSize')), opt('type', t('sortType'))), h('p', { class: 'hint' }, t('filesSortHint')));
   };
+  // (A phone's ⋮: one sheet — View, Sort, Show, This folder, Tools — built in views/filesMenu.ts; what it opens is this page's own.)
   const moreSheet = () => {
+    if (phoneNow() && !pk) {
+      const A = (ic: string, label: string, run: () => void) => ({ ic, label, run }); const real = !isVirtual(at) && !isArc(at) && !collection;
+      const bmd = bookmarks().some((x) => x.path === at);
+      void import('./filesMenu').then((m) => m.moreMenu({
+        prefs, savePrefs, at, setOver: (o) => { sortOver = o; }, redraw: (w) => { if (w === 'view') { applyView(); po.peer?.()?.restyle(); } else if (w === 'hidden') void load(); else draw(); },
+        folder: [...(real ? [A('folderPlus', t('newFolder'), () => newFolderSheet())] : []), A('check', t('filesSelectAll'), () => { selecting = true; for (const e of shown()) picked.add(e.path); applySel(); drawSel(); }), A('refresh', t('refresh'), () => void load()),
+          ...(real ? [A(bmd ? 'bookmark' : 'bookmarkAdd', bmd ? t('fmUnbookmark') : t('filesBookmarkHere'), () => { if (bmd) saveBookmarks(bookmarks().filter((x) => x.path !== at)); else { const b = bookmarks(); b.push({ name: placeName(at) || at, path: at }); saveBookmarks(b); toast(t('filesBookmarked')); } })] : []),
+          A('info', t('properties'), () => void propertiesSheet({ name: placeName(at), path: at, dir: true, size: 0, mtime: 0 }))],
+        tools: [...(plug() ? [A('chart', t('filesAnalyzer'), () => pickSheet(t('filesAnalyzer'), roots.filter((r) => r.readable).map((r): [string, string, string] => [r.path, r.name, 'storage']), roots[0]?.path ?? '', (path) => { const r = roots.find((x) => x.path === path)!; void import('./filesMore').then((mm) => mm.analyzerSheet(r, (e) => void open(e), (d) => go(d), (paths) => void confirmDelete(paths))); }, t('close')))] : []),
+          ...(real && fileHost() ? [A('copy', t('filesDups'), () => findDups()), A('columns', t('filesCompare'), () => { const pr = comparePair(); if (pr) runCompare(pr); else { selecting = true; applySel(); drawSel(); toast(t('fmCompareHint'), 'info'); } })] : []),
+          ...(plug() ? [A('shield', t('filesVerify'), () => void import('./filesMore').then((mm) => mm.filesSettingsSheet(at, () => { void loadRoots(); void load(); }))), A('jobs', t('filesJobs'), () => jobsBtn.click()), A('trash', t('filesTrash'), () => void import('./filesMore').then((mm) => mm.trashSheet(() => void load())))] : [])],
+        more: [...(plug() ? [A('trash', t('filesTrashSetting'), () => void import('./filesMore').then((mm) => { mm.setTrashOn(!mm.trashOn()); toast(mm.trashOn() ? t('filesTrashOn') : t('filesTrashOff')); }))] : []),
+          A('settings', t('filesSettings'), () => void import('./filesMore').then((mm) => mm.filesSettingsSheet(at, () => { void loadRoots(); void load(); }))), A('eyeOff', t('filesHiddenFolders'), () => void import('./filesMore').then((mm) => mm.hiddenSheet((p) => go(p), () => void load()))),
+          ...(canShareFolder() && !isVirtual(at) ? [A('wifi', t('fshareTitle'), () => void folderShareSheet(at, baseOf(at) || at))] : []), ...(plug() && !isVirtual(at) ? [A('pin', t('filesPinHome'), () => void pinHome(at, baseOf(at) || at))] : []),
+          ...(plug() ? [A('key', t('archiveForgetPw'), () => void import('../archives').then((a) => { a.forgetPasswords(); a.setRememberPasswords(false); toast(t('done')); })), A('upload', t('filesSavedShared'), () => void saveSharedSheet())] : []), ...(plug() && !allFiles ? [A('key', t('filesAccessAllow'), () => void askAccess())] : [])],
+      }));
+      return;
+    }
     const sh = openSheet(t('navFiles'), t('close'));
     const act = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'name' }, label));
     sh.body.append(h('div', { class: 'dest-list' },
