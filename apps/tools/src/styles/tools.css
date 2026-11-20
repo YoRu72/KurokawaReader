@@ -764,6 +764,8 @@ html.kt-overlay-doc #app { padding: 0 !important; }
 .files-ic { flex: none; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--md-surface-container-high); color: var(--md-primary); overflow: hidden; }
 .files-ic.has-img img { width: 100%; height: 100%; object-fit: cover; }
 .files-main { display: flex; flex-direction: column; min-width: 0; }
+/* (A folder's count still being asked: its second line keeps its height, so the number fills in without moving the rows.) */
+.files-main small.cnt-wait:empty::before { content: "\00a0"; }
 .files-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A long name cut in its middle: the head gives way, the tail (the last letters and the extension) always shows. Each part
    isolated, so an English name's brackets stay where they are in the Arabic page. */
