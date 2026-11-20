@@ -10,6 +10,13 @@ const BRIDGE = fs.readFileSync(path.join(__dirname, '..', 'desktop-tauri', 'brid
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 const serve = () => http.createServer((req, r) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); r.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(r); });
 let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FAIL ') + what + (cond || x === undefined ? '' : '  ' + JSON.stringify(x))); if (!cond) fails++; };
+// (The path's letters, by themselves: «.» and «..» resolved, never above a root; a drive keeps its slash; into-itself.)
+{ const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'views', 'filesPath.ts'), 'utf8'); const js = require('esbuild').transformSync(src, { loader: 'ts', format: 'cjs' }).code; const m = { exports: {} }; new Function('module', 'exports', js)(m, m.exports); const P = m.exports;
+  const eq = (what, got, want) => ok(`path: ${what}`, got === want, [got, want]);
+  eq('/x/../a/b/c', P.resolvePath('/x/../a/b/c'), '/a/b/c'); eq('/a/./b//c/', P.resolvePath('/a/./b//c/'), '/a/b/c'); eq('never above /', P.resolvePath('/../../a'), '/a'); eq('/ stays', P.resolvePath('/'), '/');
+  eq('C:\\a\\..\\b', P.resolvePath('C:\\a\\..\\b'), 'C:/b'); eq('never above C:/', P.resolvePath('C:/a/../../..'), 'C:/'); eq('C: alone', P.resolvePath('C:'), 'C:/'); eq('a share', P.resolvePath('//srv/sh/a/../../x'), '//srv/sh/x');
+  eq('a link as it was', P.resolvePath('content://a/../b'), 'content://a/../b'); eq('dir of C:/file.txt', P.dirOfPath('C:/file.txt'), 'C:/'); eq('dir of /a/b', P.dirOfPath('/a/b'), '/a'); eq('dir of /a', P.dirOfPath('/a'), '/');
+  ok('path: a cut of /a/b pasted into /x/../a/b/c is blocked', P.intoItself(['/a/b'], '/x/../a/b/c')); ok('path: /a/bc is not inside /a/b', !P.intoItself(['/a/b'], '/a/bc')); ok('path: C:\\A into c:/a/x blocked', P.intoItself(['C:\\A'], 'c:/a/x')); }
 
 function fakeTauri({ lang, dual }) {
   if (!sessionStorage.getItem('kt-pc-init')) { sessionStorage.setItem('kt-pc-init', '1'); localStorage.setItem('kr.lang', lang); localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.settings', JSON.stringify({ addons: ['files'] })); localStorage.setItem('kt.files.prefs', JSON.stringify({ view: 'list', sort: 'name', desc: false, hidden: false, kind: 'all', ...(dual ? { dual: true, lastB: '/home/u/src/Beta' } : {}) })); localStorage.setItem('kt.files.bookmarks', JSON.stringify([{ name: 'Pinned', path: '/home/u/dst' }])); }
@@ -189,8 +196,25 @@ function fakeTauri({ lang, dual }) {
   await p2.click('.files-pane[data-side="a"] .d-row'); await p2.keyboard.press('F6'); await p2.waitForTimeout(150);
   ok(L('F6 moves focus to the other pane'), await p2.evaluate(() => !!document.activeElement?.closest?.('.files-pane[data-side="b"]')), await p2.evaluate(() => document.activeElement?.className));
   ok(L('only the first pane carries the navigation pane'), await p2.locator('.pcx-nav').count() === 1);
+  // keys go to the pane in use (last clicked or focused, ringed), never to the one under the mouse
+  { const bRow = p2.locator('.files-pane[data-side="b"] .d-row').last(); await bRow.click(); const bName = (await bRow.textContent()).trim().split('\n')[0].slice(0, 12);
+    await p2.keyboard.press('Escape').catch(() => undefined); await bRow.click();
+    await p2.locator('.files-pane[data-side="a"] .pcx-head').click(); await p2.waitForTimeout(100);
+    const ring = await p2.evaluate(() => [document.querySelector('.files-pane[data-side="a"]').classList.contains('pane-active'), document.querySelector('.files-pane[data-side="b"]').classList.contains('pane-active')]);
+    ok(L('the pane in use carries the focus ring, the other none'), ring.join() === 'true,false', ring);
+    await bRow.hover(); await p2.keyboard.press('Delete'); await p2.waitForTimeout(400);
+    const sh = (await p2.locator('.sheet').textContent().catch(() => '')) || '';
+    ok(L('Delete with the mouse over the other pane: that pane\'s selection is never acted on'), !sh.includes(bName), [bName, sh.slice(0, 100)]);
+    if (sh) { await p2.keyboard.press('Escape'); await p2.waitForTimeout(200); } }
   await p2.context().close();
 
+  // ---- 7b. the window made narrow (the phone's layout): the computer's parts are taken down; wide again, put back
+  { const pw = await open(1280, 800); await pw.goto(`${base}#/files?p=${encodeURIComponent('/home/u/src')}`); await pw.waitForSelector('.pcx-bar', { timeout: 15000 });
+    await pw.setViewportSize({ width: 600, height: 800 }); await pw.waitForFunction(() => !document.querySelector('.pcx-bar, .pcx-status, .files-view.pcx'), null, { timeout: 4000 }).catch(() => undefined);
+    ok(L('narrowed to the phone layout: the PC parts are taken down'), await pw.locator('.pcx-bar, .pcx-status, .pcx-nav, .files-view.pcx').count() === 0 && await pw.locator('.files-view .topbar .topbar-actions').count() === 1);
+    await pw.setViewportSize({ width: 1280, height: 800 }); await pw.waitForSelector('.pcx-bar', { timeout: 4000 }).catch(() => undefined);
+    ok(L('…wide again: put back, once'), await pw.locator('.pcx-bar').count() === 1 && await pw.locator('.pcx-status').count() === 1);
+    ok(L('…no page errors'), pw.errors.length === 0, pw.errors); await pw.context().close(); }
   // ---- 8. the phone is as it was
   const ph = await open(360, 780); await ph.goto(`${base}#/files?p=${encodeURIComponent('/home/u/src')}`); await ph.waitForSelector('.files-row', { timeout: 15000 }); await ph.waitForTimeout(500);
   ok(L('phone (360 px): no PC parts — header, compact rows'), await ph.locator('.pcx, .pcx-nav, .pcx-bar, .pcx-head, .d-row').count() === 0 && await ph.locator('.files-head').isVisible() && await ph.locator('.files-row .files-date').count() > 0, await ph.locator('.files-row').first().innerHTML().catch(() => ''));

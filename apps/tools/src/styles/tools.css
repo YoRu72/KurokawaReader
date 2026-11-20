@@ -900,6 +900,7 @@ html.pc .files-view.has-clip .files-body { padding-bottom: 96px; }
 .files-dual.one { grid-template-columns: 1fr; }
 .files-dual .files-pane { min-width: 0; border-inline-end: 1px solid var(--md-outline-variant); }
 .files-dual .files-pane:last-child { border-inline-end: 0; }
+.files-dual .files-pane.pane-active { outline: 2px solid color-mix(in srgb, var(--md-primary) 60%, transparent); outline-offset: -2px; }
 .files-dual .files-pane .files-fab { position: sticky; }
 .files-pane .files-body.drop-over { outline: 2px dashed var(--md-primary); outline-offset: -4px; border-radius: 16px; }
 .files-row[draggable="true"] { cursor: grab; }

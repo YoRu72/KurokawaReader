@@ -5,6 +5,7 @@
 // installer) or by any app (Open with…, Open as a kind); a selection (held) copied, cut, pasted, deleted, renamed,
 // shared, zipped, with properties; the operations as jobs with their progress and a question when a name is taken;
 // what other apps share to «Save to device» saved where you choose.
+import { resolvePath, dirOfPath, intoItself } from './filesPath';
 import { sideDrawer, swipeToOpen } from '../ui/sideSwipe';
 import { swipeable } from '../ui/swipe';
 import { claimTouch } from '../ui/touchOwner';
@@ -123,6 +124,8 @@ const clipWatch = new Set<() => void>();
 const scrollMemo = new Map<string, number>();
 /** The pane last touched (two side by side): the one Back walks up. */
 let activePane: object | null = null;
+/** The panes told when the pane the keys go to changes (its focus ring drawn). */
+const paneWatch = new Set<() => void>();
 /** The hidden folders an archive's entries are taken out to before they are moved in (by the move job's id). */
 const stagings = new Map<string, string>();
 const STAGE = '.kurokawa-extract-';
@@ -135,9 +138,7 @@ let stagesSwept = false;
  *  clipboard puts it down. */
 let clipGone = '';
 const setClip = (c: typeof clipboard, gone = '') => { clipboard = c; clipGone = c ? gone : ''; keepResume({ clip: c ? { op: c.op, paths: c.paths, ...(c.busy ? { busy: c.busy } : {}) } : null }); for (const f of clipWatch) f(); };
-/** `dest` is one of `paths` or lies inside one — a folder pasted into itself (whole names compared, letter case aside:
- *  the phone's storage ignores it; /a/b and /a/bc are strangers; a computer's «\\» is a «/»). */
-export const intoItself = (paths: string[], dest: string): boolean => { const norm = (x: string) => x.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() + '/'; const d = norm(dest); return paths.some((p) => d.startsWith(norm(p))); };
+export { intoItself }; // (views/filesPath.ts)
 // (The jobs under way and the pane that asked for each: only that pane answers a job's questions and shows its row; a
 // pane gone — the page moved on — leaves its jobs to the next pane that hears of them.)
 type JobRec = { owner: object | null; label: string; cancel: () => void; ended?: boolean };
@@ -174,7 +175,7 @@ const readerMime = (name: string): string | null => READER_MIME[(name.split('.')
 const mimeOf = (p: string): string => { const k = kindOfFile(p); if (/\.(txt|nfo|md|srt|ass|vtt|json|xml|log|csv|ini|cfg)$/i.test(p)) return 'text/plain'; if (/\.pdf$/i.test(p)) return 'application/pdf'; if (/\.apk$/i.test(p)) return 'application/vnd.android.package-archive'; return ({ video: 'video/*', audio: 'audio/*', image: 'image/*', ebook: 'application/epub+zip', archive: 'application/zip' } as Record<string, string>)[k] ?? '*/*'; };
 // (A place under a scheme — «apps://com.x», «remote://id» — has the scheme's root above it, «apps://»; trimming the
 // last part as a folder would leave «apps:/», which became «apps:», a place that lists nothing.)
-const parentOf = (p: string): string => { const top = /^([a-z]+:\/\/)[^/]*\/?$/.exec(p); if (top) return top[1]; return p.replace(/\/+$/, '').replace(/\/[^/]*$/, '') || '/'; };
+const parentOf = (p: string): string => { const top = /^([a-z]+:\/\/)[^/]*\/?$/.exec(p); if (top) return top[1]; return dirOfPath(p); };
 /** «apps:» and «apps:/» (left by an older version) mended to «apps://». */
 const mendScheme = (p: string): string => p.replace(/^([a-z]+):\/?$/, '$1://');
 const baseOf = (p: string): string => p.replace(/\/+$/, '').split('/').pop() ?? p;
@@ -376,7 +377,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const scrollNow = (): number => Math.max(window.scrollY, body.scrollTop);
   let movedOn = false; // (this page has gone elsewhere: its scroll was kept then, not again when it is taken down)
   const keepScroll = () => { if (movedOn) return; const k = collection ? `c:${collection}` : at; if (k && shownAt === k) scrollMemo.set(k, scrollNow()); };
-  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else if (!pk) prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; try { pcCtl?.bar(); } catch { /* drawn again with the listing */ } if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
+  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : /^(\/|[A-Za-z]:\/)/.test(path) ? resolvePath(path) : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else if (!pk) prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; try { pcCtl?.bar(); } catch { /* drawn again with the listing */ } if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
   const openCollection = (kind: string) => { if (gone) return; keepScroll(); collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!quiet) { movedOn = true; navigate(`/files?c=${kind}`); } void load(); };
   /** The place above `p`: the folder up; inside an archive the folder up there, and from its top the folder that holds
    *  the archive; null at a storage's top (the top of Files). */
@@ -597,6 +598,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // (The window crossing 840 px — a turned phone, a resized window —: the rows drawn again in the layout that now fits.)
   const mqW = window.matchMedia('(min-width: 840px)'); let mqT = 0;
   const onMqW = () => { clearTimeout(mqT); mqT = window.setTimeout(() => { if (!gone) { syncBack(); draw(window.scrollY); if (selecting) drawSel(); } }, 150); };
+  // (The app's layout turning from the computer's to the phone's — a window made narrow —: the computer's parts are
+  // taken down, their listeners with them; turning back, they are put up again.)
+  const pcObs = new MutationObserver(() => {
+    if (gone) return;
+    if (pcCtl && phoneNow()) { pcCtl.dispose(); pcCtl = null; void load(); }
+    else if (!pcCtl && pcm && !phoneNow() && !pk && !po.handedIn) void load();
+  });
+  pcObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   mqW.addEventListener('change', onMqW);
   const paintView = () => { const next = NEXT_VIEW[prefs.view]; const to = next === 'gallery' ? 'images' : next; viewBtn.dataset.icon = to; viewBtn.replaceChildren(icon(to)); const lbl = t(VIEW_TO[next]); viewBtn.title = lbl; viewBtn.setAttribute('aria-label', lbl); };
   /** The view changed: the first row in sight stays where it is on the screen, the rows are drawn at the new size (their
@@ -1431,10 +1440,14 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // Back (the phone's, a mouse's, Alt+←, the arrow in the bar): the open sheet or viewer closes first (the app's back
   // stack does that), then the selection or the filter, then up a folder at a time to the top of Files, and only then
   // Files is left — for the place the reader came from, not always the downloads.
-  root.addEventListener('pointerdown', () => { activePane = me; }, true);
+  // (Two panes side by side: the keys go to the pane last clicked in or focused — F6, Tab —, ringed; never by hover.)
+  const isMine = (): boolean => (activePane ? activePane === me : po.side !== 'b');
+  const markActive = () => { if (activePane === me) return; activePane = me; for (const f of paneWatch) f(); };
+  const drawActive = () => root.classList.toggle('pane-active', !!po.peer?.() && isMine()); paneWatch.add(drawActive); drawActive();
+  root.addEventListener('pointerdown', markActive, true); root.addEventListener('focusin', markActive);
   const unBack = onBackStep(() => {
     if (gone || !root.isConnected) return false;
-    if (po.peer?.() && (activePane ? activePane !== me : po.side === 'b')) return false;
+    if (po.peer?.() && !isMine()) return false;
     // (Opened by another app and still where it began: Back hands back to that app.)
     if (po.handedIn && at === po.handedIn.start && !selecting && search.hidden && !collection) { po.handedIn.leave(); return true; }
     if (backStep()) return true;
@@ -1450,7 +1463,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     if (!root.isConnected || document.querySelector('.sheet') || !document.documentElement.classList.contains('pc')) return;
     const el = ev.target as HTMLElement; if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable) { if (ev.key === 'Escape' && el === search) { search.value = ''; query = ''; search.hidden = true; draw(); } return; }
     // (Only the pane last clicked in, when two are side by side.)
-    if (po.peer?.() && !root.contains(document.activeElement) && !root.matches(':hover')) return;
+    if (po.peer?.() && !isMine()) return; drawActive();
     const mod = ev.ctrlKey || ev.metaKey; const k = ev.key.toLowerCase();
     const one = picked.size === 1 ? entries.find((e) => e.path === [...picked][0]) : undefined;
     if (pcCtl?.key(ev)) return;
@@ -1471,7 +1484,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { pcCtl?.dispose(); keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  root.dispose = () => { pcCtl?.dispose(); pcCtl = null; pcObs.disconnect(); stopSub?.(); stopSub = null; window.visualViewport?.removeEventListener('resize', onVv); keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); paneWatch.delete(drawActive); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   /** What the computer's file manager (views/filesPc.ts) may reach of this pane. */
   const pcHost = (): import('./filesPc').PcHost => ({
     root, body, listEl, side: po.side, dual: !!po.embedded, peer: () => po.peer?.() ?? null,
