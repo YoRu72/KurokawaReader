@@ -1204,6 +1204,7 @@ export const ko: Partial<Strings> = {
   filesClipClear: "클립보드 비우기",
   filesClipboard: "클립보드",
   filesClipCount: "{n}개",
+  filesSelCount: "{n}개 선택됨",
   filesClipCopy: "복사",
   filesClipMove: "이동",
   filesClipExtract: "보관 파일에서 꺼내기",

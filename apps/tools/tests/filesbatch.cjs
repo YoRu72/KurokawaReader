@@ -48,7 +48,7 @@ async function badges(browser, port, z, lang) {
   await tap(p, 'broken.bin'); ok(L('letting one go renumbers the rest (photo 1, Song 2); the one let go has no badge'), (await badge(p, 'Song.mp3')) === '2' && (await badge(p, 'broken.bin')) === '', [await badge(p, 'Song.mp3'), await badge(p, 'broken.bin')]);
   await tap(p, 'broken.bin'); ok(L('picked again: it goes last (3)'), (await badge(p, 'broken.bin')) === '3');
   // through scroll and lazy blocks, and select-all
-  await p.click('.files-selbar button[aria-label="Close"], .files-selbar button[aria-label="إغلاق"]'); await p.waitForTimeout(200);
+  await p.click('.files-selhead button[aria-label="Close"], .files-selhead button[aria-label="إغلاق"]'); await p.waitForTimeout(200);
   await tap(p, 'Many'); await p.waitForSelector('.files-row:has(.files-name[title="file 000.txt"])'); await p.waitForTimeout(500);
   await p.evaluate(() => { window.scrollTo(0, 3000); document.querySelector('.files-body').scrollTop = 3000; }); await p.waitForTimeout(500);
   const names = await p.$$eval('.files-row', (rs) => rs.filter((r) => { const b = r.getBoundingClientRect(); return b.top > 160 && b.bottom < innerHeight - 140; }).map((r) => r.querySelector('.files-name').title)); const far = names[Math.floor(names.length / 2)];
@@ -58,7 +58,7 @@ async function badges(browser, port, z, lang) {
   ok(L('picked far down, then near the top: 1, 2, 3 whatever is drawn'), (await badge(p, 'file 002.txt')) === '2' && (await badge(p, 'file 000.txt')) === '3');
   await p.evaluate(() => { window.scrollTo(0, 3000); document.querySelector('.files-body').scrollTop = 3000; }); await p.waitForTimeout(600);
   ok(L('… scrolled back down: the first pick still wears 1 (its block drawn again)'), (await badge(p, far)) === '1', await badge(p, far));
-  await p.click('.files-selbar button[aria-label="Select all"], .files-selbar button[aria-label="تحديد الكل"]'); await p.waitForTimeout(300);
+  await p.click('.files-selhead button[aria-label="Select all"], .files-selhead button[aria-label="تحديد الكل"]'); await p.waitForTimeout(300);
   await p.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.files-body').scrollTop = 0; }); await p.waitForTimeout(500);
   const d = (n) => String(n);
   ok(L('select-all: the three keep 1, 2, 3; the rest follow in the list\'s order (the folder first)'), (await badge(p, far)) === d(1) && (await badge(p, 'file 002.txt')) === d(2) && (await badge(p, 'file 000.txt')) === d(3) && (await badge(p, 'Inner')) === d(4) && (await badge(p, 'file 001.txt')) === d(5) && (await badge(p, 'file 003.txt')) === d(6), [await badge(p, far), await badge(p, 'file 001.txt'), await badge(p, 'file 003.txt')]);
@@ -150,7 +150,7 @@ async function runs(browser, port, z, lang) {
   ok(L('no journal left after clean runs'), await p.evaluate(() => localStorage.getItem('kt.files.renamejob') === null));
   // a chain: 1→2, 2→3, 3→4, no temporary name
   await p.evaluate(() => { window.__renames = []; }); await p.keyboard.press('Escape').catch(() => {});
-  await p.locator('.files-selbar button').last().click().catch(() => {}); await p.waitForTimeout(200);
+  await p.locator('.files-selhead button[data-icon="close"]:visible, .files-selbar button[data-icon="close"]').first().click().catch(() => {}); await p.waitForTimeout(200);
   await pickMany(p, ['1.txt', '2.txt', '3.txt']); await openBatch(p); await radio(p, 'name', 4); await nameInputs(p).nth(0).fill('{n}'); await sw(p, 2); await p.locator('.batch-sheet .batch-numbox input[type=number]').nth(0).fill('2'); await p.waitForTimeout(250); pv = await prev(p);
   ok(L('chain 1→2→3→4: no clash'), pv.map((r) => r.nw).join() === '2.txt,3.txt,4.txt' && (await goes(p)), pv);
   await run(p);
@@ -159,7 +159,7 @@ async function runs(browser, port, z, lang) {
   await snack(p).locator('.toast-act').click(); await p.waitForTimeout(600);
   ok(L('Undo of the chain: 1, 2, 3 back'), await p.evaluate((k) => window.__tree.get(k + '/1.txt')?.size === 111 && window.__tree.get(k + '/3.txt')?.size === 333 && !window.__tree.has(k + '/4.txt'), K));
   // a failing step in the middle: that one listed, the others done, Undo restores the done
-  await p.locator('.files-selbar button').last().click().catch(() => {}); await p.waitForTimeout(200);
+  await p.locator('.files-selhead button[data-icon="close"]:visible, .files-selbar button[data-icon="close"]').first().click().catch(() => {}); await p.waitForTimeout(200);
   await tap(p, 'Many'); await p.waitForSelector('.files-row:has(.files-name[title="file 010.txt"])'); await p.waitForTimeout(300);
   await p.evaluate(() => { window.__renameFail = (from) => from === 'file 011.txt'; window.__renames = []; });
   await pickMany(p, ['file 010.txt', 'file 011.txt', 'file 012.txt']); await openBatch(p); await radio(p, 'name', 1); await nameInputs(p).nth(0).fill('Ep'); await sw(p, 2); await p.waitForTimeout(200); await run(p);
@@ -168,7 +168,7 @@ async function runs(browser, port, z, lang) {
   await p.evaluate(() => { window.__renameFail = null; }); await snack(p).locator('.toast-act').click(); await p.waitForTimeout(600);
   ok(L('Undo after a partial run restores the names'), (await treeNames(p, K + '/Many')).includes('file 010.txt') && (await treeNames(p, K + '/Many')).includes('file 012.txt'));
   // cancel midway, then Undo
-  await p.locator('.files-selbar button').last().click().catch(() => {}); await p.waitForTimeout(200);
+  await p.locator('.files-selhead button[data-icon="close"]:visible, .files-selbar button[data-icon="close"]').first().click().catch(() => {}); await p.waitForTimeout(200);
   const before = await treeNames(p, K + '/Many'); await p.evaluate(() => { window.__renameDelay = 60; window.__renames = []; });
   await p.keyboard.press('Escape'); await hold(p, 'file 020.txt'); for (let i = 21; i < 50; i++) await tap(p, `file ${i}.txt`.replace(/ (\d)$/, ' 0$1').replace(/file (\d\d)\.txt/, 'file 0$1.txt'));
   await openBatch(p); await radio(p, 'name', 1); await nameInputs(p).nth(0).fill('Ep'); await sw(p, 2); await p.waitForTimeout(250);
@@ -266,7 +266,7 @@ async function bar(browser, port, z, lang) {
     const L = (s) => `[${lang}-${width}] ${s}`; const { p, errors } = await open(browser, port, z, { lang, pc: false, many: 0, width });
     await hold(p, 'photo.jpg'); await tap(p, 'Song.mp3'); await tap(p, 'broken.bin'); await p.waitForTimeout(300);
     const g = await p.evaluate(() => { const b = document.querySelector('.files-selbar').getBoundingClientRect(); const kids = [...document.querySelectorAll('.files-selbar > *')].map((e) => e.getBoundingClientRect()); const bs = kids.slice(1); const gaps = []; for (let i = 2; i < kids.length; i++) gaps.push(Math.round(Math.max(kids[i].left - kids[i - 1].right, kids[i - 1].left - kids[i].right))); const ic = [...document.querySelectorAll('.files-selbar > button')]; const hs = new Set(ic.map((e) => Math.round(e.getBoundingClientRect().height))); return { clip: kids.some((k) => k.left < b.left - 0.5 || k.right > b.right + 0.5), sw: document.querySelector('.files-selbar').scrollWidth - document.querySelector('.files-selbar').clientWidth, gaps: [...new Set(gaps.map((x) => Math.abs(x)))], hs: [...hs], n: ic.length, rename: !!document.querySelector('.files-selbar [data-icon="pen"]'), icons: ic.map((e) => e.dataset.icon).filter((x) => x !== 'more' && x !== 'close'), more: !!document.querySelector('.files-selbar [data-icon="more"]') }; });
-    ok(L(`selection bar not clipped (${g.n} icons shown)`), !g.clip && g.sw <= 1 && g.n >= 3 && g.rename === (width >= 360 ? true : g.rename) && (width !== 360 || (g.icons.join() === 'check,copy,scissors,pen')), g);
+    ok(L(`selection bar not clipped (${g.n} icons shown)`), !g.clip && g.sw <= 1 && (g.n === 4 || g.n === 5) && g.icons.join() === 'copy,scissors,trash,archive', g); // (a phone: five equal slots — Copy, Cut, Delete, Archive for several, More)
     ok(L('equal gaps, equal heights, ⋮ present'), g.gaps.length === 1 && g.hs.length === 1 && g.more, g);
     const c = await p.evaluate(() => { const rs = [...document.querySelectorAll('.files-row')]; const m = rs.map((r) => { const e = r.querySelector('.files-check'); const b = e.getBoundingClientRect(); const sv = e.querySelector('svg'); const sb = (sv || e).getBoundingClientRect(); return { n: e.classList.contains('order'), w: Math.round(sb.width), h: Math.round(sb.height), cx: Math.round(b.left + b.width / 2) }; }); return m; });
     const empty = c.filter((x) => !x.n), full = c.filter((x) => x.n);

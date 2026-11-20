@@ -1204,6 +1204,7 @@ export const zh: Partial<Strings> = {
   filesClipClear: "清空剪贴板",
   filesClipboard: "剪贴板",
   filesClipCount: "{n} 项",
+  filesSelCount: "已选择 {n} 项",
   filesClipCopy: "复制",
   filesClipMove: "移动",
   filesClipExtract: "从压缩包取出",

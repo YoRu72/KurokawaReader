@@ -105,7 +105,7 @@ async function phone(browser, port, z, lang) {
   await p.waitForFunction(() => { const a = document.querySelector('.undo-snack')?.getBoundingClientRect(), b = document.querySelector('.files-selbar')?.getBoundingClientRect(); return a && b && a.bottom <= b.top + 0.5; }, null, { timeout: 3000 }).catch(() => undefined);
   ok(L('a selection made while the pill is up: the pill moves above its bar'), !overlap(await rect(p, '.undo-snack'), await rect(p, '.files-selbar')), [await rect(p, '.undo-snack'), await rect(p, '.files-selbar')]);
   ok(L('the selection bar sits above the bottom bar'), !overlap(await rect(p, '.files-selbar'), await rect(p, '.bottom-nav')), [await rect(p, '.files-selbar'), await rect(p, '.bottom-nav')]);
-  await closeX(); await p.click('.files-selbar .icon-btn[data-icon="close"]'); await p.waitForFunction(() => window.__cleared >= 5);
+  await closeX(); await p.click('.files-selhead .icon-btn[data-icon="close"]'); await p.waitForFunction(() => window.__cleared >= 5);
 
   // the «Unfinished jobs» pill
   await p.evaluate((o) => localStorage.setItem('kt.files.queue.unfinished', JSON.stringify([{ op: 'copy', paths: [`${o.K}/Song.mp3`], dest: o.SD }])), { K, SD: F.SD });
@@ -162,7 +162,7 @@ async function phone(browser, port, z, lang) {
   ok(L('the fast scroller dragged at the top never pulls to refresh'), (await p.evaluate(() => window.__ptr)) === 0);
   // Paste tapped twice in a blink
   await go(`/files?p=${encodeURIComponent(K)}`); await p.waitForSelector(rowSel('Song.mp3'));
-  await p.click(rowSel('Song.mp3'), { button: 'right' }); await p.click('.files-selbar .icon-btn[data-icon="copy"]'); await p.waitForSelector('.files-clipbar:not([hidden])');
+  await p.click(rowSel('Song.mp3'), { button: 'right' }); await p.click('.files-selbar [data-icon="copy"]'); await p.waitForSelector('.files-clipbar:not([hidden])');
   await go(`/files?p=${encodeURIComponent(`${K}/Sub`)}`); await p.waitForSelector(rowSel('in.txt'));
   await p.evaluate(() => { window.__calls = []; });
   { const [cx, cy] = await center('.files-clip-paste'); await tapAt(cx, cy); await tapAt(cx, cy); }

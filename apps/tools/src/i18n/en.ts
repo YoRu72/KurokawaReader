@@ -1493,6 +1493,7 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   filesClipClear: "Clear the clipboard",
   filesClipboard: "Clipboard",
   filesClipCount: "{n} items",
+  filesSelCount: "{n} selected",
   filesClipCopy: "Copy",
   filesClipMove: "Move",
   filesClipExtract: "Copy out of the archive",

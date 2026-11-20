@@ -1204,6 +1204,7 @@ export const ja: Partial<Strings> = {
   filesClipClear: "クリップボードを空にする",
   filesClipboard: "クリップボード",
   filesClipCount: "{n} 件",
+  filesSelCount: "{n} 件を選択中",
   filesClipCopy: "コピー",
   filesClipMove: "移動",
   filesClipExtract: "アーカイブから取り出す",
