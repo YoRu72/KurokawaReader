@@ -1142,18 +1142,50 @@ public class KtPlugin extends Plugin {
     }
     /* Shared to «Save to device»: what other apps sent (kept until saved or dismissed), and the saving. */
     static final java.util.List<Uri> shared = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-    static void sharedIn(java.util.List<Uri> us) { shared.addAll(us); KtPlugin p = self; if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
+    /** How many saves of the sheet are running: a share arriving meanwhile is added to the list, not instead of it. */
+    static volatile int sharedSaving = 0;
+    /** The same file shared twice: the same link, or (when both can be read) the same name and size. */
+    private static boolean sameShared(KtPlugin p, Uri a, Uri b) {
+        if (a.equals(b)) return true;
+        if (p == null) return false;
+        try { java.util.Map<String, Object> x = KtFiles.nameAndSize(p.getContext(), a); java.util.Map<String, Object> y = KtFiles.nameAndSize(p.getContext(), b); Object sx = x.get("size"); Object sy = y.get("size"); return sx instanceof Long && sy instanceof Long && ((Long) sx) >= 0 && ((Long) sx).equals(sy) && x.get("name") != null && String.valueOf(x.get("name")).equals(String.valueOf(y.get("name"))); } catch (Throwable t) { return false; }
+    }
+    /** What other apps send: a NEW share replaces the whole list (old leftovers go), a repeat of one replaces it, never adds a second. */
+    static void sharedIn(java.util.List<Uri> us) {
+        KtPlugin p = self;
+        synchronized (shared) {
+            java.util.List<Uri> keep = sharedSaving > 0 ? new java.util.ArrayList<>(shared) : new java.util.ArrayList<Uri>();
+            for (Uri u : us) { for (java.util.Iterator<Uri> it = keep.iterator(); it.hasNext(); ) if (sameShared(p, it.next(), u)) it.remove(); keep.add(u); }
+            shared.clear(); shared.addAll(keep);
+        }
+        sharedNotify(p);
+    }
+    private static void sharedNotify(KtPlugin p) { if (p != null) try { JSObject o = new JSObject(); o.put("kind", "shared"); o.put("n", shared.size()); p.notifyListeners("browser", o, true); } catch (Exception ignored) {} }
     @PluginMethod public void sharedPending(PluginCall call) {
         bg.execute(() -> { JSArray a = new JSArray(); synchronized (shared) { for (Uri u : shared) { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); JSObject o = new JSObject(); o.put("uri", u.toString()); o.put("name", String.valueOf(m.get("name"))); o.put("size", (Long) m.get("size")); o.put("mime", m.get("mime") == null ? "" : String.valueOf(m.get("mime"))); a.put(o); } } JSObject r = new JSObject(); r.put("items", a); call.resolve(r); });
     }
     @PluginMethod public void sharedSave(PluginCall call) {
         final File dir = fileOf(call.getString("dir", engine().defaultDir().getAbsolutePath())); final boolean clear = !Boolean.FALSE.equals(call.getBoolean("clear", true));
+        /* `uris`: save only those (and take only those off the list); without it, everything pending. */
+        final JSArray want = call.getArray("uris"); final java.util.Set<String> only = want == null ? null : new java.util.HashSet<String>();
+        if (want != null) for (int i = 0; i < want.length(); i++) only.add(want.optString(i, ""));
+        sharedSaving++;
         bg.execute(() -> {
-            JSArray saved = new JSArray(); JSArray failed = new JSArray(); java.util.List<Uri> us; synchronized (shared) { us = new java.util.ArrayList<>(shared); }
-            for (Uri u : us) { try { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); File f = KtFiles.saveShared(getContext(), u, dir, String.valueOf(m.get("name"))); saved.put(f.getAbsolutePath()); try { android.media.MediaScannerConnection.scanFile(getContext(), new String[] { f.getAbsolutePath() }, null, null); } catch (Throwable ignored) {} } catch (Exception e) { failed.put(String.valueOf(e.getMessage())); } }
-            if (clear) shared.clear();
+          try {
+            JSArray saved = new JSArray(); JSArray failed = new JSArray(); java.util.List<Uri> us = new java.util.ArrayList<>(); synchronized (shared) { for (Uri x : shared) if (only == null || only.contains(x.toString())) us.add(x); }
+            java.util.List<Uri> done = new java.util.ArrayList<>();
+            for (Uri u : us) { try { java.util.Map<String, Object> m = KtFiles.nameAndSize(getContext(), u); File f = KtFiles.saveShared(getContext(), u, dir, String.valueOf(m.get("name"))); saved.put(f.getAbsolutePath()); done.add(u); try { android.media.MediaScannerConnection.scanFile(getContext(), new String[] { f.getAbsolutePath() }, null, null); } catch (Throwable ignored) {} } catch (Exception e) { failed.put(String.valueOf(e.getMessage())); } }
+            if (clear) { if (only == null) shared.clear(); else synchronized (shared) { shared.removeAll(done); } }
             JSObject r = new JSObject(); r.put("saved", saved); r.put("failed", failed); r.put("dir", dir.getAbsolutePath()); call.resolve(r);
+          } catch (Throwable t) { call.reject(String.valueOf(t.getMessage())); }
+          finally { sharedSaving--; }
         });
+    }
+    /** Some of the pending files dropped from the list (the sheet's remove button). */
+    @PluginMethod public void sharedDrop(PluginCall call) {
+        JSArray want = call.getArray("uris"); java.util.Set<String> gone = new java.util.HashSet<String>(); if (want != null) for (int i = 0; i < want.length(); i++) gone.add(want.optString(i, ""));
+        synchronized (shared) { for (java.util.Iterator<Uri> it = shared.iterator(); it.hasNext(); ) if (gone.contains(it.next().toString())) it.remove(); }
+        call.resolve();
     }
     /** Several files to the system's share sheet at once. */
     @PluginMethod public void shareFiles(PluginCall call) {

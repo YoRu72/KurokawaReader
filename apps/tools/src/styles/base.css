@@ -1655,6 +1655,8 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .src-hit .ctx { font-size: 14px; line-height: 1.6; }
 .src-hit mark { background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: 3px; padding: 0 2px; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
+/* A hint under a switch's label always sits on its own line (not only in sheets and the settings page). */
+.switch-row > span > small { display: block; margin-top: 2px; }
 /* Repositories of extensions in the hub: a section each, its extensions as small cards. */
 .sheet-body .source-row, .sheet-body .plain-list, .sheet-body .switch-row, .sheet-body .field, .sheet-body .section-title, .sheet-body .empty { font-family: var(--font-ui); font-size: 15px; line-height: 1.45; }
 

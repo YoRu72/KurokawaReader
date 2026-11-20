@@ -43,7 +43,7 @@ type Plug = {
   filesJob(o: { id?: string; op: 'copy' | 'move' | 'delete'; paths: string[]; dest?: string; conflict?: string }): Promise<{ id: string }>;
   filesCancel(o: { id: string }): Promise<void>; filesAnswer(o: { id: string; answer: string }): Promise<void>;
   filesAccess(o: { ask?: boolean }): Promise<{ all: boolean }>; filesCollection(o: { kind: string; limit?: number }): Promise<{ entries: Entry[] }>;
-  sharedPending(): Promise<{ items: { uri: string; name: string; size: number; mime: string }[] }>; sharedSave(o: { dir: string; clear?: boolean }): Promise<{ saved: string[]; failed: string[]; dir: string }>; sharedClear(): Promise<void>;
+  sharedPending(): Promise<{ items: { uri: string; name: string; size: number; mime: string }[] }>; sharedSave(o: { dir: string; clear?: boolean; uris?: string[] }): Promise<{ saved: string[]; failed: string[]; dir: string }>; sharedClear(): Promise<void>; sharedDrop?(o: { uris: string[] }): Promise<void>;
   openChooser(o: { path: string; mime?: string; title: string }): Promise<void>; openWith(o: { path: string; mime: string; title: string }): Promise<void>; shareFile(o: { path: string; title: string }): Promise<void>;
   defaultDir(): Promise<{ dir: string }>;
   /** Files' own chooser (views/openWith.ts): the apps that open a type, and one of them asked to. */
@@ -1386,11 +1386,36 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- what other apps shared to «Save to device»
   const saveSharedSheet = async () => {
-    const pl = plug(); if (!pl) return; const r = { items: readShared(await pl.sharedPending().catch(() => null)) };
+    const pl = plug(); if (!pl) return; const items = readShared(await pl.sharedPending().catch(() => null));
     const sh = openSheet(t('filesSaveToDevice'), t('close'));
-    if (!r.items.length) { sh.body.append(h('p', { class: 'hint' }, t('filesNothingShared'))); return; }
-    sh.body.append(h('div', { class: 'dest-list' }, ...r.items.map((it) => h('div', { class: 'dest-row shared-row' }, icon(ICON[kindOfFile(it.name)] ?? 'file'), nameEl(it.name), h('small', { class: 'src shared-size' }, it.size >= 0 ? formatBytes(it.size) : '')))), h('p', { class: 'hint', dir: 'ltr' }, at));
-    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); /* (undo-redo) held: cleared for real only once its Undo is over; Undo brings the sheet back */ void import('../ui/undo').then((u) => u.offerUndo(t('sharedDiscarded', { n: localDigits(r.items.length) }), () => void saveSharedSheet(), undefined, { commit: () => pl.sharedClear() })); } }, t('filesDiscard')), h('button', { type: 'button', class: 'btn primary', onclick: async () => { sh.close(); const el = jobRow('shared', t('filesSaving', { n: localDigits(r.items.length) }), () => undefined); try { const res = readSaved(await pl.sharedSave({ dir: at })); el.remove(); void load(); toast(res.failed.length ? t('filesSomeFailed', { n: localDigits(res.failed.length), why: res.failed[0] }) : t('filesSavedN', { n: localDigits(res.saved.length) }), res.failed.length ? 'error' : 'info'); } catch (err) { el.remove(); toast(String((err as Error).message ?? err), 'error'); } } }, icon('download'), t('filesSaveHere')));
+    if (!items.length) { sh.body.append(h('p', { class: 'hint' }, t('filesNothingShared'))); return; }
+    const off = new Set<string>();   // the rows not ticked
+    const list = h('div', { class: 'dest-list' }); const title = sh.el.querySelector('h3');
+    const save = h('button', { type: 'button', class: 'btn primary', onclick: () => void doSave() }) as HTMLButtonElement;
+    const left = (): typeof items => items.filter((x) => !off.has(x.uri));
+    const draw = () => {
+      const sel = left();
+      list.replaceChildren(...items.map((it) => {
+        const on = !off.has(it.uri);
+        const flip = () => { if (off.has(it.uri)) off.delete(it.uri); else off.add(it.uri); draw(); };
+        const box = h('button', { type: 'button', class: 'files-check shared-pick', role: 'checkbox', 'aria-checked': String(on), 'aria-label': `\u2068${it.name}\u2069`, 'data-on': String(on), onclick: (e: Event) => { e.stopPropagation(); flip(); } }, icon(on ? 'check' : 'circle'));
+        const del = iconButton('close', t('sharedRowRemove'), (e) => {
+          e.stopPropagation(); const at0 = items.indexOf(it); items.splice(at0, 1); const was = off.delete(it.uri); draw();
+          void import('../ui/undo').then((u) => u.offerUndo(t('sharedDiscarded', { n: localDigits(1) }), () => { items.splice(Math.min(at0, items.length), 0, it); if (was) off.add(it.uri); if (sh.el.isConnected) draw(); }, undefined, { commit: () => pl.sharedDrop?.({ uris: [it.uri] }) }));
+        }); del.classList.add('shared-del');
+        return h('div', { class: 'dest-row shared-row' + (on ? '' : ' off'), onclick: flip }, box, icon(ICON[kindOfFile(it.name)] ?? 'file'), nameEl(it.name), h('small', { class: 'src shared-size' }, it.size >= 0 ? formatBytes(it.size) : ''), del);
+      }));
+      if (!items.length) list.append(h('p', { class: 'hint' }, t('filesNothingShared')));
+      if (title) title.textContent = t('filesSaveToDeviceN', { n: localDigits(items.length) });
+      save.replaceChildren(icon('download'), t(sel.length < items.length ? 'filesSaveHereN' : 'filesSaveHere', { n: localDigits(sel.length) })); save.disabled = !sel.length;
+    };
+    const doSave = async () => {
+      const sel = left(); if (!sel.length) return; sh.close(); const el = jobRow('shared', t('filesSaving', { n: localDigits(sel.length) }), () => undefined);
+      try { const res = readSaved(await pl.sharedSave({ dir: at, uris: sel.map((x) => x.uri) })); el.remove(); void load(); toast(res.failed.length ? t('filesSomeFailed', { n: localDigits(res.failed.length), why: res.failed[0] }) : t('filesSavedN', { n: localDigits(res.saved.length) }), res.failed.length ? 'error' : 'info'); } catch (err) { el.remove(); toast(String((err as Error).message ?? err), 'error'); }
+    };
+    sh.body.append(list, h('p', { class: 'hint', dir: 'ltr' }, at));
+    sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); /* (undo-redo) held: cleared for real only once its Undo is over; Undo brings the sheet back */ void import('../ui/undo').then((u) => u.offerUndo(t('sharedDiscarded', { n: localDigits(items.length) }), () => void saveSharedSheet(), undefined, { commit: () => pl.sharedClear() })); } }, t('filesDiscard')), save);
+    draw();
   };
 
   if (pk) {

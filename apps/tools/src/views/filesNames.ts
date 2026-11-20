@@ -70,7 +70,7 @@ export function readShared(raw: unknown): SharedItem[] {
     const name = nm && nm !== 'null' ? nm : decodeURIComponent(uri.split(/[/?#]/).filter(Boolean).pop() ?? '') || 'file';
     const size = typeof x.size === 'number' && isFinite(x.size) ? x.size : -1;
     return { uri, name, size, mime: strOf(x.mime) };
-  });
+  }).filter((it, i, all) => all.findIndex((o) => o.uri === it.uri || (it.size >= 0 && o.size === it.size && o.name === it.name)) === i);   // (the same file twice — an old build kept repeats — shows once)
 }
 /** What saving did: the paths saved, the reasons for those that failed, where. */
 export function readSaved(raw: unknown): { saved: string[]; failed: string[]; dir: string } {

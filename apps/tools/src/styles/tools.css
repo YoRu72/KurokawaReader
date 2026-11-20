@@ -1175,6 +1175,11 @@ html[dir='rtl'] .task-list .task-bar i { transform-origin: right center; }
 .shared-row > svg { flex: none; }
 .shared-row > .files-name { flex: 1 1 auto; min-width: 0; align-self: center; }
 .shared-row > .shared-size { flex: none; align-self: center; margin-block: 0; line-height: 1.3; margin-inline-start: auto; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: end; min-width: 6ch; }
+.shared-row { cursor: pointer; padding-block: 4px; }
+.shared-row.off > svg, .shared-row.off > .files-name, .shared-row.off > .shared-size { opacity: .55; }
+.shared-row > .shared-pick { flex: none; width: 40px; height: 40px; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 50%; }
+.shared-row > .shared-pick:focus-visible, .shared-row > .shared-del:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.shared-row > .shared-del { flex: none; margin-inline-start: 4px; }
 /* Another app's «pick a file» (views/pick.ts): the Files page alone — no bottom bar, no side rail —, who asked and
    for what above the list, the chosen count with Cancel and Select at the bottom; files of another kind greyed. */
 html.picking .bottom-nav, html.picking .nav-rail { display: none !important; }
