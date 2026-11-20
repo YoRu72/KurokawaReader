@@ -155,6 +155,8 @@ const MEDIA_AL = () => ({ id: ID, idMal: IDMAL, title: { romaji: 'Hoshizora Kiss
   state.progress = 1; await p.evaluate(() => localStorage.removeItem('kt.anime.tracked')); state.failAll = true; await play(4); await toEnd(); await back();
   await settle(() => Object.keys(JSON.parse(localStorage.getItem('kt.tmp.animeWatchPending') || '{}')).length === 1);
   await p.goto(`${BASE}/#/settings/anime`); await p.waitForSelector('#anime .notes-settings .switch-row input', { state: 'attached', timeout: 10000 });
+  // (The row is found by its words, and the words can arrive a moment after the first switch: wait for THAT row — the release job once clicked before it was there.)
+  await p.waitForFunction(() => [...document.querySelectorAll('#anime .notes-settings .switch-row')].some((r) => /Update my list|حدِّث قائمتي/.test(r.textContent || '') && r.querySelector('input')), null, { timeout: 10000 });
   await p.evaluate(() => { const row = [...document.querySelectorAll('#anime .notes-settings .switch-row')].find((r) => /Update my list|حدِّث قائمتي/.test(r.textContent)); row.querySelector('input').click(); });
   await settle(() => JSON.parse(localStorage.getItem('kt.settings')).animeTrackAfterWatch === false);
   ok('«Update my list after watching» off: the queue emptied', await settle(() => !Object.keys(JSON.parse(localStorage.getItem('kt.tmp.animeWatchPending') || '{}')).length));
