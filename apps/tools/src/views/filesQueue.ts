@@ -17,6 +17,7 @@ import { h, icon, iconButton, openSheet, toast } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { listen } from '../native';
 import { readablePath } from './filesNames';
+import { placePill, swipeAway } from '../ui/pill';
 
 export type QKind = 'copy' | 'move' | 'delete' | 'extract' | 'remote';
 /** What is needed to ask for a job again after a restart. */
@@ -107,6 +108,9 @@ export const enqueue = (job: QJob, h0: QHost): 'running' | 'waiting' | 'duplicat
   host = h0; waiting.push(job); persist(); sync(); notify('list'); pump();
   return running.has(job.id) ? 'running' : 'waiting';
 };
+/** A job already running in the engine, met again by a page loaded anew (Android ended the old one): held as running —
+ *  its place in «One at a time» taken — until its end is heard. */
+export const adopt = (job: QJob, h0: QHost) => { if (running.has(job.id)) return; host = h0; running.set(job.id, { job, pct: 0, meta: '', started: true, cancelAsked: false, timer: null }); notify('list'); sync(); };
 /** `id` is a part of a running job (an extraction's move into place): its events and its end are the job's. */
 export const link = (partId: string, jobId: string) => { alias.set(partId, jobId); };
 export const progress = (id: string, pct: number, meta: string) => { const r = running.get(alias.get(id) ?? id); if (r) { r.pct = pct; r.meta = meta; notify('progress', r.job.id); } };
@@ -160,11 +164,17 @@ function unfinishedSheet(resumeAll: (s: Saved[]) => void, discardAll: () => void
 export function offerUnfinished(resume: (s: Saved[]) => void, answered: () => void = () => undefined): () => void {
   if (!unfinished().length || document.querySelector('.files-unfinished')) return () => undefined;
   const text = h('span', { class: 'grow' }); const label = () => { text.textContent = t('filesUnfinished', { n: localDigits(unfinished().length) }); };
-  const done = () => { el.remove(); answered(); };
+  // (Closed — its ×, a swipe aside —: not asked again in this run; the jobs stay kept for the next start, nothing run or dropped.)
+  let tick = 0; const gone = () => { window.clearInterval(tick); el.remove(); };
+  const done = () => { gone(); answered(); };
   const el = h('div', { class: 'toast with-action undo-snack files-unfinished', role: 'status' }, text,
     h('button', { type: 'button', class: 'toast-act files-ureview', onclick: () => unfinishedSheet((l) => { done(); resume(l); }, done, label, (v) => { el.style.display = v ? '' : 'none'; }) }, t('filesReviewJobs')),
-    h('button', { type: 'button', class: 'toast-act files-udiscard', onclick: () => { dropUnfinished(); done(); } }, t('filesDiscard')));
-  label(); document.body.appendChild(el); return () => el.remove();
+    h('button', { type: 'button', class: 'toast-act files-udiscard', onclick: () => { dropUnfinished(); done(); } }, t('filesDiscard')),
+    h('button', { type: 'button', class: 'toast-x', 'aria-label': t('dismiss'), title: t('dismiss'), onclick: done }, icon('close')));
+  swipeAway(el, done);
+  label(); document.body.appendChild(el); placePill(el);
+  tick = window.setInterval(() => { if (!el.isConnected) { window.clearInterval(tick); return; } placePill(el); }, 400);
+  return gone;
 }
 
 /* ---------- the Jobs sheet ---------- */

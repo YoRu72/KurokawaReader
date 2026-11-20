@@ -70,7 +70,7 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
   const goTo = (p, hash, sel, n) => p.evaluate(async ({ hash, sel, n }) => { const t0 = performance.now(); location.hash = hash; await new Promise((res) => { const tick = () => (document.querySelectorAll(sel).length >= n ? requestAnimationFrame(() => res()) : setTimeout(tick, 5)); tick(); }); return performance.now() - t0; }, { hash, sel, n });
   // (Scrolled to the end a screen at a time, a frame each, till it no longer moves: the longest frame, the time.)
   const scrollEnd = (p) => p.evaluate(async () => {
-    const pick = () => { const c = [...document.querySelectorAll('#app .view .body, #app .view, #app .files-list, #app [class*=list]')].filter((e) => e.scrollHeight > e.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)); return c.sort((a, b) => b.scrollHeight - a.scrollHeight)[0] || document.scrollingElement; };
+    const pick = () => { const c = [...document.querySelectorAll('#app .files-view .files-body, #app .view .body, #app .view, #app .files-list, #app [class*=list]')].filter((e) => e.scrollHeight > e.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)); return c.sort((a, b) => b.scrollHeight - a.scrollHeight)[0] || document.scrollingElement; };
     const frame = () => new Promise((r) => { const t = setTimeout(r, 1000); requestAnimationFrame(() => { clearTimeout(t); r(); }); });
     let max = 0; let last = performance.now(); const t0 = last; let still = 0; let steps = 0;
     let el = pick(); while (still < 6 && steps < 200) { if (still === 3) el = pick(); const before = el.scrollTop; el.scrollTop = before + el.clientHeight * 2; await frame(); const now = performance.now(); max = Math.max(max, now - last); steps++; still = Math.abs(el.scrollTop - before) < 1 ? still + 1 : 0; (window.__trace ??= []).push([el.className || el.tagName, before, el.scrollTop, el.scrollHeight]); if (still) await new Promise((r) => setTimeout(r, 150)); last = performance.now(); }
@@ -110,11 +110,11 @@ const STAND_IN = ({ kind, nTasks, nFiles, nVideos }) => {
       const lastRow = await p.$$eval('.files-view .files-row', (x) => x.some((e) => /file-04999/.test(e.textContent)));
       // (All selected: by the keyboard on a computer, from the selection's own menu on a phone — the time till the bar says 4,980.)
       const selectAllMs = await p.evaluate(async (kind) => {
-        const y0 = Math.max(window.scrollY, document.querySelector('#app .view .body')?.scrollTop || 0); const t0 = performance.now(); const two = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const y0 = Math.max(window.scrollY, document.querySelector('#app .view .body')?.scrollTop || 0, document.querySelector('.files-view .files-body')?.scrollTop || 0); const t0 = performance.now(); const two = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         if (kind === 'pc') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
         else { document.querySelector('.files-view .files-row').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); await two(); [...document.querySelectorAll('.files-view button')].find((b) => b.getAttribute('aria-label') === 'Select all')?.click(); }
         await two();
-        const y1 = Math.max(window.scrollY, document.querySelector('#app .view .body')?.scrollTop || 0);
+        const y1 = Math.max(window.scrollY, document.querySelector('#app .view .body')?.scrollTop || 0, document.querySelector('.files-view .files-body')?.scrollTop || 0);
         return { kept: Math.abs(y1 - y0) < 50 && y0 > 1000 ? 1 : 0, ms: performance.now() - t0, sel: document.querySelectorAll('.files-view .files-row.picked').length, bar: (document.querySelector('.files-view .files-selcount')?.textContent || '') };
       }, kind);
       put('files 5,000', kind, { openMs, rows, thumbsAtOpen, scrollMaxFrameMs: sc.maxFrame, scrollMs: sc.ms, scrollSteps: sc.steps, scrollEndNodes: endNodes, thumbsAfterScroll, ...(process.env.KT_TRACE ? { trace: sc.trace } : {}), lastRowReached: lastRow ? 1 : 0, selectAllMs: selectAllMs.ms, selectKeptScroll: selectAllMs.kept, selectedShown: selectAllMs.sel, selCount: Number((selectAllMs.bar.match(/[\d,]+/) || ['0'])[0].replace(/,/g, '')), errs: errs.length });

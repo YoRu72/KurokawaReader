@@ -2,21 +2,26 @@
 // the middle (not only by its button), closed by a swipe back, the drawer following the finger.
 // (Touch events, not pointer events: once the web view takes a finger for scrolling it cancels its pointer events,
 // while touch events keep coming.)
+import { claimTouch, inSideScroller, touchTaken } from './touchOwner';
 const rtl = (): boolean => getComputedStyle(document.documentElement).direction === 'rtl';
 const along = (x: number, x0: number): number => (x - x0) * (rtl() ? -1 : 1);
 
-/** Calls `open` when a finger starting in the start-side 40% of `area` moves mostly sideways toward the middle. */
+/** Calls `open` when a finger starting in the start-side 40% of `area` moves mostly sideways toward the middle — never
+ *  on a strip that scrolls sideways (chips, the way here), with two fingers, or once another gesture has the touch
+ *  (ui/touchOwner.ts has the rules). */
 export function swipeToOpen(area: HTMLElement, open: () => void): () => void {
   let x0 = 0, y0 = 0, on = false;
   const start = (e: TouchEvent) => {
     on = false; if (e.touches.length !== 1 || document.querySelector('.sheet')) return;
     const p = e.touches[0]; const w = window.innerWidth; if ((rtl() ? w - p.clientX : p.clientX) > w * 0.4) return;
+    if (inSideScroller(e.target as Element, area) || (e.target as Element).closest?.('.files-fast, [data-no-edge]')) return;
     x0 = p.clientX; y0 = p.clientY; on = true;
   };
   const move = (e: TouchEvent) => {
-    if (!on) return; const p = e.touches[0]; const dx = along(p.clientX, x0), dy = Math.abs(p.clientY - y0);
-    if (dy > 48 || dx < -12) { on = false; return; }
-    if (dx > 64 && dx > dy * 1.6) { on = false; open(); }
+    if (!on) return; if (e.touches.length !== 1 || touchTaken('drawer')) { on = false; return; }
+    const p = e.touches[0]; const dx = along(p.clientX, x0), dy = Math.abs(p.clientY - y0);
+    if (dy > 32 || dx < -12) { on = false; return; }
+    if (dx > 64 && dx > dy * 2 && claimTouch('drawer')) { on = false; open(); }
   };
   const end = () => { on = false; };
   area.addEventListener('touchstart', start, { passive: true }); area.addEventListener('touchmove', move, { passive: true });

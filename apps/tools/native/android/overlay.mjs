@@ -31,17 +31,20 @@ for (const [code, name] of Object.entries(NAMES)) {
   await fs.mkdir(path.join(app, `src/main/res/values-${code}`), { recursive: true });
   await fs.writeFile(path.join(app, `src/main/res/values-${code}/strings.xml`), `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="app_name">${name}</string>\n    <string name="title_activity_main">${name}</string>\n</resources>\n`);
 }
-// FileProvider paths: the cache (fetched APKs) and the external files dir (downloads).
+// FileProvider paths: the cache (fetched APKs), the external files dir (downloads), the main storage and the other volumes.
 const fpPath = path.join(app, 'src/main/res/xml/file_paths.xml');
 try {
   let fp = await fs.readFile(fpPath, 'utf8');
   if (!fp.includes('kt_cache')) fp = fp.replace('</paths>', '    <cache-path name="kt_cache" path="." />\n    <external-files-path name="kt_files" path="." />\n    <files-path name="kt_int" path="." />\n    <external-path name="kt_ext" path="." />\n</paths>');
+  // (Other volumes — a memory card, a USB drive, /storage/XXXX-XXXX —: a file picked there has a link too, read-only and
+  // one by one as every grant of the picker's; the provider of storage places may be off.)
+  if (!fp.includes('kt_vol')) fp = fp.replace('</paths>', '    <root-path name="kt_vol" path="storage/" />\n</paths>');
   await fs.writeFile(fpPath, fp);
 } catch { /* the template ships it */ }
 
 // --- code ---
 await fs.mkdir(pkgDir, { recursive: true });
-for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'KrDownloaderRs.java', 'KtDlRules.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtFiles.java', 'KtFileJobs.java', 'KtRemote.java', 'KtFolderShare.java', 'KtVault.java', 'KtVfs.java', 'KtCloud.java', 'KtHls.java', 'KtCookies.java', 'KtApps.java', 'KtDedupe.java', 'KtDub.java', 'KtDocumentsProvider.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtLettering.java', 'KtLetterFace.java', 'KtInpaint.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java', 'KtScreenTrack.java', 'KtCore.java', /* (stage M4) */ 'KtScreenRs.java', 'KtHlsRs.java', /* (0.21 P8: KtStream's signed addresses) */ 'KtSign.java', /* (0.21 P2: device battery on the phone) */ 'KtBattery.java', 'KtBatPure.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtDownloadsTile.java', 'KtShare.java', 'KtMpv.java', 'KtPlugin.java', 'KtEngine.java', 'KtService.java', 'KtStream.java', 'KrDownloader.java', 'KrDownloaderRs.java', 'KtDlRules.java', 'MainActivity.java', 'KtAuthActivity.java', 'KtArchive.java', 'KtVideo.java', 'KtApk.java', 'KrDoh.java', 'KrDohProxy.java', 'KtFiles.java', 'KtFileJobs.java', 'KtRemote.java', 'KtFolderShare.java', 'KtVault.java', 'KtVfs.java', 'KtCloud.java', 'KtHls.java', 'KtCookies.java', 'KtApps.java', 'KtDedupe.java', 'KtDub.java', 'KtDocumentsProvider.java', 'KtPickLogic.java', 'KtPacks.java', 'KtDohWeb.java', 'KtBrowserActivity.java', 'KtTombstone.java', 'KtApkPlan.java', 'KtJson.java', 'KtTranslate.java', 'KtLettering.java', 'KtLetterFace.java', 'KtInpaint.java', 'KtScreenService.java', 'KtScreenA11y.java', 'KtScreenCapture.java', 'KtScreenOcr.java', 'KtScreenTile.java', 'KtScreenLaunch.java', 'KtScreenMotion.java', 'KtScreenTrack.java', 'KtCore.java', /* (stage M4) */ 'KtScreenRs.java', 'KtHlsRs.java', /* (0.21 P8: KtStream's signed addresses) */ 'KtSign.java', /* (0.21 P2: device battery on the phone) */ 'KtBattery.java', 'KtBatPure.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 // (Stage M3, torrents: the streaming director's Java side, the Rust torrent library's door and the Rust torrent engine.)
 for (const f of ['KtTorDirector.java', 'KtTorrentCore.java', 'KtTorrentRs.java', 'KtTorrentRsEngine.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 // (Stage M5 of the Rust port: the file jobs' planner and executor, the network storages' rules.)

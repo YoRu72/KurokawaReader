@@ -12,6 +12,8 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
 (async () => {
   await new Promise((r) => server.listen(5483, r));
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 412, height: 900 }, deviceScaleFactor: 1 });
+  // (The phone's rows are compact by default — no ⋮ on them; this test drives the comfortable row.)
+  await p.addInitScript(() => { try { const v = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); v.density = 'comfortable'; localStorage.setItem('kt.files.prefs', JSON.stringify(v)); } catch { /* none */ } });
   const errors = []; p.on('pageerror', (e) => errors.push(String(e))); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|blocked by CORS policy/.test(m.text())) errors.push(m.text()); }); await p.route(/api\.github\.com/, (r) => r.fulfill({ json: [], headers: { 'access-control-allow-origin': '*' } }));
   await p.addInitScript(() => {
     const tree = { '/storage/emulated/0/Download/Kurokawa': { 'Song.mp3': 5000000, Sub: {}, Subway: {}, 'Show.S01E01.720p.mkv': 900, '.gitignore': 10, 'archive.tar.gz': 50, README: 20 }, '/storage/emulated/0/Download/Kurokawa/Sub': { 'in.txt': 1 }, '/storage/emulated/0/Download/Kurokawa/Subway': {}, '/storage/emulated/0': { DCIM: {}, Music: {}, 'readme.md': 300 }, '/storage/emulated/0/DCIM': { 'pic.jpg': 9 }, '/storage/emulated/0/Music': { 'tune.mp3': 5 } };
@@ -60,11 +62,11 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   // ---- 2. a folder cut, then its own inside: no Paste there (nor in the + sheet); a sibling sharing its prefix keeps it
   await goTo(K); await itemAct('Sub', 'Cut'); await p.click('.files-row:has-text("Sub") >> nth=0'); await p.waitForTimeout(300);
   ok('inside the cut folder Paste is not offered', !(await pasteShown()));
-  await p.click('.files-fab'); await p.waitForSelector('.sheet'); ok('… nor in the + sheet', !(await p.$('.sheet .dest-row:has-text("Paste here")'))); await p.keyboard.press('Escape'); await p.waitForTimeout(250);
+  ok('… nor in the + sheet (the + is out of the way while the paste bar is up)', !(await p.$eval('.files-fab', (e) => e.getClientRects().length > 0)));
   await goTo(K + '/Subway'); ok('a sibling sharing the name\'s start (Sub → Subway) is offered Paste', await pasteShown());
   // ---- 3. the batch rename: extensions kept, clashes shown
-  await goTo(K); await itemAct('README', 'Select'); await p.click('.files-selbar button[aria-label="Select all"]'); await p.waitForTimeout(100);
-  await p.click('.files-selbar button[aria-label="Rename all…"]'); await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250);
+  await goTo(K); await itemAct('README', 'Select'); await p.click('.files-selhead button[aria-label="Select all"]:visible, .files-selbar button[aria-label="Select all"]:visible'); await p.waitForTimeout(100);
+  if (await p.locator('.files-selbar button[aria-label="Rename all…"]').count()) await p.click('.files-selbar button[aria-label="Rename all…"]'); else { await p.click('.files-selbar [data-icon="more"]'); await p.locator('.sheet .dest-row', { hasText: 'Rename all…' }).first().click(); } await p.waitForSelector('.batch-sheet .batch-row'); await p.waitForTimeout(250);
   const preview = () => p.$$eval('.batch-sheet .batch-row', (e) => Object.fromEntries(e.map((x) => [x.querySelector('.batch-old').textContent, x.querySelector('.batch-new').textContent])));
   const goOff = () => p.$eval('.batch-sheet .sheet-actions .btn.primary', (e) => e.disabled);
   const radio = (g, i) => p.locator('.batch-sheet [role=radiogroup]').nth(g).locator('[role=radio]').nth(i).click();
@@ -104,15 +106,15 @@ const K = '/storage/emulated/0/Download/Kurokawa', P = '/storage/emulated/0';
   await p.click('.files-pane[data-side="a"] .files-selbar button[aria-label="To the other pane"]'); await p.click('.sheet .dest-row:has-text("Move")'); await p.waitForTimeout(400);
   ok('a folder into the pane showing its inside: refused with a word, no job', !(await calls()).some((c) => c.startsWith('move:DCIM')) && /cannot be pasted into itself/.test(await p.textContent('.toast').catch(() => '')), await calls());
   // ---- 4. a late listing (two panes, where a pane goes its own way without a new page): Music asked first (slow),
-  // Kurokawa after (fast) — Kurokawa stays drawn, and a paste there goes to Kurokawa
+  // then Up (fast) — the folder above stays drawn, and a paste there goes to it
   await p.click('.files-pane[data-side="a"] .files-selbar button[aria-label="Close"]').catch(() => {}); await p.waitForTimeout(150);
-  await p.click('.files-pane[data-side="a"] .files-row:has-text("readme.md") button[aria-label="More"]'); await p.click('.sheet .dest-row:has-text("Copy")'); await p.waitForTimeout(150);
+  await p.click('.files-pane[data-side="a"] .files-row:has-text("readme.md")', { button: 'right' }); await p.click('.sheet .dest-row:has-text("Copy")'); await p.waitForTimeout(150);
   await p.evaluate((x) => { window.__delay[x] = 700; }, P + '/Music');
-  await p.click('.files-pane[data-side="a"] .files-row:has-text("Music") .files-main'); await p.waitForTimeout(30); await p.click('.files-pane[data-side="a"] .files-roots .chip:nth-child(1)'); await p.waitForTimeout(1200);
+  await p.click('.files-pane[data-side="a"] .files-row:has-text("Music") .files-main'); await p.waitForTimeout(30); await p.click('.files-pane[data-side="a"] .pcx-bar button[data-icon="arrowUp"]'); await p.waitForTimeout(1200);
   const rowsA = await p.$$eval('.files-pane[data-side="a"] .files-row .files-name', (e) => e.map((x) => x.textContent));
-  ok('a late listing does not cover the newer folder', rowsA.includes('Song.mp3') && !rowsA.includes('tune.mp3'), rowsA);
+  ok('a late listing does not cover the newer folder', rowsA.includes('readme.md') && !rowsA.includes('tune.mp3'), rowsA);
   await pasteClick('.files-pane[data-side="a"] '); await p.waitForTimeout(400);
-  ok('… and the paste goes to the folder shown', (await calls()).includes(`copy:readme.md>${K}`), await calls());
+  ok('… and the paste goes to the folder shown', (await calls()).includes(`copy:readme.md>${P}`), await calls());
   ok('no page errors', !errors.length); if (errors.length) console.log(errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

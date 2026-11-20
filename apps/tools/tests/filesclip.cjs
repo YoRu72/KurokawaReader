@@ -19,20 +19,21 @@ const arcOf = (archive, inner = '') => `arc://${encodeURIComponent(archive)}${in
 
 async function suite(browser, port, z, lang, pc) {
   const S = { ...EN, ...strings(lang) }; const tag = `${lang}-${pc ? 'pc' : 'phone'}`; const L = (s) => `[${tag}] ${s}`;
-  const { page: p, errors } = await F.open(browser, { lang, pc, z, many: 5 });
+  const { page: p, errors } = await F.open(browser, { lang, pc, z, many: 5, dense: !pc });
   const hash = (q) => `http://localhost:${port}/#/files?p=${encodeURIComponent(q)}`;
   const goTo = async (q) => { await p.evaluate((h) => { location.hash = h; }, `#/files?p=${encodeURIComponent(q)}`); await p.waitForTimeout(450); };
   const row = (name) => p.locator(`.files-row:has(.files-name[title="${name.replace(/"/g, '\\"')}"])`).first();
   const hold = async (name) => { await row(name).evaluate((r) => r.scrollIntoView({ block: 'center' })); await p.waitForTimeout(100); const b = await row(name).boundingBox(); await p.mouse.move(b.x + 80, b.y + b.height / 2); await p.mouse.down(); await p.waitForTimeout(650); await p.mouse.up(); await p.waitForTimeout(200); };
-  const tap = async (name) => { await row(name).locator('.files-main').click(); await p.waitForTimeout(150); };
+  const tap = async (name) => { await row(name).locator('.files-main').click(pc ? { modifiers: ['Control'] } : {}); await p.waitForTimeout(150); };
+  const into = async (name) => { if (pc) { await row(name).dispatchEvent('dblclick'); await p.waitForTimeout(150); } else await tap(name); }; // (a computer: a double-click opens, a click selects)
   const pick = async (...names) => { await hold(names[0]); for (const n of names.slice(1)) await tap(n); };
-  const sel = (icon) => p.click(`.files-selbar button[data-icon="${icon}"]`);
+  const sel = (icon) => p.click(pc || icon !== 'check' ? `.files-selbar button[data-icon="${icon}"]` : '.files-selhead button[data-icon="check"]');
   const bar = () => p.evaluate(() => { const b = document.querySelector('.files-view .files-clipbar'); if (!b || b.hidden || !b.getClientRects().length) return null; const pb = b.querySelector('.files-clip-paste'); return { name: b.querySelector('.files-clip-name')?.textContent ?? '', why: b.querySelector('.files-clip-why')?.textContent ?? '', blocked: !!b.querySelector('.files-clip-why.blocked'), disabled: pb.disabled, box: b.getBoundingClientRect().toJSON() }; });
   const has = (q) => p.evaluate((x) => window.__tree.has(x), q);
   const kidsOf = (d) => p.evaluate((x) => [...window.__tree.keys()].filter((k) => k.replace(/\/[^/]*$/, '') === x).map((k) => k.split('/').pop()), d);
   const calls = () => p.evaluate(() => window.__calls.slice());
   const settle = async (ms = 600) => p.waitForTimeout(ms);
-  const back = async () => { if (pc) await p.click('.files-view .files-back'); else await p.evaluate(() => window.__back()); await p.waitForTimeout(500); };
+  const back = async () => { if (pc) await p.click('.files-view .pcx-bar button[aria-label="' + S.pcUp + '"]'); else await p.evaluate(() => window.__back()); await p.waitForTimeout(500); };
   const shot = (name) => p.screenshot({ path: `${OUT}${tag}-${name}.png` });
 
   // ---- 1. inside the zip: the title, the breadcrumb, the rows
@@ -42,18 +43,31 @@ async function suite(browser, port, z, lang, pc) {
   ok(L('the breadcrumb names the archive'), (await p.$$eval('.files-crumbs .crumb', (e) => e.map((x) => x.textContent))).includes(ZIP));
   const metas = await p.$$eval('.files-row .files-main > small', (e) => e.map((x) => x.textContent));
   ok(L('no row ends in a dangling « · »'), metas.every((m) => !/·\s*$/.test(m) && !/^\s*·/.test(m)), metas);
-  ok(L('every entry shows the date the zip keeps'), metas.every((m) => /2025/.test(m)), metas);
+  const dated = await p.$$eval('.files-row', (rs) => rs.map((r) => `${r.querySelector('.files-main > small')?.textContent ?? ''} ${r.querySelector('.files-date')?.textContent ?? ''}`));
+  ok(L('every entry shows the date the zip keeps'), (pc ? metas : dated).every((m) => /2025/.test(m)), pc ? metas : dated);
   const tail = await row(LONG).evaluate((r) => { const n = r.querySelector('.files-name'); const t = n.querySelector('.mid-tail'); const nb = n.getBoundingClientRect(), tb = t.getBoundingClientRect(), hb = n.querySelector('.mid-head'); return { tail: t.textContent, inside: tb.right <= nb.right + 1 && tb.left >= nb.left - 1 && tb.width > 0, cut: hb.scrollWidth > hb.clientWidth }; });
   ok(L('a long name: cut in its middle, the extension in sight'), tail.tail.endsWith('.ass') && tail.inside && (pc || tail.cut), tail);
   ok(L('an Arabic name reads right to left, isolated'), (await row(ARABIC).locator('.files-name').getAttribute('dir')) === 'rtl');
   ok(L('no «+» to make things inside an archive'), await p.$eval('.files-fab', (f) => f.hidden || getComputedStyle(f).display === 'none'));
   await shot('zip');
   // an entry's menu: reading actions; no rename or delete; cut greyed with its reason
-  await row('notes.txt').locator('.icon-btn[data-icon="more"]').click(); await p.waitForSelector('.sheet');
-  const rows = await p.$$eval('.sheet .dest-row', (e) => e.map((x) => ({ t: x.querySelector('.name')?.textContent, off: x.classList.contains('files-off') })));
-  ok(L('the entry\'s menu: Copy, Extract here, Extract to, Open, Share; no Rename, no Delete'), [S.filesCopy, S.extractHere, S.extractTo, S.open, S.share].every((x) => rows.some((r) => r.t === x && !r.off)) && !rows.some((r) => r.t === S.rename || r.t === S.delete), rows);
-  ok(L('Cut shown greyed, with why'), rows.some((r) => r.t === S.filesCut && r.off) && (await p.textContent('.sheet')).includes(S.arcNoCut));
+  if (pc) {
+    if (await row('notes.txt').locator('.icon-btn[data-icon="more"]').count()) await row('notes.txt').locator('.icon-btn[data-icon="more"]').click(); else await row('notes.txt').click({ button: 'right' }); await p.waitForSelector('.sheet');
+    const rows = await p.$$eval('.sheet .dest-row', (e) => e.map((x) => ({ t: x.querySelector('.name')?.textContent, off: x.classList.contains('files-off') })));
+    ok(L('the entry\'s menu: Copy, Extract here, Extract to, Open, Share; no Rename, no Delete'), [S.filesCopy, S.extractHere, S.extractTo, S.open, S.share].every((x) => rows.some((r) => r.t === x && !r.off)) && !rows.some((r) => r.t === S.rename || r.t === S.delete), rows);
+    ok(L('Cut shown greyed, with why'), rows.some((r) => r.t === S.filesCut && r.off) && (await p.textContent('.sheet')).includes(S.arcNoCut));
+  } else {
+    // (The phone's real layout: held, the entry is chosen; the bar has Copy, Extract here and Cut greyed with why;
+    // its «More» the entry's own ways.)
+    await row('notes.txt').click({ button: 'right' }); await p.waitForSelector('.files-selbar .sel-slot');
+    const slots = await p.$$eval('.files-selbar .sel-slot', (e) => e.map((x) => ({ t: x.getAttribute('aria-label'), off: x.classList.contains('files-off') || x.disabled, why: x.title })));
+    ok(L('held in an archive: Copy and Extract here in the bar; Cut greyed, with why; no Rename, no Delete'), [S.filesCopy, S.extractHere].every((x) => slots.some((r) => r.t === x && !r.off)) && slots.some((r) => r.t === S.filesCut && r.off && r.why === S.arcNoCut) && !slots.some((r) => r.t === S.rename || r.t === S.delete), slots);
+    await p.click('.files-selbar .sel-slot[data-icon="more"]'); await p.waitForSelector('.sheet');
+    const rows = await p.$$eval('.sheet .dest-row', (e) => e.map((x) => ({ t: x.querySelector('.name')?.textContent, off: x.classList.contains('files-off') })));
+    ok(L('…its «More»: Extract to, Open, Share; no Rename, no Delete'), [S.extractTo, S.open, S.share].every((x) => rows.some((r) => r.t === x && !r.off)) && !rows.some((r) => r.t === S.rename || r.t === S.delete), rows);
+  }
   await p.keyboard.press('Escape'); await p.waitForTimeout(250); if (await p.$('.sheet')) { await p.click('.sheet .sheet-head button'); await p.waitForTimeout(250); }
+  if (!pc && await p.$('.files-view.selecting')) { await p.click('.files-selhead .icon-btn[data-icon="close"]'); await p.waitForTimeout(200); }
 
   // ---- 2. three entries copied inside the zip: the bar, Paste greyed there
   await pick('notes.txt', 'Fonts', LONG);
@@ -63,7 +77,7 @@ async function suite(browser, port, z, lang, pc) {
   let b = await bar();
   ok(L('the clipboard bar: how many («العدد: 3» in Arabic)'), !!b && b.name === fill(S.filesClipCount, { n: lang === 'ar' ? '٣' : '3' }) || (!!b && b.name === fill(S.filesClipCount, { n: '3' })), b);
   ok(L('inside the archive Paste is greyed, the reason said'), !!b && b.disabled && b.blocked && b.why === S.arcNoPaste, b);
-  if (pc) { const top = await p.$eval('.files-view .topbar', (e) => e.getBoundingClientRect().bottom); ok(L('a computer: the bar is a strip under the top bar'), !!b && b.box.top >= top - 1 && b.box.top < top + 80, { top, b }); }
+  if (pc) { const top = await p.$eval('.files-view .pcx-bar', (e) => e.getBoundingClientRect().bottom); ok(L('a computer: the bar is a strip under the toolbar'), !!b && b.box.top >= top - 1 && b.box.top < top + 80, { top, b }); }
   else { const nav = await p.$eval('.bottom-nav', (e) => e.getBoundingClientRect().top); ok(L('a phone: the bar floats above the bottom bar'), !!b && b.box.bottom <= nav && b.box.bottom > nav - 60, { nav, b }); }
   await shot('clipbar');
   // Ctrl+X inside the archive (a computer): a copy, said so
@@ -91,26 +105,26 @@ async function suite(browser, port, z, lang, pc) {
   // ---- 4. outside archives: one copied into another folder; the bar stays
   await pick('undated.bin'); await sel('copy'); await p.waitForTimeout(200);
   b = await bar(); ok(L('one item: the bar names it'), !!b && b.name === 'undated.bin' && b.why === S.filesClipCopy, b);
-  await tap('Sub'); await p.waitForTimeout(400); await p.click('.files-view .files-clip-paste'); await settle();
+  await into('Sub'); await p.waitForTimeout(400); await p.click('.files-view .files-clip-paste'); await settle();
   ok(L('copied into another folder, the original kept'), (await has(`${K}/Sub/undated.bin`)) && (await has(`${K}/undated.bin`)));
   ok(L('…and the copy is still on the clipboard'), !!(await bar()));
   // the same folder: keep both → «undated (2).bin»
   await back(); await p.click('.files-view .files-clip-paste'); await settle();
   ok(L('pasted into its own folder: «undated (2).bin» beside it'), await has(`${K}/undated (2).bin`));
-  const um = await row('undated.bin').locator('.files-main > small').textContent();
-  ok(L('a row with no date: its size alone, no « · »'), !/·/.test(um) && um.trim().length > 0, um);
+  if (!pc) { const um = await row('undated.bin').locator('.files-main > small').textContent();
+  ok(L('a row with no date: its size alone, no « · »'), !/·/.test(um) && um.trim().length > 0, um); } // (a computer's details row keeps size and date in columns)
   await p.click('.files-view .files-clipbar .icon-btn[data-icon="close"]'); await p.waitForTimeout(200);
   // two cut onto another storage: moved, the clipboard emptied
   await pick('Song.mp3', 'photo.jpg'); await sel('scissors'); await p.waitForTimeout(200);
   b = await bar(); ok(L('two cut: how many, with the scissors'), !!b && /[2٢]/.test(b.name) && !!(await p.$('.files-view .files-clip-ic svg')) && (await p.evaluate(() => document.querySelector('.files-view .files-clipbar')?.dataset.op)) === 'move', b);
   ok(L('cut, then the same folder: Paste greyed, «already here»'), !!b && b.disabled && b.why === S.filesPasteSameFolder, b);
-  await p.click(`.files-roots .chip:has-text("SD card")`); await p.waitForTimeout(450); await p.click('.files-view .files-clip-paste'); await settle();
+  await p.click(pc ? `.pcx-nav .nv-item:has-text("SD card")` : `.files-roots .chip:has-text("SD card")`); await p.waitForTimeout(450); await p.click('.files-view .files-clip-paste'); await settle();
   ok(L('moved onto the SD card: there, and gone from where they were'), (await has(`${SD}/Song.mp3`)) && (await has(`${SD}/photo.jpg`)) && !(await has(`${K}/Song.mp3`)));
   ok(L('…and the clipboard emptied after the move'), !(await bar()));
   // a folder cut, then its own subfolder: refused, with the reason
-  await goTo(K); await pick('Sub'); await sel('scissors'); await tap('Sub'); await p.waitForTimeout(300);
+  await goTo(K); await pick('Sub'); await sel('scissors'); await into('Sub'); await p.waitForTimeout(300);
   b = await bar(); ok(L('a folder into itself: Paste greyed, the reason said'), !!b && b.disabled && b.why === S.filesIntoItself, b);
-  await tap('Deeper'); b = await bar(); ok(L('…and into a folder below it'), !!b && b.disabled && b.why === S.filesIntoItself, b);
+  await into('Deeper'); b = await bar(); ok(L('…and into a folder below it'), !!b && b.disabled && b.why === S.filesIntoItself, b);
   await goTo(`${P}/ReadOnly`); b = await bar(); ok(L('a folder that cannot be written to: Paste greyed'), !!b && b.disabled && b.why === S.filesPasteReadOnly, b);
   await p.click('.files-view .files-clipbar .icon-btn[data-icon="close"]'); await p.waitForTimeout(200);
   // two names taken, «apply to all» + skip: asked once, nothing replaced

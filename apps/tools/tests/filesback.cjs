@@ -9,7 +9,7 @@ let fails = 0; const ok = (what, cond, x) => { console.log((cond ? 'ok   ' : 'FA
 const arcOf = (archive, inner = '') => `arc://${encodeURIComponent(archive)}${inner ? '/' + inner : ''}`;
 
 async function phone(browser, port, z, lang) {
-  const L = (s) => `[${lang}-phone] ${s}`; const { page: p, errors } = await F.open(browser, { lang, pc: false, z, many: 120 });
+  const L = (s) => `[${lang}-phone] ${s}`; const { page: p, errors } = await F.open(browser, { lang, pc: false, z, many: 120, dense: true });
   const where = async () => { const h = await p.evaluate(() => location.hash); const m = /[?&]p=([^&]*)/.exec(h); return m ? decodeURIComponent(m[1]) : h; };
   const sysBack = async () => { await p.evaluate(() => window.__back()); await p.waitForTimeout(500); };
   const row = (name) => p.locator(`.files-row:has(.files-name[title="${name}"])`).first();
@@ -18,8 +18,8 @@ async function phone(browser, port, z, lang) {
   await p.click('[data-dest="files"]'); await p.waitForSelector('.files-row'); await p.waitForTimeout(500);
   ok(L('Files opens on its folder; no arrow at the top'), (await p.textContent('.files-title')) === 'Kurokawa' && await p.$eval('.files-view .files-back', (b) => b.hidden), await where());
   await tap('Sub'); await tap('Deeper');
-  ok(L('down two folders'), (await where()) === `${K}/Sub/Deeper` && !(await p.$eval('.files-view .files-back', (b) => b.hidden)));
-  await row('deep.txt').locator('.icon-btn[data-icon="more"]').click(); await p.waitForSelector('.sheet'); await sysBack();
+  ok(L('down two folders (the «..» row stands in for the arrow)'), (await where()) === `${K}/Sub/Deeper` && !!(await p.$('.files-uprow')));
+  await p.locator('.files-view .topbar .icon-btn[data-icon="more"]').first().click(); await p.waitForSelector('.sheet'); await sysBack(); // (the real phone layout: the page's «More» sheet)
   ok(L('Back closes the open sheet first, the folder stays'), !(await p.$('.sheet')) && (await where()) === `${K}/Sub/Deeper`);
   const b = await row('deep.txt').boundingBox(); await p.mouse.move(b.x + 80, b.y + 20); await p.mouse.down(); await p.waitForTimeout(650); await p.mouse.up(); await p.waitForTimeout(200);
   ok(L('(a selection made)'), await p.$eval('.files-view', (v) => v.classList.contains('selecting')));
@@ -34,7 +34,7 @@ async function phone(browser, port, z, lang) {
   await sysBack(); ok(L('Back: the zip\'s top'), (await where()) === arcOf(`${K}/${ZIP}`), await where());
   await sysBack(); ok(L('Back from the zip\'s top: the folder that holds it'), (await where()) === K, await where());
   // the arrow in the bar does the same
-  await tap('Sub'); await p.click('.files-view .files-back'); await p.waitForTimeout(500); ok(L('the arrow in the bar: up a folder'), (await where()) === K);
+  await tap('Sub'); await p.click('.files-view .files-uprow'); await p.waitForTimeout(500); ok(L('the «..» row: up a folder'), (await where()) === K);
   // a folder's scroll comes back with it
   await tap('Many'); await p.evaluate(() => { window.scrollTo(0, 1500); document.querySelector('.files-body').scrollTop = 1500; }); await p.waitForTimeout(250);
   const y0 = await p.evaluate(() => Math.max(window.scrollY, document.querySelector('.files-body').scrollTop));
@@ -50,14 +50,14 @@ async function phone(browser, port, z, lang) {
 async function pc(browser, port, z, lang) {
   const L = (s) => `[${lang}-pc] ${s}`; const { page: p, errors } = await F.open(browser, { lang, pc: true, z });
   const where = async () => { const h = await p.evaluate(() => location.hash); const m = /[?&]p=([^&]*)/.exec(h); return m ? decodeURIComponent(m[1]) : h; };
-  const tap = async (name) => { await p.locator(`.files-row:has(.files-name[title="${name}"]) .files-main`).first().click(); await p.waitForTimeout(500); };
+  const tap = async (name) => { await p.locator(`.files-row:has(.files-name[title="${name}"])`).first().dispatchEvent('dblclick'); await p.waitForTimeout(500); }; // (a computer: a double-click opens)
   await p.goto(`http://localhost:${port}/#/files?p=${encodeURIComponent(K)}`); await p.waitForSelector('.files-row'); await p.waitForTimeout(500);
   await tap('Sub'); await tap('Deeper'); await tap('deep.txt').catch(() => undefined); await p.keyboard.press('Escape'); await p.waitForTimeout(300); if (await p.$('.sheet')) { await p.click('.sheet .sheet-head button'); await p.waitForTimeout(300); }
   await p.goBack(); await p.waitForTimeout(500); ok(L('the browser\'s Back: the folder before'), (await where()) === `${K}/Sub`, await where());
   await p.goBack(); await p.waitForTimeout(500); ok(L('…and the one before it'), (await where()) === K, await where());
   await p.goForward(); await p.waitForTimeout(500); ok(L('Forward: into the folder again'), (await where()) === `${K}/Sub`, await where());
   await p.keyboard.press('Alt+ArrowLeft'); await p.waitForTimeout(500); ok(L('Alt+←: up a folder'), (await where()) === K, await where());
-  await tap(ZIP); await p.click('.files-view .files-back'); await p.waitForTimeout(500); ok(L('the arrow from a zip\'s top: the folder holding it'), (await where()) === K, await where());
+  await tap(ZIP); await p.click('.files-view .pcx-bar button.pcx-up, .files-view .pcx-bar button[data-icon="arrowUp"]'); await p.waitForTimeout(500); ok(L('the arrow from a zip\'s top: the folder holding it'), (await where()) === K, await where());
   const errs = errors.filter((e) => !/favicon/.test(e)); ok(L('no page errors'), !errs.length, errs);
   await p.close();
 }

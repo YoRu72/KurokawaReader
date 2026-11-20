@@ -55,7 +55,7 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
   const subtree = (p) => [...tree.keys()].filter((k) => k === p || k.startsWith(p + '/'));
   const copyTree = (from, to) => { for (const k of subtree(from)) { const n = tree.get(k); tree.set(to + k.slice(from.length), { ...n }); } };
   const removeTree = (p) => { for (const k of subtree(p)) tree.delete(k); };
-  const ls = {}; const emit = (ev, o) => (ls[ev] || []).forEach((f) => f(o));
+  const ls = {}; const emit = (ev, o) => (ls[ev] || []).forEach((f) => f(o)); window.__emit = emit;
   const jobs = new Map(); const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const runJob = async ({ id, op, paths, dest, conflict }) => {
     const j = { cancel: false, standing: conflict && conflict !== 'ask' ? conflict : null, answer: null, wake: null }; jobs.set(id, j);
@@ -94,6 +94,7 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
     filesRoots: async () => ({ allFiles: true, roots: [{ kind: 'app', path: K, name: 'Kurokawa', readable: true, free: 12e9, total: 64e9 }, { kind: 'phone', path: P, name: 'Phone', readable: true, free: 12e9, total: 64e9 }, { kind: 'sd', path: SD, name: 'SD card', readable: true, free: 3e10, total: 6.4e10 }] }),
     filesList: async ({ path: d, hidden }) => { if (!tree.has(d)) return { exists: false, entries: [] }; return { exists: true, entries: kids(d).map(entry).filter((e) => !e.name.startsWith('.') || hidden || JSON.parse(localStorage.getItem('kt.files.prefs') || '{}').hidden) }; },
     filesStat: async ({ path: p, shallow }) => { window.__calls.push('stat:' + (shallow ? 'shallow:' : '') + p); const n = tree.get(p) || { dir: true, size: 0, mtime: T }; return { name: base(p), path: p, exists: tree.has(p), dir: n.dir, size: n.size, mtime: n.mtime, readable: true, writable: !p.startsWith(`${P}/ReadOnly`) }; },
+    filesSearch: async ({ path: d, q }) => { window.__calls.push('search:' + q + '@' + d); return { entries: [...tree.keys()].filter((k) => k.startsWith(d + '/') && base(k).toLowerCase().includes(String(q).toLowerCase())).map(entry) }; },
     filesThumb: async () => ({ url: null }), filesAccess: async () => ({ all: true }), filesCollection: async () => ({ entries: [] }),
     filesMkdir: async ({ path: p }) => { put(p, true); return { ok: true, path: p }; },
     // (The phone's rules: a missing source or a taken name (letter case aside) refused. Tests steer it: __renameDelay (ms), __renameFail(from, to) → throws.)
@@ -132,11 +133,15 @@ function phone({ z, lang, K, P, SD, ZIP, many }) {
 }
 
 /** A browser page on the pretend phone: `phoneLayout` 412×915, else a computer's 1280×800; pictures at twice the pixels. */
-async function open(browser, { lang = 'en', pc = false, z, many = 0, width = 412, height = 915 }) {
+async function open(browser, { lang = 'en', pc = false, z, many = 0, width = 412, height = 915, dense = false }) {
   const page = await browser.newPage({ viewport: pc ? { width: 1280, height: 800 } : { width, height }, deviceScaleFactor: 2, hasTouch: !pc, isMobile: false });
   const errors = []; page.on('pageerror', (e) => errors.push(String(e))); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|blocked by CORS policy/.test(m.text())) errors.push(m.text()); });
   await page.route(/api\.github\.com/, (r) => r.fulfill({ json: [], headers: { 'access-control-allow-origin': '*' } }));
   await page.addInitScript(phone, { z, lang, K, P, SD, ZIP, many });
+  // (The phone's rows are compact by default — no ⋮ on them; these tests drive the comfortable row unless asked.)
+  // (The phone's bar keeps filter / view / sort in the ⋮ sheet; tests that drive those buttons see them — the ⋮ route has its own tests: files.cjs, filesrows.cjs.)
+  if (!dense && !pc) await page.addInitScript(() => { document.addEventListener('DOMContentLoaded', () => { const st = document.createElement('style'); st.textContent = "html:not(.pc) .files-view .topbar .topbar-actions > :is([data-icon='filter'],[data-icon='sort'],[data-icon='list'],[data-icon='grid'],[data-icon='images']){display:inline-flex !important} html:not(.pc) .files-view .topbar > .files-head{min-width:0 !important}"; document.head.append(st); }); });
+  if (!dense) await page.addInitScript(() => { try { const v = JSON.parse(localStorage.getItem('kt.files.prefs') || '{}'); v.density = 'comfortable'; localStorage.setItem('kt.files.prefs', JSON.stringify(v)); } catch { /* none */ } });
   return { page, errors };
 }
 module.exports = { K, P, SD, ZIP, LONG, ARABIC, WHEN, zipListing, serve, open, buildZip };

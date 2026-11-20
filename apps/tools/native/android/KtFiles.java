@@ -62,6 +62,21 @@ final class KtFiles {
         r.put("exists", true); r.put("entries", out); r.put("path", dir.getAbsolutePath()); r.put("truncated", n >= 20000);
         return r;
     }
+    /** How many items each folder of `paths` holds, for the rows on screen (at most 64 a call; each counted up to 10000, which then means
+     *  «10000 or more»; hidden ones counted only when `hidden`). A folder that cannot be read answers -1. The time is bounded (~300 ms): the
+     *  folders not reached are left out of the answer — the page asks for them again. */
+    static JSONObject counts(JSONArray paths, boolean hidden) throws Exception {
+        JSONObject r = new JSONObject(), out = new JSONObject(); long until = System.nanoTime() + 300_000_000L;
+        for (int i = 0; i < paths.length() && i < 64; i++) {
+            if (System.nanoTime() > until) break;
+            String path = paths.optString(i, ""); if (path.isEmpty()) continue; int n = 0;
+            try (DirectoryStream<Path> ds = Files.newDirectoryStream(new File(path).toPath())) {
+                for (Path c : ds) { if (!hidden && c.getFileName().toString().startsWith(".")) continue; if (++n >= 10000) break; }
+                out.put(path, n);
+            } catch (Exception e) { out.put(path, -1); }
+        }
+        r.put("counts", out); return r;
+    }
     static String extOf(String name) { return KtFileJobs.extOf(name); }
     static String mimeOf(String name) { String e = extOf(name); String m = e.isEmpty() ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(e); if (m == null) m = KtStream.mimeOf(name); return m == null || m.isEmpty() ? "application/octet-stream" : m; }
 

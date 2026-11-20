@@ -5,7 +5,10 @@
 // picture scaled down, a video's frame a little way in, a GIF's first frame.
 type Job = { el: HTMLElement; key: string; load: () => Promise<string | null>; put: (url: string) => void };
 const cache = new Map<string, string>();
+// (Kept by size, not by count: a picture is held as its data address, some tens of KB each — a budget of bytes, smaller
+// on a phone that says it has little memory, the oldest let go first.)
 const MAX_CACHE = 500, AT_ONCE = 3;
+const BUDGET = (((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 3 ? 3 : 6) * 1048576; let held = 0;
 const waiting: Job[] = []; const jobOf = new WeakMap<Element, Job>(); let running = 0;
 let io: IntersectionObserver | null = null;
 const observer = (): IntersectionObserver => io ??= new IntersectionObserver((es) => {
@@ -15,7 +18,11 @@ const observer = (): IntersectionObserver => io ??= new IntersectionObserver((es
     if (e.isIntersecting) { if (i < 0) { waiting.push(j); pump(); } } else if (i >= 0) waiting.splice(i, 1);
   }
 }, { rootMargin: '240px 0px' });
-function remember(key: string, url: string): void { cache.delete(key); cache.set(key, url); if (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value as string); }
+function remember(key: string, url: string): void {
+  const had = cache.get(key); if (had !== undefined) { held -= had.length; cache.delete(key); }
+  cache.set(key, url); held += url.length;
+  while (cache.size > 1 && (cache.size > MAX_CACHE || held > BUDGET)) { const k = cache.keys().next().value as string; held -= cache.get(k)!.length; cache.delete(k); }
+}
 function pump(): void {
   while (running < AT_ONCE && waiting.length) {
     const j = waiting.shift()!; io?.unobserve(j.el); jobOf.delete(j.el);

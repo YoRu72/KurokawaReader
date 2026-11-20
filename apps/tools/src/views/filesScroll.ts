@@ -3,6 +3,7 @@
 // folder is sorted. On a computer the page's own scrollbar does the dragging; the bubble shows while it is scrolled.
 // The list is drawn in slices (views/files.ts), so the place is an INDEX, not a pixel: the handle's place is the index
 // of the row in sight over the list's length, and a drag asks the page to draw down to its index and bring it to the top.
+import { claimTouch } from '../ui/touchOwner';
 export interface FastScroll {
   /** How many rows the list holds. */ total(): number;
   /** The index of the row at the top of the screen (a fraction inside a slice counted). */ current(): number;
@@ -16,7 +17,7 @@ export function fastScroller(host: HTMLElement, o: FastScroll): FastHandle {
   const thumb = document.createElement('div'); thumb.className = 'files-fast-thumb'; thumb.setAttribute('role', 'slider'); thumb.tabIndex = 0; thumb.setAttribute('aria-label', o.name);
   const grip = document.createElement('span'); grip.className = 'files-fast-grip'; thumb.append(grip);
   const bubble = document.createElement('div'); bubble.className = 'files-fast-bubble'; bubble.setAttribute('aria-hidden', 'true'); const said = document.createElement('bdi'); bubble.append(said);
-  const el = document.createElement('div'); el.className = 'files-fast' + (o.pc ? ' pc' : ''); el.append(bubble, thumb); host.append(el);
+  const el = document.createElement('div'); el.className = 'files-fast' + (o.pc ? ' pc' : ''); el.dataset.noPull = ''; el.dataset.noEdge = ''; el.dataset.noPageSwipe = ''; el.append(bubble, thumb); host.append(el);
   const H = 56; let held: { top: number; bottom: number } | null = null; let dragging = false; let hide = 0; let raf = 0; let aim = -1;
   const trackNow = () => held ?? o.track();
   const place = (i: number) => { const { top, bottom } = trackNow(); const run = Math.max(1, bottom - top - H); const n = Math.max(1, o.total() - 1); const y = top + Math.min(1, Math.max(0, i / n)) * run; el.style.top = `${top}px`; el.style.height = `${Math.max(H, bottom - top)}px`; thumb.style.transform = `translateY(${y - top}px)`; bubble.style.transform = `translateY(${y - top + H / 2 - 20}px)`; };
@@ -26,7 +27,7 @@ export function fastScroller(host: HTMLElement, o: FastScroll): FastHandle {
   const fromY = (clientY: number): number => { const { top, bottom } = trackNow(); const run = Math.max(1, bottom - top - H); const f = Math.min(1, Math.max(0, (clientY - top - H / 2) / run)); return f * Math.max(0, o.total() - 1); };
   const go = () => { raf = 0; if (aim >= 0) { place(aim); say(aim); o.jump(Math.round(aim)); } };
   const move = (ev: PointerEvent) => { aim = fromY(ev.clientY); if (!raf) raf = requestAnimationFrame(go); };
-  const down = (ev: PointerEvent) => { if (o.pc) return; held = o.track(); dragging = true; thumb.setPointerCapture(ev.pointerId); el.classList.add('on', 'drag', 'bubble'); move(ev); ev.preventDefault(); };
+  const down = (ev: PointerEvent) => { if (o.pc) return; claimTouch('fast'); held = o.track(); dragging = true; thumb.setPointerCapture(ev.pointerId); el.classList.add('on', 'drag', 'bubble'); move(ev); ev.preventDefault(); };
   const up = (ev: PointerEvent) => { if (!dragging) return; dragging = false; held = null; try { thumb.releasePointerCapture(ev.pointerId); } catch { /* none */ } el.classList.remove('drag'); show(900); };
   const key = (ev: KeyboardEvent) => { const d = ev.key === 'ArrowDown' ? 1 : ev.key === 'ArrowUp' ? -1 : ev.key === 'PageDown' ? 20 : ev.key === 'PageUp' ? -20 : 0; if (!d) return; ev.preventDefault(); o.jump(Math.max(0, Math.min(o.total() - 1, Math.round(o.current()) + d))); };
   thumb.addEventListener('pointerdown', down); thumb.addEventListener('pointermove', (ev) => { if (dragging) move(ev); }); thumb.addEventListener('pointerup', up); thumb.addEventListener('pointercancel', up); thumb.addEventListener('keydown', key);

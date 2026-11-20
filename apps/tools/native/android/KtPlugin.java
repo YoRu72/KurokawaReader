@@ -74,7 +74,7 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; KtBattery.sink = this::batteryEvent; try { KtBattery.watch(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
+    @Override public void load() { wireDoh(); self = this; applyPickerDefault(); KtBattery.sink = this::batteryEvent; try { KtBattery.watch(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
         // (0.21 P9: no automatic DoH probe on a metered connection.)
         try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
@@ -306,6 +306,12 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void setSequential(PluginCall call) { run(call, () -> { engine().setSequential(call.getString("id", ""), Boolean.TRUE.equals(call.getBoolean("on", true))); call.resolve(); }); }
     /** The device's network interfaces that are up (for binding torrents to a VPN's). */
     @PluginMethod public void interfaces(PluginCall call) { run(call, () -> { JSArray out = new JSArray(); java.util.Enumeration<java.net.NetworkInterface> e = java.net.NetworkInterface.getNetworkInterfaces(); while (e != null && e.hasMoreElements()) { java.net.NetworkInterface n = e.nextElement(); if (!n.isUp() || n.isLoopback()) continue; JSObject o = new JSObject(); o.put("name", n.getName()); o.put("vpn", n.getName().matches("(tun|wg|ppp|tap|ipsec).*")); out.put(o); } JSObject r = new JSObject(); r.put("interfaces", out); call.resolve(r); }); }
+    /** Whether the page was loaded again because Android ended its renderer (memory, or a crash). Given once. */
+    @PluginMethod public void pageRestored(PluginCall call) { JSObject r = new JSObject(); long at = MainActivity.renderGoneAt; r.put("gone", at > 0); r.put("crashed", MainActivity.renderGoneCrash); r.put("at", at); MainActivity.renderGoneAt = 0; call.resolve(r); }
+    /** The Files jobs still running in the engine (a page loaded anew shows them again), each with the name-taken question it waits on, if any. */
+    @PluginMethod public void filesLive(PluginCall call) { JSArray out = new JSArray(); for (KtFileJobs.Job j : KtFileJobs.jobs.values()) { JSObject o = new JSObject(); o.put("id", j.id); org.json.JSONObject q = j.asking; if (q != null) { try { o.put("asking", JSObject.fromJSONObject(q)); } catch (Exception ignored) {} } out.put(o); } JSObject r = new JSObject(); r.put("jobs", out); call.resolve(r); }
+    /** A Files job's event to the page that is there now — the plugin of a page loaded anew, not the one that started it. */
+    private static void filesEvent(org.json.JSONObject ev) { KtPlugin p = self; if (p == null) return; try { p.notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }
     /** What went wrong last time (written down by the app as it happened, or from Android's record at the start). Given once. */
     @PluginMethod public void lastCrash(PluginCall call) {
         JSObject r = new JSObject(); java.io.File f = new java.io.File(new java.io.File(getContext().getFilesDir(), "kt"), "crash.txt"); String text = null;
@@ -859,6 +865,7 @@ public class KtPlugin extends Plugin {
 
     /* ---------- the Files add-on: folders of the device (see KtFiles) ---------- */
     @PluginMethod public void filesList(PluginCall call) { final File d = fileOf(call.getString("path", "")); final boolean counts = Boolean.TRUE.equals(call.getBoolean("counts", false)), hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.list(d, counts, hidden))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
+    @PluginMethod public void filesCounts(PluginCall call) { final JSArray ps = call.getArray("paths", new JSArray()); final boolean hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.counts(ps, hidden))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void filesRoots(PluginCall call) { bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.roots(getContext(), engine().defaultDir()))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     private final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> statRuns = new java.util.concurrent.ConcurrentHashMap<>();
     @PluginMethod public void filesStat(PluginCall call) { final File f = fileOf(call.getString("path", "")); final String id = call.getString("id", ""); final java.util.concurrent.atomic.AtomicBoolean c = new java.util.concurrent.atomic.AtomicBoolean(); if (!id.isEmpty()) { java.util.concurrent.atomic.AtomicBoolean old = statRuns.put(id, c); if (old != null) old.set(true); } final boolean shallow = Boolean.TRUE.equals(call.getBoolean("shallow", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFiles.stat(f, shallow ? null : c, shallow))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } finally { statRuns.remove(id, c); } }); }
@@ -905,7 +912,7 @@ public class KtPlugin extends Plugin {
         final String id = call.getString("id", String.valueOf(System.currentTimeMillis())); final String op = call.getString("op", "copy"); final String conflict = call.getString("conflict", "ask");
         final java.util.List<File> paths = new java.util.ArrayList<>(); JSArray a = call.getArray("paths"); if (a != null) for (int i = 0; i < a.length(); i++) paths.add(fileOf(a.optString(i, "")));
         final File dest = call.getString("dest", null) == null ? null : fileOf(call.getString("dest", ""));
-        new Thread(() -> KtFiles.run(id, op, paths, dest, conflict, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-job").start();
+        new Thread(() -> KtFiles.run(id, op, paths, dest, conflict, KtPlugin::filesEvent), "kt-files-job").start();
         JSObject r = new JSObject(); r.put("id", id); call.resolve(r);
     }
     @PluginMethod public void filesCollection(PluginCall call) { final String kind = call.getString("kind", "recent"); final int limit = call.getInt("limit", 500); bg.execute(() -> { try { JSObject r = new JSObject(); r.put("entries", new JSArray(KtFiles.collection(getContext(), kind, limit).toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
@@ -927,7 +934,7 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void filesAnswer(PluginCall call) { KtFiles.answer(call.getString("id", ""), call.getString("answer", "skip")); call.resolve(); }
     // (Stage M5: the Rust engine's journals — the list, a job cut short resumed or rolled back, a finished one undone.)
     @PluginMethod public void filesJournals(PluginCall call) { bg.execute(() -> { try { JSObject r = new JSObject(); r.put("items", new JSArray(KtFileExec.journals().toString())); call.resolve(r); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
-    @PluginMethod public void filesJournalResume(PluginCall call) { final String jid = call.getString("journal", ""); final String id = call.getString("id", "resume-" + System.currentTimeMillis()); new Thread(() -> KtFileExec.resume(jid, id, (ev) -> { try { notifyListeners("files", JSObject.fromJSONObject(ev), true); } catch (Exception ignored) {} }), "kt-files-resume").start(); JSObject r = new JSObject(); r.put("id", id); call.resolve(r); }
+    @PluginMethod public void filesJournalResume(PluginCall call) { final String jid = call.getString("journal", ""); final String id = call.getString("id", "resume-" + System.currentTimeMillis()); new Thread(() -> KtFileExec.resume(jid, id, KtPlugin::filesEvent), "kt-files-resume").start(); JSObject r = new JSObject(); r.put("id", id); call.resolve(r); }
     @PluginMethod public void filesJournalRollback(PluginCall call) { final String jid = call.getString("journal", ""); final boolean undo = Boolean.TRUE.equals(call.getBoolean("undo", false)); bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtFileExec.rollback(jid, undo))); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); } }); }
     @PluginMethod public void filesJournalDismiss(PluginCall call) { final String jid = call.getString("journal", ""); bg.execute(() -> { JSObject r = new JSObject(); r.put("ok", KtFileExec.dismiss(jid)); call.resolve(r); }); }
     /** Whether the app may read the whole storage (All files access), and the system's page to grant it. */
@@ -944,15 +951,56 @@ public class KtPlugin extends Plugin {
     /** The files chosen (`paths`), or none (`cancel`): handed to the other app, and this app steps back so it is in front again. */
     @PluginMethod public void pickDone(PluginCall call) {
         final java.util.List<File> files = new java.util.ArrayList<>(); JSArray a = call.getArray("paths");
-        if (a != null) for (int i = 0; i < a.length(); i++) { String p = a.optString(i, ""); if (!p.isEmpty()) files.add(fileOf(p)); }
+        final java.util.List<String> asked = new java.util.ArrayList<>();
+        if (a != null) for (int i = 0; i < a.length(); i++) { String p = a.optString(i, ""); if (!p.isEmpty()) { files.add(fileOf(p)); asked.add(p); } }
         final KtPickActivity pick = KtPickActivity.current; final android.app.Activity me = getActivity();
         if (pick == null) { call.reject("no request"); return; }
         final String forId = call.getString("id", ""); if (forId != null && !forId.isEmpty() && !forId.equals(pick.id)) { call.resolve(); return; }
         pick.runOnUiThread(() -> {
-            try { pick.answer(files.isEmpty() ? null : files); } catch (Throwable ignored) {}
+            java.util.List<Integer> refused = null;
+            try { refused = pick.answer(files.isEmpty() ? null : files); } catch (Throwable ignored) {}
+            // (A chosen file no link can be given to: nothing handed back, the page says which — the asking app never
+            // gets fewer files than were shown as chosen.)
+            if (refused != null && !refused.isEmpty()) {
+                JSArray ra = new JSArray(); for (Integer i : refused) ra.put(asked.get(i));
+                JSObject r = new JSObject(); r.put("refused", ra); r.put("why", "nolink"); call.resolve(r); return;
+            }
             try { if (me != null) me.moveTaskToBack(true); } catch (Throwable ignored) {}
             call.resolve();
         });
+    }
+    /* ---------- how Tools appears in other apps' file pickers: its own browser (the documents provider off) or storage places (on) ---------- */
+    private android.content.ComponentName pickerProvider() { return new android.content.ComponentName(getContext(), KtDocumentsProvider.class); }
+    /** First run after the update: the default (its own browser: the provider off) applied once; a choice already made is kept. */
+    private void applyPickerDefault() {
+        try {
+            android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE);
+            // (Other apps already holding links or folder access on the provider: it stays on — «storage places» —, and the
+            // setting's sheet says why, once; else «its own browser», as for a fresh install.)
+            int choice = KtPickLogic.firstRunChoice(sp.getBoolean("pickerDefault", false), grantsOnOurs());
+            if (choice == KtPickLogic.KEEP) return;
+            if (choice == KtPickLogic.OWN_BROWSER) getContext().getPackageManager().setComponentEnabledSetting(pickerProvider(), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+            sp.edit().putBoolean("pickerDefault", true).putBoolean("pickerKept", choice == KtPickLogic.STORAGE_PLACES).apply();
+        } catch (Throwable ignored) {}
+    }
+    /** How many links or folder accesses other apps hold, persisted, on the provider (Android keeps the list). */
+    private int grantsOnOurs() {
+        int n = 0;
+        try { for (android.content.UriPermission u : getContext().getContentResolver().getOutgoingPersistedUriPermissions()) if (u != null && u.getUri() != null && KtDocumentsProvider.AUTHORITY.equals(u.getUri().getAuthority())) n++; } catch (Throwable ignored) {}
+        return n;
+    }
+    /** The provider's state: `on` given: set first (true: storage places, false: Tools' own browser). Answers `on`, the state really in force. */
+    @PluginMethod public void pickerStorage(PluginCall call) {
+        PackageManager pm = getContext().getPackageManager(); Boolean want = call.getBoolean("on", null);
+        try {
+            if (want != null) {
+                pm.setComponentEnabledSetting(pickerProvider(), want ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+                getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("pickerDefault", true).putBoolean("pickerKept", false).apply();
+            }
+            JSObject r = new JSObject(); r.put("on", pm.getComponentEnabledSetting(pickerProvider()) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED);
+            int grants = grantsOnOurs(); r.put("others", grants); r.put("ask", KtPickLogic.askBeforeOwnBrowser(grants));
+            r.put("kept", getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).getBoolean("pickerKept", false)); call.resolve(r);
+        } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /* ---------- others' «Open with» / «Share» (KtOpenActivity holds the request and its grant; openwith.json) ---------- */
     /** What came: {id, kind, action, caller, writable, mime, items:[{uri, name, size, mime, path?, dir, readable}]}, or none. */

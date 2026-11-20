@@ -224,8 +224,13 @@ else {
   if (getSettings().addons.includes('archives')) void import('./archives/auto').then((m) => m.watchArchives());
   if (getSettings().addons.includes('video')) void import('./video/queue').then((m) => m.applyVideoQueue());
   onLangChange(() => { currentKey = ''; placeNav(); mount(parseRoute()); });
+  // (The phone: where the page is, kept as it moves — read once, before this start could write over it, for the page that
+  // comes back after Android ended its renderer; ui/restore.ts decides whether this start is such a return.)
+  const ROUTE_KEY = 'kt.resume.route'; let routeWas: string | null = null;
+  if (nativePlatform() === 'android') { try { routeWas = localStorage.getItem(ROUTE_KEY); } catch { /* none */ } addEventListener('hashchange', () => { try { localStorage.setItem(ROUTE_KEY, location.hash.slice(0, 2000)); } catch { /* none */ } }); }
   onRoute(mount);
   mount(parseRoute());
+  if (nativePlatform() === 'android') void import('./ui/restore').then((m) => m.afterRendererLoss(routeWas)).catch(() => undefined);
   // (The rest — heavy or periodic work nobody waits for — once the first screen is drawn.)
   afterFirstPaint(() => {
   animBg();
