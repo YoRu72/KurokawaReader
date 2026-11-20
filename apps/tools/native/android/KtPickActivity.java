@@ -70,10 +70,15 @@ public class KtPickActivity extends Activity {
         r.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         setResult(RESULT_OK, r); finish();
     }
+    /** Whether the app's documents provider is on (Settings → «In other apps' file pickers»). */
+    private boolean providerOn() {
+        try { return getPackageManager().getComponentEnabledSetting(new android.content.ComponentName(this, KtDocumentsProvider.class)) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED; } catch (Throwable e) { return true; }
+    }
     private Uri uriFor(File f) {
         if (f == null || !f.isFile()) return null;
         try { return androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f); } catch (Throwable ignored) {}
-        try { return android.provider.DocumentsContract.buildDocumentUri(KtDocumentsProvider.AUTHORITY, f.getAbsolutePath()); } catch (Throwable ignored) {}
+        // (The app's documents provider's own link only while that provider is on: switched off, its links no longer resolve.)
+        if (providerOn()) try { return android.provider.DocumentsContract.buildDocumentUri(KtDocumentsProvider.AUTHORITY, f.getAbsolutePath()); } catch (Throwable ignored) {}
         return null;
     }
 

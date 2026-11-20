@@ -74,7 +74,7 @@ public class KtPlugin extends Plugin {
         Intent i = new Intent(getContext(), KtBrowserActivity.class); i.putExtra(KtBrowserActivity.EXTRA_URL, call.getString("url", "")); JSObject rp = call.getObject("replay", null); if (rp != null) i.putExtra("replay", rp.toString()); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i); call.resolve();
     }
-    @Override public void load() { wireDoh(); self = this; KtBattery.sink = this::batteryEvent; try { KtBattery.watch(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
+    @Override public void load() { wireDoh(); self = this; applyPickerDefault(); KtBattery.sink = this::batteryEvent; try { KtBattery.watch(getContext()); } catch (Throwable ignored) {} try { android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE); KrDoh.provider = sp.getString("doh", "off"); KrDoh.browserProvider = sp.getString("dohBrowser", "off"); KrDoh.split = sp.getString("dohSplit", "auto"); KrDoh.allowSystem = sp.getBoolean("dohSystem", false); } catch (Exception ignored) {}
         // (0.21 P9: no automatic DoH probe on a metered connection.)
         try { final android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE); if (cm != null) KrDoh.metered = cm::isActiveNetworkMetered; } catch (Throwable ignored) {} bg.execute(KtPlugin::applyDohProxy); bg.execute(this::engine); rustCore(); }
     /** The Rust core (stage M0–M1, KtCore): its state in the log, «Rust core: 0.1.0» or «Rust core: absent»; on a
@@ -959,6 +959,28 @@ public class KtPlugin extends Plugin {
             try { if (me != null) me.moveTaskToBack(true); } catch (Throwable ignored) {}
             call.resolve();
         });
+    }
+    /* ---------- how Tools appears in other apps' file pickers: its own browser (the documents provider off) or storage places (on) ---------- */
+    private android.content.ComponentName pickerProvider() { return new android.content.ComponentName(getContext(), KtDocumentsProvider.class); }
+    /** First run after the update: the default (its own browser: the provider off) applied once; a choice already made is kept. */
+    private void applyPickerDefault() {
+        try {
+            android.content.SharedPreferences sp = getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE);
+            if (!KtPickLogic.applyDefaultNow(sp.getBoolean("pickerDefault", false))) return;
+            getContext().getPackageManager().setComponentEnabledSetting(pickerProvider(), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+            sp.edit().putBoolean("pickerDefault", true).apply();
+        } catch (Throwable ignored) {}
+    }
+    /** The provider's state: `on` given: set first (true: storage places, false: Tools' own browser). Answers `on`, the state really in force. */
+    @PluginMethod public void pickerStorage(PluginCall call) {
+        PackageManager pm = getContext().getPackageManager(); Boolean want = call.getBoolean("on", null);
+        try {
+            if (want != null) {
+                pm.setComponentEnabledSetting(pickerProvider(), want ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+                getContext().getSharedPreferences("kt", android.content.Context.MODE_PRIVATE).edit().putBoolean("pickerDefault", true).apply();
+            }
+            JSObject r = new JSObject(); r.put("on", pm.getComponentEnabledSetting(pickerProvider()) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED); call.resolve(r);
+        } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); }
     }
     /* ---------- others' «Open with» / «Share» (KtOpenActivity holds the request and its grant; openwith.json) ---------- */
     /** What came: {id, kind, action, caller, writable, mime, items:[{uri, name, size, mime, path?, dir, readable}]}, or none. */

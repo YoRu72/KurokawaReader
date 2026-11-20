@@ -286,7 +286,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   { let byTouch = false; let last: { el: Element | null; at: number } = { el: null, at: 0 };
     root.addEventListener('pointerdown', (e) => { byTouch = e.pointerType === 'touch'; }, true);
     root.addEventListener('click', (e) => { if (!byTouch) return; const b = (e.target as Element).closest?.('button, [role="button"]'); if (!b) return; const now = performance.now(); if (last.el === b && now - last.at < 450) { e.stopPropagation(); e.preventDefault(); return; } last = { el: b, at: now }; }, true); }
-  let at = mendScheme(route.p ?? (route.c ? '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? ''))); let remotes: Conn[] = [];
+  let at = mendScheme(route.p ?? (route.c ? '' : pk ? (() => { try { return localStorage.getItem('kt.files.pickLast') ?? ''; } catch { return ''; } })() || prefs.home || '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? ''))); let remotes: Conn[] = [];
   let vroots: VRoots = { shell: null, trees: [], shizuku: false };
   const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); void remoteNow; let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
   // (Pictures: asked for only as rows come near the screen, a few at a time — ui/thumbs.ts —; the phone's from its
@@ -344,7 +344,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const scrollNow = (): number => Math.max(window.scrollY, body.scrollTop);
   let movedOn = false; // (this page has gone elsewhere: its scroll was kept then, not again when it is taken down)
   const keepScroll = () => { if (movedOn) return; const k = collection ? `c:${collection}` : at; if (k && shownAt === k) scrollMemo.set(k, scrollNow()); };
-  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
+  const go = (path: string, how: 'push' | 'replace' | 'back' = 'push') => { if (gone) return; keepScroll(); collection = null; path = mendScheme(path); const was = at; at = /^[a-z]+:\/\/$/.test(path) ? path : path.replace(/\/+$/, '') || '/'; if (po.side === 'b') prefs.lastB = at; else if (!pk) prefs.last = at; savePrefs(); picked.clear(); selecting = false; search.value = ''; query = ''; search.hidden = true; if (!quiet) { movedOn = true; if (how === 'back') history.back(); else navigate(`/files?p=${encodeURIComponent(at)}`, how === 'replace' || was === at); } void load(); };
   const openCollection = (kind: string) => { if (gone) return; keepScroll(); collection = kind; picked.clear(); selecting = false; query = ''; search.hidden = true; if (!quiet) { movedOn = true; navigate(`/files?c=${kind}`); } void load(); };
   /** The place above `p`: the folder up; inside an archive the folder up there, and from its top the folder that holds
    *  the archive; null at a storage's top (the top of Files). */
@@ -699,18 +699,22 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- the picker: what is chosen (kept while folders are walked), the bar with Cancel and Select
   const chosen = new Map<string, Entry>();
-  const pickable = (e: Entry): boolean => !!pk && !e.dir && !isVirtual(e.path) && !isApps(e.path) && mimeMatches(mimeOfName(e.name), pk.req.mimes);
+  let showAll = false; const pickLastKey = 'kt.files.pickLast';
+  const pickable = (e: Entry): boolean => !!pk && !e.dir && !isVirtual(e.path) && !isApps(e.path) && (showAll || mimeMatches(mimeOfName(e.name), pk.req.mimes));
+  /** The answer: the folder it came from is kept (apart from ordinary browsing) for next time. */
+  const finishPick = (paths: string[]) => { if (!pk || !paths.length) return; const dir = paths[0].replace(/\/[^/]*$/, '') || '/'; try { localStorage.setItem(pickLastKey, dir); } catch { /* none */ } pk.done(pickResult(pk.req, paths)); };
   const pickCount = h('span', { class: 'pick-count' });
-  const pickGo = h('button', { type: 'button', class: 'btn primary', onclick: () => { if (pk && chosen.size) pk.done(pickResult(pk.req, [...chosen.keys()])); } }) as HTMLButtonElement;
+  const pickGo = h('button', { type: 'button', class: 'btn primary', onclick: () => { if (pk && chosen.size) finishPick([...chosen.keys()]); } }) as HTMLButtonElement;
   const drawPick = () => {
     if (!pk) return; const n = chosen.size; const one = n === 1 ? [...chosen.values()][0] : undefined;
     pickCount.classList.toggle('has', n > 0); pickCount.textContent = !n ? t('pickNothingYet') : one ? one.name : countFiles(n);
-    pickGo.replaceChildren(icon('check'), pk.req.multiple && n > 1 ? t('pickSelectN', { n: localDigits(n) }) : t('pickSelect')); pickGo.disabled = !n;
+    pickGo.replaceChildren(icon('check'), n ? t('pickAddN', { n: localDigits(n) }) : t('pickAdd')); pickGo.disabled = !n;
   };
   const choose = (e: Entry) => {
     if (!pk) return;
     if (!pickable(e)) { toast(isVirtual(e.path) || isApps(e.path) ? t('pickNotHere') : t('pickWrongKind')); return; }
-    if (chosen.has(e.path)) chosen.delete(e.path); else { if (!pk.req.multiple) chosen.clear(); chosen.set(e.path, e); }
+    if (!pk.req.multiple) { chosen.clear(); chosen.set(e.path, e); finishPick([e.path]); return; }
+    if (chosen.has(e.path)) chosen.delete(e.path); else chosen.set(e.path, e);
     draw(); drawPick();
   };
 
@@ -1152,7 +1156,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   };
   /** The clipboard bar: what is on it (the one's name, or how many), copied or to be moved, Paste here and Cancel. */
   const drawClip = () => {
-    const c = clipboard; const show = !!c && canJobs(); clipBar.hidden = !show; if (c) clipBar.dataset.op = c.op; root.classList.toggle('has-clip', show);
+    const c = clipboard; const show = !!c && canJobs() && !pk; clipBar.hidden = !show; if (c) clipBar.dataset.op = c.op; root.classList.toggle('has-clip', show);
     if (!c || !show) { clipBar.replaceChildren(); return; }
     const why = pasteBlock(); const one = c.paths.length === 1; const fromArc = c.paths.every(isArc);
     const what = one ? nameEl(baseOf(c.paths[0]), false, 'files-clip-name') : h('b', { class: 'files-clip-name' }, t('filesClipCount', { n: localDigits(c.paths.length) }));
@@ -1274,8 +1278,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     root.classList.add('picker'); fab.remove(); root.querySelector('.topbar-actions button[data-icon="more"]')?.remove();
     const kinds = kindsAsked(pk.req.mimes, { image: t('filesKindImages'), video: t('filesKindVideo'), audio: t('filesKindMusic'), text: t('filesKindDocs') });
     const sub = [pk.req.caller ? t('pickFor', { app: pk.req.caller }) : '', kinds.length ? t('pickKinds', { kinds: kinds.join(document.documentElement.lang === 'ar' ? '، ' : ', ') }) : ''].filter(Boolean).join(' · ');
-    crumbs.before(h('div', { class: 'pick-head' }, icon(pk.req.multiple ? 'copy' : 'file'), h('span', { class: 'grow' }, h('b', null, pk.req.multiple ? t('pickTitleMany') : t('pickTitle')), sub ? h('small', { dir: 'auto' }, sub) : null)));
-    root.append(h('div', { class: 'pick-bar', role: 'toolbar' }, pickCount, h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), pickGo));
+    (crumbs.parentElement ?? crumbs).before(h('div', { class: 'pick-head' }, icon(pk.req.multiple ? 'copy' : 'file'), h('span', { class: 'grow' }, h('b', null, pk.req.multiple ? t('pickTitleMany') : t('pickTitle')), sub ? h('small', { dir: 'auto' }, sub) : null), ...(pk.req.mimes.length && !pk.req.mimes.includes('*/*') ? [h('label', { class: 'switch-row pick-all' }, h('span', null, t('pickShowAll')), h('input', { type: 'checkbox', onchange: (ev: Event) => { showAll = (ev.target as HTMLInputElement).checked; draw(); } }))] : [])));
+    root.append(h('div', { class: 'pick-bar' + (pk.req.multiple ? '' : ' single'), role: 'toolbar' }, ...(pk.req.multiple ? [pickCount] : [h('span', { class: 'grow' })]), h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), ...(pk.req.multiple ? [pickGo] : [])));
     drawPick();
   }
   // ---- «Everywhere in my folders» (a computer's Tauri shell): its panel over the folder, loaded on first use

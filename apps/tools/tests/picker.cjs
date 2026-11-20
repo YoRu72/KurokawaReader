@@ -28,7 +28,7 @@ function logic() {
 
 async function page(browser, port, z, lang, multiple) {
   const L = (s) => `[${lang}${multiple ? ', several' : ''}] ${s}`;
-  const { page: p, errors } = await F.open(browser, { lang, pc: false, z });
+  const { page: p, errors } = await F.open(browser, { lang, pc: false, z, dense: true });
   const req = multiple ? { id: 'r2', action: 'android.intent.action.GET_CONTENT', multiple: true, mimes: ['text/*'], caller: 'Aegisub Mobile' } : { id: 'r1', action: 'android.intent.action.GET_CONTENT', multiple: false, mimes: ['image/*'], caller: 'Telegram' };
   await p.addInitScript((req) => {
     const kt = window.Capacitor.Plugins.KurokawaTools; window.__done = [];
@@ -48,27 +48,34 @@ async function page(browser, port, z, lang, multiple) {
     ok(L('another kind greyed (Song.mp3), the kind asked not (photo.jpg)'), await row('Song.mp3').evaluate((e) => e.classList.contains('pick-off')) && !(await row('photo.jpg').evaluate((e) => e.classList.contains('pick-off'))));
     await row('Song.mp3').click(); await p.waitForTimeout(300);
     ok(L('another kind tapped: refused, said why'), (await p.$$eval('.toast', (ts) => ts.map((t) => t.textContent))).some((x) => /another kind/.test(x)) && (await p.evaluate(() => window.__done.length)) === 0);
-    ok(L('nothing chosen yet: Select greyed'), await p.$eval('.pick-bar .btn.primary', (b) => b.disabled));
-    await row('photo.jpg').click(); await p.waitForTimeout(250);
-    ok(L('photo.jpg chosen: its name in the bar, Select ready'), (await p.textContent('.pick-bar .pick-count')) === 'photo.jpg' && !(await p.$eval('.pick-bar .btn.primary', (b) => b.disabled)));
-    if (process.env.KT_SHOTS && lang === 'en') await p.screenshot({ path: path.join(process.env.KT_SHOTS, 'picker-one-file-phone.png') });
-    await p.click('.pick-bar .btn.primary'); await p.waitForTimeout(500);
+    ok(L('a single pick has no Select button: only Cancel in the bar'), !(await p.$('.pick-bar .btn.primary')) && (await p.$$('.pick-bar button')).length === 1);
+    ok(L('the show-all switch is there (a kind was asked)'), !!(await p.$('.pick-head .pick-all input')));
+    await row('Song.mp3').evaluate((e) => e.scrollIntoView()); await p.click('.pick-head .pick-all input'); await p.waitForTimeout(250);
+    ok(L('Show all: Song.mp3 no longer dimmed'), !(await row('Song.mp3').evaluate((e) => e.classList.contains('pick-off'))));
+    await p.click('.pick-head .pick-all input'); await p.waitForTimeout(250);
+    ok(L('switched off again: dimmed once more'), await row('Song.mp3').evaluate((e) => e.classList.contains('pick-off')));
+    ok(L('paste bar and action bar hidden in pick mode'), !(await p.isVisible('.files-clipbar')) && !(await p.isVisible('.files-selbar')));
+    if (process.env.KT_SHOTS && lang === 'en') { await p.emulateMedia({ colorScheme: 'dark' }); await p.waitForTimeout(300); await p.screenshot({ path: path.join(process.env.KT_SHOTS, 'F3-pick-single-en-dark.png') }); await p.emulateMedia({ colorScheme: 'light' }); }
+    await row('photo.jpg').click(); await p.waitForTimeout(500);
     const done = await p.evaluate(() => window.__done);
-    ok(L('Select: the file handed back, with the request\'s mark'), done.length === 1 && done[0].id === 'r1' && JSON.stringify(done[0].paths) === JSON.stringify([`${K}/photo.jpg`]), done);
+    ok(L('one tap on the file hands it back at once, with the request\'s mark'), done.length === 1 && done[0].id === 'r1' && JSON.stringify(done[0].paths) === JSON.stringify([`${K}/photo.jpg`]), done);
     ok(L('then the picker is left'), !(await p.$('.files-view.picker')) && !(await p.evaluate(() => document.documentElement.classList.contains('picking'))));
+    ok(L('the folder picked from is remembered apart from browsing'), (await p.evaluate(() => localStorage.getItem('kt.files.pickLast'))) === K && !(await p.evaluate(() => localStorage.getItem('kt.files.pickLast') === null)));
   } else {
     ok(L('folders open, an .mp3 greyed'), await row('Song.mp3').evaluate((e) => e.classList.contains('pick-off')) && !(await row('Sub').evaluate((e) => e.classList.contains('pick-off'))));
     await row('Sub').click(); await p.waitForTimeout(500); await row('in.txt').click(); await p.waitForTimeout(200);
     await row('Deeper').click(); await p.waitForTimeout(500); await row('deep.txt').click(); await p.waitForTimeout(200);
     const bar = await p.evaluate(() => [document.querySelector('.pick-bar .pick-count').textContent, document.querySelector('.pick-bar .btn.primary').textContent]);
-    ok(L('two chosen in two folders: the count, «Select (2)»'), /2|٢|ملفان/.test(bar[0]) && /[2٢]/.test(bar[1]), bar);
-    if (process.env.KT_SHOTS) await p.screenshot({ path: path.join(process.env.KT_SHOTS, `picker-several-phone-${lang}.png`) });
+    ok(L('two chosen in two folders: the count, «Add (2)»'), /2|٢|ملفان/.test(bar[0]) && /[2٢]/.test(bar[1]) && (lang === 'en' ? /Add/.test(bar[1]) : /إضافة/.test(bar[1])), bar);
+    if (process.env.KT_SHOTS) await p.emulateMedia({ colorScheme: 'light' }); if (process.env.KT_SHOTS) await p.screenshot({ path: path.join(process.env.KT_SHOTS, lang === 'ar' ? 'F3-pick-multi-ar-light.png' : `picker-several-phone-${lang}.png`) });
     await p.evaluate(() => window.__back()); await p.waitForTimeout(500);
     ok(L('Back: up a folder, still in the picker, the choice kept'), !!(await p.$('.files-view.picker')) && (await p.textContent('.files-title')) === 'Sub' && /2|٢|ملفان/.test(await p.textContent('.pick-bar .pick-count')));
     if (lang === 'en') {
       await p.click('.pick-bar .btn.primary'); await p.waitForTimeout(500);
       const done = await p.evaluate(() => window.__done);
-      ok(L('Select: both handed back, in the order chosen'), done.length === 1 && done[0].id === 'r2' && JSON.stringify(done[0].paths) === JSON.stringify([`${K}/Sub/in.txt`, `${K}/Sub/Deeper/deep.txt`]), done);
+      ok(L('Add: both handed back, in the order chosen'), done.length === 1 && done[0].id === 'r2' && JSON.stringify(done[0].paths) === JSON.stringify([`${K}/Sub/in.txt`, `${K}/Sub/Deeper/deep.txt`]), done);
+      await p.evaluate(() => { location.hash = '#/pick?t=2'; }); await p.waitForSelector('.files-view.picker .files-row', { timeout: 15000 }); await p.waitForTimeout(600);
+      ok(L('a new request opens in the folder last picked from'), (await p.textContent('.files-title')) === 'Sub', await p.textContent('.files-title'));
     } else {
       await p.evaluate(() => window.__back()); await p.waitForTimeout(500);
       ok(L('Back: up again, to the top'), !!(await p.$('.files-view.picker')) && (await p.textContent('.files-title')) === 'Kurokawa');

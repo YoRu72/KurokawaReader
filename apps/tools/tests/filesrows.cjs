@@ -41,6 +41,8 @@ async function run(browser, port, lang, pc, z) {
     await p.click('.files-row:has(.files-name[title="Sub"]) .files-main'); await p.waitForTimeout(500);
     ok(L('«..» present inside a folder, first'), (await p.$$('.files-uprow')).length === 1 && await p.$eval('.files-list > :first-child', (e) => e.classList.contains('files-uprow')));
     ok(L('the header names the folder, the path under it (LTR)'), (await p.textContent('.files-title')).includes('Sub') && (await p.$eval('.files-path', (e) => e.textContent)).includes('Kurokawa') && (await p.$eval('.files-path', (e) => getComputedStyle(e.firstElementChild).direction)) === 'ltr');
+    { const g = await p.evaluate(() => { const r = (q) => document.querySelector(q).getBoundingClientRect(); const a = r('.files-title'), b = r('.files-path'), h = r('.files-head'), bar = r('.topbar'); return { ta: a.left, tr: a.right, pl: b.left, pr: b.right, hc: (h.top + h.bottom) / 2, bc: (bar.top + bar.bottom) / 2, w: innerWidth }; });
+      ok(L('the title and the path line start on the same side (the page\'s start), one block centred in the bar'), (rtl ? Math.abs(g.tr - g.pr) <= 2 : Math.abs(g.ta - g.pl) <= 2) && Math.abs(g.hc - g.bc) <= 3, g); }
     await p.click('.files-head'); await p.waitForTimeout(250);
     ok(L('a tap on the header opens the folders above, storage first'), (await p.$$eval('.files-crumbs.open .crumb', (e) => e.length)) >= 2);
     if (SHOTS) await p.screenshot({ path: path.join(SHOTS, 'F2a-ancestors.png') });
