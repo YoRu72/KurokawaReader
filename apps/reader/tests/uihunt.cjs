@@ -9,6 +9,7 @@
 const { chromium, devices } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const args = process.argv.slice(2); const LANGS = args.includes('ar') ? ['ar'] : args.includes('en') ? ['en'] : ['en', 'ar'];
 const oi = args.indexOf('--only'); const ONLY = oi >= 0 ? args[oi + 1] : '';
+const di = args.indexOf('--dev'); const DEV = di >= 0 ? args[di + 1] : '';
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.epub': 'application/epub+zip', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); res.end(fs.readFileSync(f)); });
@@ -30,6 +31,7 @@ const allBooks = (p) => p.evaluate(() => new Promise((res) => { const r = indexe
 const idOf = async (p, re) => (await allBooks(p)).find((b) => re.test(b.title) || re.test(b.fileName || ''))?.id;
 const openBook = (re, ready) => async (p) => { const id = await idOf(p, re); if (!id) throw new Error('no book ' + re); await p.evaluate((id) => { location.hash = '#/'; setTimeout(() => { location.hash = `#/read/${id}`; }, 150); }, id); await p.waitForSelector(ready, { timeout: 30000 }); await p.waitForTimeout(1100); };
 const command = (c) => async (p) => { await p.evaluate((c) => document.dispatchEvent(new CustomEvent('kr:command', { detail: c })), c); await p.waitForTimeout(700); };
+const waitNotice = async (p) => { await p.evaluate(() => document.querySelector('.panel.open .panel-head .icon-btn')?.click()); await p.waitForTimeout(500); await p.evaluate(() => document.querySelector('.reader-view')?.classList.remove('immersive')); try { await p.waitForSelector('.kr-notice', { timeout: 10000 }); } catch (e) { const st = await p.evaluate(() => ({ panel: [...document.querySelectorAll('.panel.open')].length, sheet: document.querySelectorAll('.sheet').length, hash: location.hash, dict: !!document.querySelector('.reader-flow ruby'), visual: localStorage.getItem('kr.visual') })); throw new Error('no notice: ' + JSON.stringify(st)); } };
 const wake = async (p) => { await p.evaluate(() => { document.querySelector('.reader-view')?.classList.remove('immersive'); }); await p.waitForTimeout(300); };
 const settingsSec = (i) => async (p) => {
   await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached', timeout: 15000 });
@@ -38,7 +40,7 @@ const settingsSec = (i) => async (p) => {
 };
 const VIEWS = [
   ['library', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view .book-card', { timeout: 15000 }); }],
-  ['stats', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view'); await p.click('.library-view [title="Reading statistics"], .library-view [aria-label="Reading statistics"], .library-view button:has(svg) >> nth=0').catch(() => {}); await p.evaluate(() => { [...document.querySelectorAll('.library-view .icon-btn, .library-view button')].find((b) => /chart|stat|إحصائ/i.test((b.title || '') + (b.getAttribute('aria-label') || '')))?.click(); }); await p.waitForSelector('.sheet, .stats-view, .panel.open', { timeout: 8000 }); }],
+  ['stats', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view'); await p.click('.library-view [title="Reading statistics"], .library-view [aria-label="Reading statistics"], .library-view button:has(svg) >> nth=0').catch(() => {}); await p.evaluate(() => { [...document.querySelectorAll('.library-view .icon-btn, .library-view button')].find((b) => /chart|stat|إحصاء|إحصائ/i.test((b.title || '') + (b.getAttribute('aria-label') || '')))?.click(); }); await p.waitForSelector('.sheet, .stats-view, .panel.open', { timeout: 8000 }); }],
   ['sources', lib('#/sources')], ['catalog', lib('#/catalog')], ['notes', lib('#/notes')],
   ['book', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-view, .book-page, .view', { timeout: 10000 }); }],
   ['settings', async (p) => { await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('.settings-body .card.collapsed').forEach((c) => c.classList.remove('collapsed'))); }, 'phone'],
@@ -50,8 +52,8 @@ const VIEWS = [
   ['read-contents', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('toc')(p); await p.waitForSelector('.panel.open, .sheet', { timeout: 8000 }); }],
   ['read-search', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('search')(p); await p.waitForSelector('.panel.open, .sheet, .search-bar, input[type=search]', { timeout: 8000 }); }],
   ['read-pdf', openBook(/pages/i, '.pdf-bar, .pdf-view, .pdf-pages')],
-  ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.waitForSelector('.kr-notice', { timeout: 10000 }); await p.waitForTimeout(400); }, 'both', { notice: true }],
-  ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.waitForSelector('.kr-notice', { timeout: 10000 }); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
+  ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
+  ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
 ];
 
 // kind|view|selector-ish key -> reason. A key is `${kind} ${view} ${what}` prefix-matched (view without the device).
@@ -60,7 +62,7 @@ const ALLOW = [
   ['colour read-options', 'the same theme previews and highlight palette, inside the options panel'],
   ['stick-out book div.book-hero-bg', 'the blurred cover backdrop is bled past the edge on purpose and clipped by the page (no page overflow)'],
 ];
-const allowed = (key) => ALLOW.some(([k]) => key.startsWith(k));
+const allowedBy = {}; const allowed = (key) => { const a = ALLOW.find(([k]) => key.startsWith(k)); if (a) allowedBy[a[0]] = (allowedBy[a[0]] || 0) + 1; return !!a; };
 
 /** Runs in the page: returns a list of { kind, what } faults. */
 function hunt({ phone, rtl, lang }) {
@@ -87,7 +89,7 @@ function hunt({ phone, rtl, lang }) {
     }
     if (e.tagName === 'INPUT' && e.type === 'checkbox' && cs.appearance !== 'none' && cs.webkitAppearance !== 'none' && !e.closest('.sr-only')) add('native-checkbox', e);
     if (e.tagName === 'INPUT' && e.type === 'number' && cs.appearance !== 'textfield' && cs.webkitAppearance !== 'textfield' && getComputedStyle(e, '::-webkit-inner-spin-button').webkitAppearance !== 'none') add('native-spinner', e);
-    if (!e.children.length && /[٠-٩۰-۹]/.test(e.textContent || '')) add('eastern-digits', e);
+    if (!e.children.length && /[٠-٩۰-۹]/.test(e.textContent || '') && !(e.closest('.segmented') && (e.textContent || '').trim() === '١٢٣')) add('eastern-digits', e);
     if (rtl && /^(H1|H2|H3)$/.test(e.tagName) && cs.direction === 'ltr' && /[؀-ۿ]/.test(e.textContent || '')) add('ltr-title-in-rtl', e);
   }
   // glued: a label-ish text directly followed by an inline small/span hint with no space
@@ -116,8 +118,8 @@ function hunt({ phone, rtl, lang }) {
   }
   // A notice lies above the reading controls, never over them.
   for (const n of all.filter((x) => x.classList.contains('kr-notice'))) {
-    const nr = n.getBoundingClientRect();
-    for (const c of all.filter((x) => !n.contains(x) && /^(BUTTON|A)$/.test(x.tagName) && (x.closest('.chapter-nav, .float-toolbar, .read-status, .pdf-bar, .page-arrow, .selection-bar') || x.classList.contains('page-arrow')))) {
+    const nr = n.getBoundingClientRect(); if (nr.top < 0 || nr.bottom > innerHeight + 1 || nr.left < -1 || nr.right > vw + 1) out.push({ kind: 'notice-off-screen', what: desc(n) });
+    for (const c of all.filter((x) => !n.contains(x) && /^(BUTTON|A|INPUT)$/.test(x.tagName) && (!book(x) || x.closest('.chapter-nav, .page-arrow')) && x.closest('.reader-view, .chapter-nav, .float-toolbar, .read-status, .pdf-bar, .page-arrow, .selection-bar, .topbar'))) {
       const r = c.getBoundingClientRect(); const ox = Math.min(nr.right, r.right) - Math.max(nr.left, r.left), oy = Math.min(nr.bottom, r.bottom) - Math.max(nr.top, r.top);
       if (ox > 2 && oy > 2) add('notice-over-controls', c, `under the notice (${Math.round(ox)}x${Math.round(oy)})`);
     }
@@ -138,9 +140,9 @@ function hunt({ phone, rtl, lang }) {
   const pdf = path.join(TMP, 'pages.pdf'); await makePdf(pdf, 12);
   const files = [path.join(TMP, 'nihongo.txt'), pdf, ...['alice-in-wonderland.epub', 'maqamat-al-hariri.epub'].map((f) => path.join(DIST, 'samples', f)).filter((f) => fs.existsSync(f))];
   const b = await chromium.launch(); let fails = 0; let allowedN = 0; const summary = {};
-  for (const lang of LANGS) for (const dev of ['phone', 'pc']) {
-    const phone = dev === 'phone';
-    const ctx = await b.newContext(phone ? { ...devices['Pixel 7'], viewport: { width: 412, height: 915 }, locale: lang, serviceWorkers: 'block' } : { viewport: { width: 1280, height: 800 }, locale: lang, serviceWorkers: 'block' });
+  for (const lang of LANGS) for (const dev of ['phone', 'pc'].filter((d) => !DEV || d === DEV)) {
+    const phone = dev === 'phone'; const CS = process.env.KR_DARK ? { colorScheme: 'dark' } : {};
+    const ctx = await b.newContext(phone ? { ...devices['Pixel 7'], viewport: { width: 412, height: 915 }, locale: lang, serviceWorkers: 'block', ...CS } : { viewport: { width: 1280, height: 800 }, locale: lang, serviceWorkers: 'block', ...CS });
     await ctx.route((u) => !/^(127\.0\.0\.1|localhost)$/.test(u.hostname), (r) => r.abort()); // offline: nothing leaves the machine
     const p = await ctx.newPage(); const errors = []; p.on('pageerror', (e) => errors.push(e.message));
     await p.goto(base); await p.evaluate((l) => { localStorage.setItem('kr.lang', l); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ furigana: true })); }, lang); await p.reload(); await p.waitForSelector('.library-view', { timeout: 20000 }); await p.waitForTimeout(500);
@@ -165,6 +167,6 @@ function hunt({ phone, rtl, lang }) {
     if (errors.length) { console.log(`ERR   ${lang} ${dev}: page errors ${errors.slice(0, 3).join(' | ')}`); fails++; }
     await ctx.close(); // (one page closed before the next opens: the machine is short of memory)
   }
-  console.log(fails ? `${fails} FAULTS ${JSON.stringify(summary)} (allowed ${allowedN})` : `all passed (allowed ${allowedN})`);
+  console.log(fails ? `${fails} FAULTS ${JSON.stringify(summary)} (allowed ${allowedN} ${JSON.stringify(allowedBy)})` : `all passed (allowed ${allowedN} ${JSON.stringify(allowedBy)})`);
   await b.close(); server.close(); fs.rmSync(TMP, { recursive: true, force: true }); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

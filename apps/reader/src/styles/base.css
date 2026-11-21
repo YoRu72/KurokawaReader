@@ -711,6 +711,9 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .dest-row input[type=radio] { accent-color: var(--md-primary); width: 18px; height: 18px; }
 .dest-row input[type=text] { grid-column: 2 / -1; }
 .actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+/* A row of buttons of one width (the labels wrap inside them instead of making them unequal). */
+.actions-row.eq { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.actions-row.eq > .btn { white-space: normal; height: auto; min-height: 36px; text-align: center; justify-content: center; }
 .chip-sep { width: 1px; align-self: stretch; margin: 6px 4px; background: var(--md-outline-variant); flex: 0 0 auto; }
 .brightness-hud { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: color-mix(in srgb, var(--md-surface-container-highest) 85%, transparent); color: var(--md-on-surface); font: 500 14px var(--font-ui); z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
 .brightness-hud.on { opacity: 1; }
@@ -2408,3 +2411,6 @@ html:not(.pc) .btn.small, html:not(.pc) .btn.tonal, html:not(.pc) .btn.text, htm
 html:not(.pc) .update-toast .icon-btn, html:not(.pc) .row-actions .icon-btn { width: 40px; height: 40px; }
 /* Equal buttons in one row (tests/uihunt.cjs): the same basis, growing alike; a row that does not fit wraps. */
 .repos-add-row > .btn { flex: 1 1 150px; }
+/* No native spinner on any number box (the app's own steppers / typing do it). */
+input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+input[type='number']::-webkit-inner-spin-button, input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

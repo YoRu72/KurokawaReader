@@ -176,7 +176,7 @@ export function settingsView(): HTMLElement {
   // Books from the web: the sources (archive.org, Shamela) and the OPDS catalogues.
   const srcNews = h('p', { class: 'hint', hidden: true });
   body.append(h('section', { class: 'card' }, h('h3', null, t('sources')), h('p', null, t('sourcesHint')), srcNews,
-    h('div', { class: 'actions-row' },
+    h('div', { class: 'actions-row eq' },
       h('button', { class: 'btn tonal small', onclick: () => navigate('/sources') }, icon('globe'), t('sourcesMenu')),
       h('button', { class: 'btn small', onclick: () => navigate('/sources') }, icon('plus'), t('addRepo')),
       h('button', { class: 'btn small', onclick: () => navigate('/catalog') }, icon('books'), t('catalogs')))));
