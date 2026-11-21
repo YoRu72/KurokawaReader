@@ -15,6 +15,7 @@ type Plug = {
   mpvSet(o: { name: string; value: string }): Promise<void>;
   mpvGet(o: { name: string }): Promise<{ value: string | null }>;
   mpvClose(): Promise<void>;
+  mpvShot?(o: { name: string; subs: boolean }): Promise<MpvShot>;
   addListener(ev: 'mpv', fn: (e: Ev) => void): Promise<{ remove(): void }>;
 };
 const plug = (): Plug | null => { const p = ktPlugin() as unknown as Plug | null; return p?.mpvAvailable ? p : null; };
@@ -22,6 +23,8 @@ const plug = (): Plug | null => { const p = ktPlugin() as unknown as Plug | null
 /** Whether mpv is here (Android, with the mpv pack installed). */
 export async function mpvAvailable(): Promise<boolean> { const p = plug(); if (!p) return false; try { return (await p.mpvAvailable!()).available; } catch { return false; } }
 
+/** Where a saved frame went: its name as the phone keeps it, and its address there (a content uri, or a path). */
+export interface MpvShot { name: string; uri?: string; path?: string; mime?: string }
 export interface MpvControl {
   tracks(): MpvTrack[];
   /** Whether mpv has told its track list yet (until then tracks() is empty, not «no tracks»). */
@@ -30,8 +33,8 @@ export interface MpvControl {
   addSub(urlOrData: string, title?: string, isData?: boolean): void;
   set(name: string, value: string | number | boolean): void;
   command(...args: string[]): void;
-  /** A frame saved, with the subtitles on it or not. */
-  screenshot(subs?: boolean): void;
+  /** A frame saved, with the subtitles on it or not: resolved with where it went, rejected with the reason. */
+  screenshot(o: { subs: boolean; name: string }): Promise<MpvShot>;
   onTracks(fn: () => void): void;
   close(): void;
 }
@@ -83,7 +86,7 @@ export function mpvVideo(url: string, opts: { start?: number; alang?: string; sl
     setTrack: (type, id) => set(type === 'audio' ? 'aid' : 'sid', id),
     addSub: (u, title, isData) => command('sub-add', isData ? `memory://${u}` : u, 'select', title ?? ''),
     set, command: (...a) => command(...a),
-    screenshot: (subs?: boolean) => command('screenshot', subs ? 'subtitles' : 'video'),
+    screenshot: (o) => (p.mpvShot ? p.mpvShot({ name: o.name, subs: o.subs }) : Promise.reject(new Error('mpvShot'))),
     onTracks: (fn) => { trackFns.push(fn); },
     close: () => { sub?.remove(); void p.mpvClose().catch(() => undefined); },
   };

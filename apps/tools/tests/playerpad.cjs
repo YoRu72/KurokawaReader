@@ -60,6 +60,49 @@ const serve = () => http.createServer((req, res) => {
   await p.evaluate(() => window.dispatchEvent(new CustomEvent('ktpip', { detail: true })));
   check('in the floating window the controls hide', await p.evaluate(() => document.querySelector('.kt-player').classList.contains('kt-pip') && document.querySelector('.kt-player').classList.contains('hide-ui')));
   await p.evaluate(() => window.dispatchEvent(new CustomEvent('ktpip', { detail: false })));
+  // The big play/pause in the middle; a tap anywhere shows or hides the controls, paused too.
+  const ui = () => p.evaluate(() => !document.querySelector('.kt-player').classList.contains('hide-ui'));
+  await p.evaluate(() => document.querySelector('.kt-player').dispatchEvent(new PointerEvent('pointermove', { bubbles: true })));
+  await p.evaluate(() => { const v = document.querySelector('.kt-video'); if (!v.paused) v.pause(); }); await p.waitForTimeout(250);
+  if (!(await ui())) { await p.mouse.click(700, 330); await p.waitForTimeout(450); }
+  const big = () => p.evaluate(() => { const b = document.querySelector('.kt-bigplay'); const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), shown: parseFloat(getComputedStyle(b).opacity) > 0.9 && r.width >= 56, cx: r.x + r.width / 2, cy: r.y + r.height / 2 }; });
+  let bg = await big(); check('paused: the big button in the middle says Play', bg.label === 'Play' && bg.shown && Math.abs(bg.cx - 450) < 4 && Math.abs(bg.cy - 260) < 4, bg);
+  await p.screenshot({ path: process.env.SHOT_CENTRE || '/dev/null' }).catch(() => undefined);
+  await p.mouse.click(450, 130); await p.waitForTimeout(450);
+  check('paused, a tap on the screen hides the controls (and the big button)', !(await ui()) && !(await big()).shown);
+  await p.mouse.click(700, 330); await p.waitForTimeout(450);
+  check('a second tap shows them again', await ui());
+  await p.waitForTimeout(400); check('paused, they do not hide by themselves', await ui());
+  await p.click('.kt-bigplay'); await p.waitForTimeout(300);
+  bg = await big(); check('the big button plays, and turns to Pause', !(await p.evaluate(() => document.querySelector('.kt-video').paused)) && bg.label === 'Pause');
+  await p.click('.kt-bigplay'); await p.waitForTimeout(300);
+  check('and pauses again', await p.evaluate(() => document.querySelector('.kt-video').paused) && (await big()).label === 'Play');
+  await p.evaluate(() => [...document.querySelectorAll('.kt-player button')].find((b) => b.getAttribute('aria-label') === 'Lock the controls')?.click()); await p.waitForTimeout(200);
+  check('locked: no big button', await p.evaluate(() => getComputedStyle(document.querySelector('.kt-bigplay')).display === 'none'));
+  await p.evaluate(() => document.querySelector('.kt-unlock').click()); await p.waitForTimeout(200);
+  await p.keyboard.press('a'); await p.waitForTimeout(100);   // (the A/B loop set above let go, or it keeps jumping back to A)
+  // The camera: the Save frame pad, and «Make a clip from here» → the clip sheet begun at this frame, the subtitle choice three-way.
+  await p.evaluate(() => [...document.querySelectorAll('.kt-tools button')].find((b) => b.getAttribute('aria-label') === 'Screenshot').click());
+  await p.waitForSelector('.kt-shotpad', { timeout: 3000 });
+  const pad = await p.evaluate(() => { const q = (s) => [...document.querySelectorAll('.kt-shotpad ' + s)]; const nav = q('.kt-fp-nav .kt-fp-btn').map((b) => Math.round(b.getBoundingClientRect().width)); const acts = q('.kt-fp-acts .btn').map((b) => Math.round(b.getBoundingClientRect().width)); return { nav, acts, sw: !!document.querySelector('.kt-shotpad .switch-row input'), seg: q('.kt-fp-segbtn').map((b) => b.textContent), time: document.querySelector('.kt-shotpad .kt-fp-info').textContent }; });
+  check('pad: ±1 s and frame steps of equal width, two equal actions, the switch, PNG/JPG, the exact time', pad.nav.length === 4 && new Set(pad.nav).size === 1 && pad.acts.length === 2 && Math.abs(pad.acts[0] - pad.acts[1]) <= 1 && pad.sw && pad.seg.join() === 'PNG,JPG' && /\d:\d\d\.\d{3}/.test(pad.time), pad);
+  const tA = await p.evaluate(() => document.querySelector('.kt-video').currentTime);
+  await p.click('.kt-shotpad button[aria-label="Forward 1 second"]'); await p.waitForTimeout(300);
+  const tB = await p.evaluate(() => document.querySelector('.kt-video').currentTime); check('+1 s from the pad', Math.abs(tB - tA - 1) < 0.15, { tA, tB });
+  await p.screenshot({ path: process.env.SHOT_PAD || '/dev/null' }).catch(() => undefined);
+  const tClip = await p.evaluate(() => document.querySelector('.kt-video').currentTime);
+  await p.locator('.kt-shotpad button', { hasText: 'Make a clip from here' }).click(); await p.waitForSelector('.sheet .cut-subs-row', { timeout: 4000 });
+  check('the clip sheet opens with A at this frame', await p.evaluate((t0) => { const v = document.querySelector('.sheet .cut-time').value.split(':').map(Number); const s0 = v.length === 3 ? v[0] * 3600 + v[1] * 60 + v[2] : v[0] * 60 + v[1]; return Math.abs(s0 - t0) < 0.05; }, tClip) && !(await p.$('.kt-shotpad')));
+  check('no native checkbox for the subtitles: a pick of three', !(await p.$('.sheet .cut-subs-row input[type=checkbox]')) && !!(await p.$('.sheet .cut-subs-row .pick-btn')));
+  await p.click('.sheet .cut-subs-row .pick-btn'); await p.waitForTimeout(250);
+  const choices = await p.evaluate(() => [...document.querySelectorAll('label.dest-row')].filter((r) => r.querySelector('input[name=kr-pick]')).map((b) => b.textContent.trim()));
+  check('None / Burnt into the picture / Kept as a track', ['None', 'Burnt into the picture', 'Kept as a track'].every((x) => choices.some((c) => c.includes(x))), choices);
+  await p.evaluate(() => [...document.querySelectorAll('label.dest-row')].find((r) => r.querySelector('input[name=kr-pick]') && r.textContent.trim() === 'Kept as a track')?.querySelector('input').click()); await p.waitForTimeout(250);
+  const hint = await p.evaluate(() => document.querySelector('.sheet .cut-subs-row small').textContent);
+  check('kept as a track: MP4 by default, honest that it keeps words and timing only', /MP4 keeps the words and their timing/.test(hint) && await p.evaluate(() => [...document.querySelectorAll('.sheet .row')].some((r) => /Container/.test(r.textContent) && /MP4/.test(r.textContent))), hint);
+  await p.evaluate(() => document.querySelector('.sheet .cut-subs-row').scrollIntoView({ block: 'center' })); await p.waitForTimeout(150);
+  await p.screenshot({ path: process.env.SHOT_CLIP || '/dev/null' }).catch(() => undefined);
+  await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim, .pick-menu').forEach((x) => x.remove()));
   await p.evaluate(() => [...document.querySelectorAll('.kt-player button')].find((b) => /Frame navigation/.test(b.getAttribute('aria-label') || b.title || ''))?.click()); await p.waitForTimeout(150);
   await p.evaluate(() => [...document.querySelectorAll('.kt-player button')].find((b) => /Screen rotation/i.test(b.getAttribute('aria-label') || b.title || ''))?.click()); await p.waitForTimeout(150);
   await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelector('.kt-player .kt-top button')?.click()); await p.waitForTimeout(400);

@@ -543,6 +543,33 @@ html.pc .kt-fp-btn:hover { background: rgb(255 255 255 / .12); }
 .kt-fp-btn b { font-weight: 600; }
 .kt-player.kt-pip .kt-framepad { display: none; }
 @media (orientation: portrait) { .kt-framepad { bottom: 170px; } }
+.kt-framepad.kt-shotpad { align-items: stretch; gap: 10px; width: min(340px, calc(100vw - 32px)); box-sizing: border-box; padding: 12px; border-radius: 20px; color: #fff; background: rgb(24 24 28 / .88); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgb(255 255 255 / .08); font: 14px/1.35 var(--font-ui), system-ui, sans-serif; }
+.kt-fp-head { display: flex; align-items: center; gap: 8px; }
+.kt-fp-title { font-size: 15px; font-weight: 600; }
+.kt-shotpad .kt-fp-nav { justify-content: space-between; gap: 6px; }
+.kt-shotpad .kt-fp-nav .kt-fp-btn { flex: 1 1 0; width: auto; height: 44px; }
+.kt-shotpad .kt-fp-head .kt-fp-btn { width: 40px; height: 40px; flex: none; }
+.kt-fp-switch { padding: 2px 0; }
+.kt-fp-switch small, .kt-fp-hint { color: rgb(255 255 255 / .7); font-size: 12px; }
+.kt-fp-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.kt-fp-seg { display: flex; gap: 6px; }
+.kt-fp-segbtn { all: unset; box-sizing: border-box; min-width: 64px; height: 40px; padding: 0 12px; display: grid; place-items: center; border-radius: 999px; border: 1px solid rgb(255 255 255 / .28); font-weight: 600; cursor: pointer; }
+.kt-fp-segbtn.on { background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
+.kt-fp-segbtn:focus-visible, .kt-bigplay:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.kt-fp-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.kt-fp-acts .btn { min-height: 44px; height: auto; white-space: normal; justify-content: center; text-align: center; line-height: 1.2; padding: 6px 10px; }
+@media (max-height: 520px) { .kt-framepad.kt-shotpad { bottom: 12px; max-height: calc(100% - 24px - var(--safe-top, 0px)); overflow-y: auto; gap: 8px; padding: 10px; } }
+/* The big play/pause in the middle: with the controls, gone with them (a tap that played or paused shows it a moment). */
+.kt-centre { z-index: 1; }
+.kt-bigplay { all: unset; box-sizing: border-box; position: relative; pointer-events: auto; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; color: #fff; cursor: pointer; background: rgb(0 0 0 / .42); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); box-shadow: 0 2px 12px rgb(0 0 0 / .3); transition: opacity .2s, transform .2s; z-index: 1; }
+.kt-bigplay svg { width: 40px; height: 40px; fill: currentColor; }
+.kt-bigplay:active { transform: scale(.94); }
+html.pc .kt-bigplay { width: 64px; height: 64px; } html.pc .kt-bigplay svg { width: 34px; height: 34px; }
+html.pc .kt-bigplay:hover { background: rgb(0 0 0 / .58); }
+.kt-player[data-size='small'] .kt-bigplay { width: 60px; height: 60px; } .kt-player[data-size='large'] .kt-bigplay { width: 84px; height: 84px; }
+.kt-player.hide-ui:not(.big-flash) .kt-bigplay { opacity: 0; pointer-events: none; transform: scale(.9); }
+.kt-player.big-flash.hide-ui .kt-bigplay { pointer-events: none; }
+.kt-player.locked .kt-bigplay, .kt-player.kt-pip .kt-bigplay, .kt-player.holding .kt-bigplay, .kt-centre.busy .kt-bigplay { display: none; }
 
 /* The filters' studio list: a search box over a list of rows to tick, the ticked first. */
 .studio-picker .sheet-body { display: flex; flex-direction: column; gap: 8px; }
