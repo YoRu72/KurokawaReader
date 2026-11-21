@@ -2,6 +2,10 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { markReading } from '../resume';
+import { ensureStyle } from '../ui/lazycss';
+import READER_CSS from '../styles/reader.lazy.css' with { type: 'text' };
+// (The reading screen's styles: with this view, not with the library's — before anything of it is drawn.)
+ensureStyle('kr-reader-css', READER_CSS as string);
 import { diagOpen, diagLeaveIntent, diagEvent, diagBackHeld } from '../diag';
 import { onBack, arrowBack } from '../ui/backstack';
 import { readingKeys, refreshReadingKeys, swipeTurned, inSystemZone, overBook } from '../readkeys';

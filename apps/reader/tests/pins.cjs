@@ -132,11 +132,27 @@ const sheetShown = () => !!document.querySelector('.sheet');
   ok('pinned in the tag: first there', (await H.order(p)).join() === 'b:b4*,b:b2', await H.order(p));
   // The tag renamed (its menu: a long hold on its chip): its pins go with it.
   await H.hold(p, cdp, '.tag-chips .chip:has-text("Poems")', sheetShown);
-  await p.click('.sheet .plain-list li:first-child button'); await p.waitForSelector('.sheet input[type=text]');
+  await p.click('.sheet .plain-list li:nth-child(2) button'); await p.waitForSelector('.sheet input[type=text]'); // (the first row is Pin / Unpin)
   await p.fill('.sheet input[type=text]', 'Verse'); await p.click('.sheet .sheet-actions .btn.primary');
   await p.waitForFunction(() => document.querySelector('.library-view')?.dataset.level?.includes('|Verse|'));
   ok('a tag renamed keeps its pins', (await pinsOf(p))['tag:Verse']?.join() === 'b:b4' && !(await pinsOf(p))['tag:Poems'], await pinsOf(p));
   await p.keyboard.press('Alt+ArrowLeft'); await p.waitForFunction(() => document.querySelector('.library-view')?.dataset.level?.startsWith('||'));
+  // A tag chip pinned from its menu (Pin first, then Rename, Delete): first among the chips, marked, kept in the main place;
+  // renamed it keeps the pin; unpinned from the same menu, the pins are as they were.
+  const mainBefore = (await pinsOf(p)).main.join();
+  await H.hold(p, cdp, '.tag-chips .chip:has-text("Verse")', sheetShown);
+  ok('a tag chip\'s menu: Pin, Rename, Delete', (await p.$$eval('.sheet .plain-list li button', (bs) => bs.map((b) => b.textContent.trim()))).join() === 'Pin,Rename tag,Delete tag', await p.$$eval('.sheet .plain-list li button', (bs) => bs.map((b) => b.textContent.trim())));
+  await p.click('.sheet .plain-list li:first-child button'); await p.waitForFunction(() => !document.querySelector('.sheet'));
+  await p.waitForSelector('.tag-chips .chip[data-pinned="1"]');
+  ok('a pinned tag is kept in the main place as t:<name>', (await pinsOf(p)).main.includes('t:Verse'), await pinsOf(p));
+  ok('a pinned tag chip is first of the tags and marked', await p.$eval('.tag-chips .chip[data-pinned="1"]', (c) => c.textContent.includes('Verse') && !!c.querySelector('svg') && c === [...c.parentElement.children].find((x) => !x.classList.contains('fav'))), await p.$$eval('.tag-chips .chip', (cs) => cs.map((c) => c.textContent.trim())));
+  await shot(p, 'pin-tag-phone.png');
+  await H.hold(p, cdp, '.tag-chips .chip:has-text("Verse")', sheetShown);
+  ok('its menu now says Unpin', (await p.$eval('.sheet .plain-list li:first-child button', (b) => b.textContent.trim())) === 'Unpin');
+  await p.click('.sheet .plain-list li:first-child button'); await p.waitForFunction(() => !document.querySelector('.sheet'));
+  await p.waitForFunction(() => !document.querySelector('.tag-chips .chip[data-pinned="1"]'));
+  ok('unpinned: the pins are as they were', (await pinsOf(p)).main.join() === mainBefore, await pinsOf(p));
+  await p.waitForFunction(() => !document.querySelector('.toast'), null, { timeout: 10000 });
 
   // 6. A backup (the automatic one, made from Settings) carries them, by name.
   await p.goto(url + '#/settings'); await p.waitForSelector('.settings-body');

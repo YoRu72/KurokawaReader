@@ -7,9 +7,9 @@ export interface SlimFont { file: string; weight: string; style: string }
 export interface Slim { cmaps?: boolean; fonts?: Record<string, SlimFont[]> }
 let slim: Slim = {}; let loaded: Promise<Slim> | null = null;
 
-/** Read once at start; nothing in a full build. */
+/** Read once at start; nothing in a full build (index.html carries data-slim only in a slim one: no request, no 404, otherwise). */
 export function loadSlim(): Promise<Slim> {
-  return (loaded ??= (async () => { try { const r = await fetch('slim.json', { cache: 'no-store' }); if (r.ok) slim = (await r.json()) as Slim; } catch { /* a full build */ } return slim; })());
+  return (loaded ??= (async () => { if (!document.documentElement.hasAttribute('data-slim')) return slim; try { const r = await fetch('slim.json', { cache: 'no-store' }); if (r.ok) slim = (await r.json()) as Slim; } catch { /* a full build */ } return slim; })());
 }
 export const slimNow = (): Slim => slim;
 /** Where pdf.js finds its character maps: beside the app, or on the web app when the package left them out. */

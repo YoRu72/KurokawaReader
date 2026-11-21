@@ -45,7 +45,10 @@ export async function forgetGone(o: { books?: string[]; folder?: string }): Prom
 export function forgetPlace(place: string): Promise<PinStore> { return change((s) => { delete s.places[place]; }); }
 /** A place renamed (a tag): its pins go with it (put after the new name's, when that had some). */
 export function renamePlace(from: string, to: string): Promise<PinStore> {
-  return change((s) => { if (from === to || !s.places[from]) return; const into = s.places[to] ?? []; for (const x of s.places[from]) if (!into.includes(x)) into.push(x); s.places[to] = into; delete s.places[from]; });
+  return change((s) => { if (from === to) return;
+    // (A tag pinned among the chips is a pin item of its own: it follows the name.)
+    if (from.startsWith('tag:') && to.startsWith('tag:')) for (const k of Object.keys(s.places)) { const i = s.places[k].indexOf('t:' + from.slice(4)); if (i >= 0) { const j = s.places[k].indexOf('t:' + to.slice(4)); if (j >= 0) s.places[k].splice(i, 1); else s.places[k][i] = 't:' + to.slice(4); } }
+    if (!s.places[from]) return; const into = s.places[to] ?? []; for (const x of s.places[from]) if (!into.includes(x)) into.push(x); s.places[to] = into; delete s.places[from]; });
 }
 
 /* ---------- in a backup: by names, not this library's ids (folder ids differ between devices; book ids are the

@@ -4,6 +4,8 @@
 // the shared editor behind Customise (src/theme/editor.ts), the Reader's words, storage, preview and Back handed to
 // them; the glass's blur under it (Full, Reduced, Off; left to the device, the one it was given shows, and why); the
 // licences.
+import READER_CSS from '../styles/reader.lazy.css' with { type: 'text' };
+import { ensureStyle } from '../ui/lazycss';
 import GALLERY_CSS from '../theme/gallery.css' with { type: 'text' };
 import EDITOR_CSS from '../theme/editor.css' with { type: 'text' };
 import { themeGallery, themeName, miniature, type GalleryDeps } from '../theme/gallery';
@@ -151,6 +153,7 @@ export function styleField(after: () => void, bare = false): HTMLElement {
 
 /** The page in force now, as the reader would show it (the night theme in its hours included): its colours. */
 function pageColours(): { bg: string; fg: string; link: string } {
+  ensureStyle('kr-reader-css', READER_CSS as string); // (the probe is read through the reading screen's rules)
   const probe = h('div', { class: 'reader', style: { position: 'absolute', visibility: 'hidden', width: '1px', height: '1px' } });
   document.body.append(probe); applySettings(probe, getSettings());
   const cs = getComputedStyle(probe); const out = { bg: cs.backgroundColor, fg: cs.color, link: cs.getPropertyValue('--r-link-override').trim() || cs.getPropertyValue('--r-link').trim() };

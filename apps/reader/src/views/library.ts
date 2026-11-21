@@ -719,13 +719,15 @@ export function libraryView(): HTMLElement {
 
   function renderTagChips() {
     clear(tagChips);
-    const tags = allTags();
+    // (Pinned tags first, in their pin order — the Favourites and To-read chips stay at the head.)
+    const all = allTags(); const lead = all.filter((x) => x.name === FAV_TAG || x.name === TOREAD_TAG);
+    const tags = [...lead, ...P.pinsFirst(all.filter((x) => !lead.includes(x)), P.pinnedIn(P.placeMain), (x) => P.pinTag(x.name))];
     tagChips.hidden = !tags.length;
     if (!tags.length) return;
     for (const tag of tags) {
-      const on = tagFilter === tag.name;
+      const on = tagFilter === tag.name; const pinned = pinnedHere(P.pinTag(tag.name), P.placeMain);
       const fav = tag.name === FAV_TAG; const toRead = tag.name === TOREAD_TAG;
-      const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : '') + (fav ? ' fav' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon(fav ? 'heartFill' : toRead ? 'clock' : 'tag'), h('span', { dir: 'auto' }, fav ? t('favorites') : toRead ? t('toRead') : tag.name));
+      const c = h('button', { type: 'button', class: 'chip small' + (on ? ' on' : '') + (fav ? ' fav' : ''), 'aria-pressed': String(on), title: t('booksInFolder', { n: tag.count }), ...(pinned ? { dataset: { pinned: '1' } } : {}), onclick: () => setTagFilter(on ? null : tag.name) }, on ? icon('check') : icon(fav ? 'heartFill' : toRead ? 'clock' : pinned ? 'pin' : 'tag'), h('span', { dir: 'auto' }, fav ? t('favorites') : toRead ? t('toRead') : tag.name));
       if (fav || toRead) { tagChips.append(c); continue; }
       onHoldOrContext(c, () => tagSheet(tag.name));
       tagChips.append(c);
@@ -870,10 +872,11 @@ export function libraryView(): HTMLElement {
   }
 
   function tagSheet(name: string) {
-    import('../ui/dom').then(({ openSheet }) => {
+    void Promise.all([import('../ui/dom'), pinMenu()]).then(([{ openSheet }, { pinRows }]) => {
       const s = openSheet(name, t('close'));
       s.body.style.fontFamily = 'var(--font-ui)';
       s.body.append(h('ul', { class: 'plain-list' },
+        ...pinRows(P.pinTag(name), P.placeMain, () => s.close(), drawn, '').slice(0, 1).map((b) => h('li', null, b)), // (Pin / Unpin only: the chips' order is the pins' own)
         h('li', null, h('button', { type: 'button', onclick: async () => { s.close(); const next = await askName(t('renameTag'), name, t('tagName')); if (next && next !== name) await renameTag(name, next); } }, icon('type'), t('renameTag'))),
         h('li', null, h('button', { type: 'button', onclick: async () => { if (!confirm(t('deleteTagConfirm', { name }))) return; s.close(); await deleteTag(name); } }, icon('trash'), t('deleteTag')))));
     });
@@ -903,7 +906,7 @@ export function libraryView(): HTMLElement {
       b.tagsAt = at;
     }
     await saveTagDefs(tagDefs.filter((x) => x.name !== name));
-    await (await import('../pinedit')).forgetPlace(P.placeTag(name));
+    const pe = await import('../pinedit'); await pe.forgetPlace(P.placeTag(name)); await pe.forgetPinItems([P.pinTag(name)]);
     void import('../sync').then((m) => m.markDeleted(`tag:${name}`)).catch(() => {});
     if (tagFilter === name) setTagFilter(null); else renderGrid();
   }

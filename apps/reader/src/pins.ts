@@ -25,6 +25,8 @@ export const placeShelf = (id: string): string => `shelf:${id}`;
 export const pinBook = (id: string): string => `b:${id}`;
 export const pinFolder = (id: string): string => `f:${id}`;
 export const pinSeries = (key: string): string => `s:${key}`;
+/** A tag pinned among the tag chips (place: main). */
+export const pinTag = (name: string): string => `t:${name}`;
 
 /** Any stored value (none: a library from before pins) as the current shape. */
 export function migratePins(raw: unknown): PinStore {
@@ -35,7 +37,7 @@ export function migratePins(raw: unknown): PinStore {
   for (const [k, list] of Object.entries(places as Record<string, unknown>)) {
     if (!k || !Array.isArray(list)) continue;
     const seen = new Set<string>(); const items: string[] = [];
-    for (const x of list) if (typeof x === 'string' && /^[bfs]:./.test(x) && !seen.has(x)) { seen.add(x); items.push(x); }
+    for (const x of list) if (typeof x === 'string' && /^[bfst]:./.test(x) && !seen.has(x)) { seen.add(x); items.push(x); }
     if (items.length) out.places[k] = items;
   }
   return out;
