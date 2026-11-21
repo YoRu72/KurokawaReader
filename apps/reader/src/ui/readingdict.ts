@@ -6,6 +6,7 @@
 //    open book as soon as it is there;
 //  - dictNeeded(): the same offer inside a sheet (the selection's readings).
 import { h, icon, toast } from './dom';
+import { keepNoticePlaced } from './pill';
 import { t, formatBytes } from '../i18n';
 import { getSettings, onSettingsChange } from '../settings';
 import { getDictState, onDictChange, refreshDictState, downloadDict, cancelDict, removeDict, markDictFailed, dictSize, type DictKind, type DictState, type DictFail } from '../readingdict';
@@ -128,7 +129,8 @@ export function readingAid(kind: DictKind, attach: (onError: (e: Error) => void)
     document.body.appendChild(el);
     draw(getDictState(kind));
     const off = onDictChange((k, s) => { if (k === kind && notice) draw(s); });
-    notice = { el, close: () => { off(); el.remove(); } };
+    const unplace = keepNoticePlaced(el);
+    notice = { el, close: () => { off(); unplace(); el.remove(); } };
   };
   // A notice never floats over an open sheet or panel: while one is open it is taken away (the dictionary's own row in
   // the options shows the state), and brought back after, if still wanted and not closed by the reader.

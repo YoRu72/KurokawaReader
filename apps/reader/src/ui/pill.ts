@@ -48,3 +48,28 @@ export function swipeAway(el: HTMLElement, close: () => void): void {
   };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
 }
+
+/** What the reader operates by, that a notice must never lie over: the page buttons at a chapter's end, the toolbar, the bars, a
+ *  computer's page-turn arrows. */
+const CONTROLS = '.chapter-nav .cn-btn, .page-arrow, .float-toolbar, .selection-bar, .pdf-bar, .ink-bar, .read-status, .fab';
+/** A notice (the reading dictionary's offer…) put above whatever of the reading controls it would cover, from its own CSS place
+ *  upward — never over them. Called again as the page scrolls or turns; with nothing in the way it is back at its CSS place. */
+export function placeNotice(el: HTMLElement): void {
+  if (!el.isConnected) return;
+  el.style.removeProperty('bottom');
+  for (let i = 0; i < 5; i++) {
+    const s = el.getBoundingClientRect(); let hit = Infinity;
+    for (const b of document.querySelectorAll<HTMLElement>(CONTROLS)) {
+      if (el.contains(b) || !seen(b)) continue; const r = b.getBoundingClientRect();
+      if (r.right <= s.left + 1 || r.left >= s.right - 1 || r.bottom <= s.top || r.top >= s.bottom) continue; hit = Math.min(hit, r.top);
+    }
+    if (hit === Infinity) return;
+    el.style.bottom = `${Math.round(innerHeight - hit + 12)}px`;
+  }
+}
+/** Keeps a notice placed (placeNotice) while the page scrolls, turns or is resized; the returned function stops it. */
+export function keepNoticePlaced(el: HTMLElement): () => void {
+  let raf = 0; const go = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; placeNotice(el); }); };
+  document.addEventListener('scroll', go, { capture: true, passive: true }); window.addEventListener('resize', go); go(); const t0 = window.setTimeout(go, 400);
+  return () => { document.removeEventListener('scroll', go, { capture: true }); window.removeEventListener('resize', go); cancelAnimationFrame(raf); window.clearTimeout(t0); };
+}

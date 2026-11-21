@@ -67,7 +67,7 @@ import { openSheet, askText } from '../ui/dom';
 const searchKeep = (): boolean => { try { return localStorage.getItem('kr.searchKeep') !== '0'; } catch { return true; } };
 function keepToggle(onOff: () => void): HTMLElement {
   const box = h('input', { type: 'checkbox', checked: searchKeep(), onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; try { localStorage.setItem('kr.searchKeep', v ? '1' : '0'); } catch { /* none */ } if (!v) onOff(); } }) as HTMLInputElement;
-  return h('label', { class: 'search-keep' }, box, h('span', null, t('searchKeepLast')));
+  return h('label', { class: 'search-keep' }, h('span', { class: 'switch' }, box, h('i')), h('span', null, t('searchKeepLast')));
 }
 
 interface OpenDoc {

@@ -834,3 +834,6 @@ html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'][data-side='e
 .pg-hidden { border-style: dashed; }
 .pg-hidden::before { opacity: 0; }
 .pg-hidden i { top: 50%; left: -2px; right: -2px; height: 1.4px; transform: rotate(-45deg); }
+/* A finger needs 40 px (tests/uihunt.cjs): the PDF bar's page box on the side layout, and its buttons. */
+html:not(.pc) .pdf-bar[data-layout='side'] input[type='number'] { height: 40px; }
+html:not(.pc) .pdf-bar .icon-btn, html:not(.pc) .pdf-bar form button { min-height: 40px; }

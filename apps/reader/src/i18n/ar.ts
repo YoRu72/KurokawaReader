@@ -792,6 +792,7 @@ export const ar: Strings = {
   translateWholeBook: 'ترجمة الكتاب كلّه',
   brightnessMode: 'التحكّم في السطوع',
   brightnessApp: 'تعتيم داخل التطبيق (سحب الحافة)',
+  brightnessAppPc: 'تعتيم داخل التطبيق',
   brightnessDevice: 'سطوع الجهاز (بلا تعتيم داخليّ)',
   browseModels: 'استعراض النماذج',
   noModelsFound: 'لم يرجع المزوّد بأيّ نموذج لهذا المفتاح.',

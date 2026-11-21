@@ -44,3 +44,4 @@ html.pc:not(.rail-off)[dir='rtl'] .kr-notice { left: calc(50% - var(--rail-w) / 
 .kr-dict-actions .btn, .kr-notice-actions .btn { min-height: 36px; height: auto; padding-block: 6px; white-space: normal; text-align: center; }
 /* A phone's narrow row: the buttons under the text, at its start side like the other buttons in Settings. */
 @media (max-width: 480px) { .kr-dict-row .kr-dict-actions { flex-basis: 100%; margin-inline-start: 0; justify-content: flex-start; } }
+html:not(.pc) .kr-notice .icon-btn.kr-notice-x { width: 44px; height: 44px; }
