@@ -62,7 +62,8 @@ function dictRow(kind: DictKind, after?: () => void): HTMLElement {
         h('b', { class: 'kr-dict-name' }, t(NAME[kind])),
         h('small', { class: 'kr-dict-state' }, stateText(s, kind)),
         bar,
-        s.phase === 'error' ? h('small', { class: 'kr-dict-fail', role: 'alert' }, dictFailText(s.fail, s.code)) : null),
+        s.phase === 'error' ? h('small', { class: 'kr-dict-fail', role: 'alert' }, dictFailText(s.fail, s.code)) : null,
+        s.phase === 'error' && s.detail ? h('small', { class: 'kr-dict-detail', dir: 'ltr' }, s.detail) : null),
       h('div', { class: 'kr-dict-actions' }, ...actionsFor(kind, s, after)));
   };
   draw(getDictState(kind));
@@ -118,7 +119,7 @@ export function readingAid(kind: DictKind, attach: (onError: (e: Error) => void)
       el.dataset.phase = s.phase;
       const msg = s.phase === 'downloading' ? t('dictProgress', { p: pctOf(s) }) : s.phase === 'error' ? dictFailText(s.fail, s.code) : t(OFFER[kind], { size: sz(dictSize(kind)) });
       const bar = s.phase === 'downloading' ? h('div', { class: 'kr-dict-bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pctOf(s)) }, h('span', { style: { width: `${pctOf(s)}%` } })) : null;
-      el.replaceChildren(h('div', { class: 'kr-notice-text' }, h('span', { class: 'kr-notice-msg' }, msg), bar), h('div', { class: 'kr-notice-actions' }, ...actionsFor(kind, s).filter((b) => b.dataset.act !== 'remove'), x));
+      el.replaceChildren(h('div', { class: 'kr-notice-text' }, h('span', { class: 'kr-notice-msg' }, msg), s.phase === 'error' && s.detail ? h('small', { class: 'kr-dict-detail', dir: 'ltr' }, s.detail) : null, bar), h('div', { class: 'kr-notice-actions' }, ...actionsFor(kind, s).filter((b) => b.dataset.act !== 'remove'), x));
       // (An offer that is not taken up goes away by itself; a download going on or a failure stays until it is dealt with.)
       window.clearTimeout(autoHide); autoHide = 0;
       if (s.phase === 'none' || s.phase === 'unknown') autoHide = window.setTimeout(() => { dismissed = true; closeNotice(); }, 25000);

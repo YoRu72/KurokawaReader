@@ -15,11 +15,11 @@ html[dir='rtl'] .toast.has-action { padding: 6px 16px 6px 8px; }
 .toast .toast-action {
   flex: none; height: 36px; min-width: 56px; padding: 0 14px; border: 0; border-radius: 18px; cursor: pointer;
   /* (The inverse primary when the theme has one; else the snackbar's own text, on a tonal pill — readable on any.) */
-  color: var(--md-primary); background: color-mix(in srgb, var(--md-primary) 14%, transparent);
+  color: inherit; background: color-mix(in srgb, currentColor 13%, transparent);
   font: inherit; font-weight: 700; letter-spacing: .01em;
 }
-.toast .toast-action:hover { background: color-mix(in srgb, var(--md-primary) 22%, transparent); }
-.toast .toast-action:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
+.toast .toast-action:hover { background: color-mix(in srgb, currentColor 22%, transparent); }
+.toast .toast-action:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
 /* (On the error snackbar — «Show» where files could not be deleted, src/ui/deletebooks.ts —: its own text colour.) */
 .toast.error .toast-action { color: var(--md-on-error-container); background: color-mix(in srgb, var(--md-on-error-container) 14%, transparent); }
 .toast.error .toast-action:focus-visible { outline-color: var(--md-on-error-container); }
@@ -41,3 +41,12 @@ html[dir='rtl'] .opt-history .icon-btn[data-icon='redo'] svg, html[dir='rtl'] .i
 html[dir='rtl'] .reset-one[data-act='mine'] svg { transform: none; }
 /* The button bars' editor: its own Undo / Redo in the head. */
 .buttons-sheet .sheet-head .opt-history { margin-inline-start: auto; }
+
+/* The floating Undo as Tools has it (src/ui/pill.ts): a close button, a sheet over it hides it, a swipe aside. */
+.toast .toast-x { flex: none; width: 40px; height: 40px; border: 0; border-radius: 999px; display: grid; place-items: center; cursor: pointer; background: none; color: inherit; opacity: .8; }
+.toast .toast-x:hover { background: color-mix(in srgb, currentColor 12%, transparent); opacity: 1; }
+.toast .toast-x:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+.toast .toast-x svg { width: 18px; height: 18px; }
+html:not(.pc) .toast .toast-x { width: 48px; height: 48px; margin-block: -4px; }
+.toast.has-action { padding-inline-end: 4px; touch-action: pan-y; }
+.toast.behind-sheet { visibility: hidden; pointer-events: none; }

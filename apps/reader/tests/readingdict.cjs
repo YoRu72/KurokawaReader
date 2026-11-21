@@ -46,13 +46,13 @@ const KUROMOJI = `(function () {
         if (--left === 0) {
           const mode = window.__krStub || ''; if (fromBlob && mode === 'throw') return fail(new Error('gunzip failed')); if (fromBlob && mode === 'hang') return;
           window.__dictFromBlob = fromBlob; done = true;
-          cb(null, { tokenize: (t) => [...t].map((c) => ({ surface_form: c, word_type: 'KNOWN', reading: /[㐀-鿿]/.test(c) ? 'ア' : undefined })) });
+          cb(null, { tokenize: (t) => t === '日本語' ? [{ surface_form: t, word_type: 'KNOWN', reading: 'ニホンゴ' }] : [...t].map((c) => ({ surface_form: c, word_type: 'KNOWN', reading: /[㐀-鿿]/.test(c) ? 'ア' : undefined })) });
         }
       };
       x.onerror = () => fail(new Error('xhr')); x.send(); });
   } }) };
 })();`;
-const PINYIN = `window.pinyinPro = { pinyin: (t) => [...t].filter((c) => /[㐀-鿿]/.test(c)).map(() => 'mā') };`;
+const PINYIN = `window.pinyinPro = { pinyin: (t) => [...t].filter((c) => /[㐀-鿿]/.test(c)).map((c) => (c === '中' ? 'zhōng' : 'mā')) };`;
 const cdn = { mode: 'ok', reqs: [], slowMs: 0 };
 async function routeCdn(ctx) {
   await ctx.route((u) => !/^(127\.0\.0\.1|localhost)$/.test(u.hostname), async (route) => {
@@ -124,7 +124,7 @@ const closeOptions = async (p) => { await p.keyboard.press('Escape'); if (!(awai
   // ---- 0. the code on its own: states, cancel, what is kept, what listens
   {
     const ctx = await newCtx(br); const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
-    await p.route(base + 'blank', (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body></body></html>' }));
+    await p.route(base + 'blank', (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>' }));
     await p.goto(base + 'blank');
     const entry = `export * from './src/readingdict'; export * from './src/ui/readingdict';`;
     const code = esbuild.buildSync({ stdin: { contents: entry, resolveDir: path.resolve(__dirname, '..'), loader: 'ts' }, bundle: true, format: 'iife', globalName: 'RD', write: false, platform: 'browser', logLevel: 'error' }).outputFiles[0].text;

@@ -1,5 +1,7 @@
 // Tiny DOM helpers — no framework, so the bundle stays small and offline-friendly.
 import { pushLayer } from './backstack';
+import { t } from '../i18n';
+import { placePill, swipeAway } from './pill';
 
 type Child = Node | string | number | null | undefined | false | Child[];
 
@@ -145,14 +147,37 @@ export interface ToastAction { label: string; run: () => void }
  *  by its time, replaced, or its action taken (acted). */
 export function toast(msg: string, kind: 'info' | 'error' = 'info', ms: number | { action?: ToastAction; ms?: number; onEnd?: (acted: boolean) => void } = 2200): void {
   const o = typeof ms === 'number' ? { ms } : ms;
-  document.querySelectorAll<HTMLElement & { __end?: (acted: boolean) => void }>('.toast').forEach((x) => { x.__end?.(false); x.remove(); });
-  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : '') + (o.action ? ' has-action' : ''), role: 'status', 'aria-live': 'polite' }, h('span', { class: 'toast-text' }, msg)) as HTMLElement & { __end?: (acted: boolean) => void };
+  document.querySelectorAll<HTMLElement & { __end?: (acted: boolean) => void; __tick?: number }>('.toast').forEach((x) => { window.clearInterval(x.__tick); x.__end?.(false); x.remove(); });
+  const el = h('div', { class: 'toast' + (kind === 'error' ? ' error' : '') + (o.action ? ' has-action' : ''), role: 'status', 'aria-live': 'polite' }, h('span', { class: 'toast-text' }, msg)) as HTMLElement & { __end?: (acted: boolean) => void; __tick?: number };
   let ended = false;
   el.__end = (acted) => { if (ended) return; ended = true; o.onEnd?.(acted); };
-  if (o.action) { const a = o.action; el.append(h('button', { type: 'button', class: 'toast-action', onclick: () => { window.clearTimeout(toastTimer); el.__end?.(true); el.remove(); a.run(); } }, a.label)); }
-  document.body.appendChild(el);
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => { el.__end?.(false); el.remove(); }, o.ms ?? (o.action ? 6500 : 2200));
+  if (!o.action) {
+    document.body.appendChild(el);
+    toastTimer = window.setTimeout(() => { el.__end?.(false); el.remove(); }, o.ms ?? 2200);
+    return;
+  }
+  // A snackbar with an action (the floating Undo) can always be closed — its × (48 px on a phone), a swipe aside — and what it
+  // held is then done (onEnd(false)). Its time (a deadline, not only a timer: a phone's web view in the background slows
+  // timers) stands still while a finger is on it, the page is hidden or a sheet lies over it.
+  const a = o.action; const total = o.ms ?? 6500; let until = Date.now() + total; let last = Date.now(); let touching = false;
+  const finish = (acted: boolean): void => { window.clearInterval(el.__tick); el.__end?.(acted); el.remove(); };
+  el.append(h('button', { type: 'button', class: 'toast-action', onclick: () => { finish(true); a.run(); } }, a.label),
+    h('button', { type: 'button', class: 'toast-x', title: t('close'), 'aria-label': t('close'), onclick: () => finish(false) }, icon('close')));
+  swipeAway(el, () => finish(false));
+  el.addEventListener('pointerdown', () => { touching = true; }); const up = () => { touching = false; };
+  el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  document.body.appendChild(el);
+  const sweep = (): void => {
+    if (!el.isConnected) { window.clearInterval(el.__tick); return; }
+    placePill(el);
+    const now = Date.now(); const paused = touching || document.visibilityState === 'hidden' || el.classList.contains('behind-sheet');
+    if (paused) { until += now - last; last = now; return; }
+    last = now;
+    if (until <= now) finish(false);
+  };
+  el.__tick = window.setInterval(sweep, 250);
+  placePill(el); requestAnimationFrame(() => placePill(el));
 }
 
 /** A bottom sheet. Returns the body element and a close function. */

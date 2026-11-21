@@ -2,7 +2,8 @@
 // pinyin for Chinese (pinyin-pro; both downloaded once and kept on the device, src/readingdict.ts).
 // Used by the selection toolbar ("Reading") and the auto-reading option.
 import { ensureTokenizer, annotate, isJapanese } from './furigana';
-import { requireDict, dictScriptUrl, onDictForget, missingDict, loadFailed, withTimeout, PINYIN_CDN_JS } from './readingdict';
+import { diagEvent } from './diag';
+import { onDictVerify, shortDetail, requireDict, dictScriptUrl, onDictForget, missingDict, loadFailed, withTimeout, PINYIN_CDN_JS } from './readingdict';
 
 interface PinyinPro { pinyin(text: string, o: { type: 'array'; toneType?: 'symbol' | 'num' | 'none'; nonZh?: 'consecutive' | 'removed' | 'spaced' }): string[] }
 
@@ -10,21 +11,30 @@ let pinyinPromise: Promise<PinyinPro> | null = null;
 onDictForget('zh', () => { pinyinPromise = null; });
 /** The pinyin script, from the copy on the device (the CDN once, online, if that copy will not run). Rejects with
  *  'dict-missing' while it is not downloaded, 'dict-load' when it is there but will not load. */
+const runPinyinScript = (src: string, revoke: boolean) => new Promise<PinyinPro>((res, rej) => {
+  const w = window as unknown as { pinyinPro?: PinyinPro };
+  const sc = document.createElement('script'); sc.src = src;
+  sc.onload = () => { if (revoke) URL.revokeObjectURL(src); if (w.pinyinPro) res(w.pinyinPro); else rej(new Error('pinyin-pro did not define itself')); };
+  sc.onerror = () => { if (revoke) URL.revokeObjectURL(src); sc.remove(); rej(new Error('pinyin-pro script did not run')); };
+  document.head.appendChild(sc);
+});
+/** After a download: run the script from the copy on the device and read 中 → zhōng; anything else throws. */
+onDictVerify('zh', async () => {
+  const w = window as unknown as { pinyinPro?: PinyinPro };
+  const py = w.pinyinPro ?? await withTimeout(runPinyinScript(await dictScriptUrl('zh'), true), 'self-check');
+  const got = (py.pinyin('中', { type: 'array', toneType: 'symbol', nonZh: 'removed' }) ?? [])[0];
+  if (got !== 'zhōng') throw new Error(`self-check: 中 read as «${got ?? 'nothing'}»`);
+  pinyinPromise ??= Promise.resolve(py);
+});
 export function ensurePinyin(): Promise<PinyinPro> {
   const w = window as unknown as { pinyinPro?: PinyinPro };
-  const run = (src: string, revoke: boolean) => new Promise<PinyinPro>((res, rej) => {
-    const sc = document.createElement('script'); sc.src = src;
-    sc.onload = () => { if (revoke) URL.revokeObjectURL(src); if (w.pinyinPro) res(w.pinyinPro); else rej(new Error('pinyin-pro')); };
-    sc.onerror = () => { if (revoke) URL.revokeObjectURL(src); sc.remove(); rej(new Error('pinyin-pro script')); };
-    document.head.appendChild(sc);
-  });
   pinyinPromise ??= (async () => {
     await requireDict('zh');
     if (w.pinyinPro) return w.pinyinPro;
-    try { return await withTimeout(run(await dictScriptUrl('zh'), true), 'stored pinyin'); }
-    catch (e) { if (missingDict(e)) throw e; }
+    try { return await withTimeout(runPinyinScript(await dictScriptUrl('zh'), true), 'stored pinyin'); }
+    catch (e) { if (missingDict(e)) throw e; diagEvent('dict', { kind: 'zh', fail: 'stored', detail: shortDetail(e) }); }
     if (navigator.onLine === false) throw loadFailed('zh', new Error('offline'));
-    try { return await withTimeout(run(PINYIN_CDN_JS, false), 'pinyin from the CDN'); }
+    try { return await withTimeout(runPinyinScript(PINYIN_CDN_JS, false), 'pinyin from the CDN'); }
     catch (e) { throw loadFailed('zh', e); }
   })();
   pinyinPromise.catch(() => { pinyinPromise = null; });
