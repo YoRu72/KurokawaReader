@@ -107,15 +107,27 @@ type Shown = {
   level: 0 | 1 | 2;
   /** The zoom the picture was drawn at (a picture from before a zoom is kept, stretched, until it is redrawn). */
   at: number;
+  /** The tiles: each cell ("c:r") to the canvas holding it, drawn at the zoom `tileAt`. */
   tiles?: Map<string, HTMLCanvasElement>;
+  tileAt?: number;
   tileLayer?: HTMLElement;
+  /** The screen was covered by the tiles of this zoom. */
+  viewDone?: boolean;
+  /** The tiles of the zoom before, scaled to the new size, kept under the new ones until they cover the screen. */
+  old?: HTMLElement;
+  oldAt?: number;
   text?: 'building' | 'done';
   textCancel?: () => void;
   seen?: boolean;
 };
 
-/** Pieces of a zoomed page, in device pixels (as Google Drive's viewer draws them). */
-const TILE = 800;
+/** The cells a zoomed page is drawn in, in device pixels (blocks of them at a time: see "tiles" below). */
+const TILE = 400;
+/** Device pixels drawn around the screen on a zoomed page, once the screen is sharp (a short scroll finds them). */
+const AROUND = 480;
+/** The most device pixels drawn in one block (the screen of a phone at 2.6 times is about 2.5 million). */
+const MAX_BLOCK = 4.8e6;
+type Block = { c0: number; c1: number; r0: number; r1: number };
 
 /** The box holding the ink on a picture of the page (fractions of the page), with no room added. Ink is whatever
  *  differs from the page's own paper — the colour of most of its outer ring (white, tinted, a scan's grey, a dark
@@ -628,6 +640,8 @@ export class PdfViewer {
    *  window resized, the web view zoomed or put full screen as a book opens moved them on WebView2 without the kept
    *  list being let go (a 300-page book drawn five pages short of where it was scrolled), so they are read again. */
   private topsStale = 0;
+  /** The pages marked as loading (shimmering). */
+  private loadingMarked = new Set<number>();
   private checkTops(): void {
     const t = this.tops; if (!t || t.length !== this.pages.length) return;
     const base = this.pages[0]?.offsetParent === this.inner ? this.inner.offsetTop : 0;
@@ -648,7 +662,10 @@ export class PdfViewer {
     this.updateCurrent();
     // A drawing for a page that has gone well out of view is dropped.
     if (this.running && (this.running.n < this.first - 3 || this.running.n > this.last + 3)) { this.running.cancel(); }
-    for (let n = Math.max(1, this.first - 1); n <= Math.min(this.total, this.last + 1); n++) this.pages[n - 1].classList.toggle('loading', !this.shown.get(n)?.pic);
+    // (Only the pages at the screen shimmer: a page marked once and scrolled away from — the first pages, the book
+    // opened at page 1 — kept its animation running out of sight, a repaint every frame for as long as it was open.)
+    for (const n of this.loadingMarked) if (n < this.first - 1 || n > this.last + 1) { this.pages[n - 1]?.classList.remove('loading'); this.loadingMarked.delete(n); }
+    for (let n = Math.max(1, this.first - 1); n <= Math.min(this.total, this.last + 1); n++) { const want = !this.shown.get(n)?.pic; this.pages[n - 1].classList.toggle('loading', want); if (want) this.loadingMarked.add(n); else this.loadingMarked.delete(n); }
     this.pump();
   }
 
@@ -691,6 +708,8 @@ export class PdfViewer {
     const near = (down ? [last + 1, last + 2, first - 1] : [first - 1, first - 2, last + 1]).filter((n) => n >= 1 && n <= this.total);
     const st = (n: number) => this.shown.get(n);
     const stale = (n: number) => { const s = st(n); return !s?.pic || s.at !== this.scale; };
+    // (Nothing is drawn while two fingers zoom, or a button's zoom animates: it would be for the size before.)
+    if (this.pinching || this.zoomHold) return null;
     // A fling faster than a screen every 150 ms outruns any drawing: what is drawn now is gone before it shows.
     // Nothing is drawn until it slows (the frame after each scroll event asks again).
     if (this.scrolling && Math.abs(this.speed) > this.scroll.clientHeight / 150) return null;
@@ -698,11 +717,23 @@ export class PdfViewer {
     for (const n of vis) if (!st(n)?.pic) return () => this.draw(n, this.scrolling ? 1 : 2);
     // 2. While scrolling, the pages ahead get their quick picture too; nothing more until it stops.
     if (this.scrolling) { for (const n of near) if (!st(n)?.pic) return () => this.draw(n, 1); return null; }
-    // 3. Pages in view made sharp (or redrawn at a new zoom), then their tiles when zoomed in.
-    for (const n of vis) { const s = st(n)!; if (s.level < 2 || s.at !== this.scale) return () => this.draw(n, 2); }
-    for (const n of vis) { const t = this.missingTile(n); if (t) return () => this.drawTile(n, t); }
+    // 3. After a zoom, the part of each page in view on the screen, in one pass (the old picture stays stretched under
+    // it until then); then the pages in view made sharp (or redrawn at the new zoom), then the tiles around the screen.
+    for (const n of vis) if (this.needsView(n)) { const b = this.missingBlock(n, 0); if (b) return () => this.drawBlock(n, b, true); }
+    for (const n of vis) {
+      const s = st(n)!; if (s.level === 2 && s.at === this.scale) continue;
+      const sz = this.sizeFor(n, 2);
+      // (Zoomed from one tiled size to another: the whole picture under the tiles is the same size — kept.)
+      if (s.level === 2 && s.pic && sz.tiled && Math.abs(s.pic.width - sz.px) <= 2) { s.at = this.scale; this.markRes(n); continue; }
+      return () => this.draw(n, 2, !sz.tiled && !this.covered(n, 0) && (s.pic?.width ?? 0) < sz.px * 0.9);
+    }
+    for (const n of vis) { this.trimTiles(n); if (this.sizeFor(n, 2).tiled) { const b = this.missingBlock(n, AROUND); if (b) return () => this.drawBlock(n, b); } }
     // 4. The pages either side, sharp; the two beyond them with a quick picture, so a scroll finds them drawn.
-    for (const n of near.slice(0, 2)) if (stale(n) || st(n)!.level < 2) return () => this.draw(n, 2);
+    // (Sharp too when the pixels held allow; a quick picture otherwise — a zoomed page's neighbours are big.)
+    for (const n of near.slice(0, 2)) {
+      const s = st(n); const big = this.sizeFor(n, 2).px; const want = this.pxHeld() - (s ? this.pxOf(s) : 0) + big * big * (this.baseHeights[n - 1] / this.baseWidths[n - 1]) <= this.budget() ? 2 : 1;
+      if (stale(n) || s!.level < want) return () => this.draw(n, want);
+    }
     for (const n of near.slice(2)) if (stale(n)) return () => this.draw(n, 1);
     for (const n of [last + 3, first - 2]) if (n >= 1 && n <= this.total && !st(n)?.pic) return () => this.draw(n, 1);
     // 5. The text layer of the pages in view (to select and search), last.
@@ -716,9 +747,11 @@ export class PdfViewer {
     void (async () => {
       try {
         for (let task = this.nextTask(); task && !this.destroyed; task = this.nextTask()) {
+          this.lastFast = false;
           await task();
-          // (A frame between two drawings, so the page keeps moving under the finger.)
-          await new Promise((r) => requestAnimationFrame(() => r(null)));
+          // (A frame between two drawings, so the page keeps moving under the finger — but straight on, given back to
+          // the page only for a moment, while what is on the screen is still being made sharp after a zoom.)
+          if (this.lastFast) await new Promise((r) => setTimeout(r, 0)); else await new Promise((r) => requestAnimationFrame(() => r(null)));
         }
       } finally { this.busy = false; this.pumpThumbs(); this.pumpCrops(); this.cleanDoc(); }
     })();
@@ -736,7 +769,10 @@ export class PdfViewer {
   }
 
   /** A whole page's picture at `level`; the old one stays until the new one is ready. */
-  private async draw(n: number, level: 1 | 2): Promise<void> {
+  /** The drawing just done was one the reader waits for (see draw()). */
+  private lastFast = false;
+  private async draw(n: number, level: 1 | 2, fast = false): Promise<void> {
+    this.lastFast = fast;
     const el = this.pages[n - 1];
     let s = this.shown.get(n);
     if (!s) { s = { level: 0, at: 0 }; this.shown.set(n, s); }
@@ -751,10 +787,15 @@ export class PdfViewer {
     const W = Math.max(1, Math.round(px)), H = Math.max(1, Math.round(vp1.height * k));
     const canvas = this.take(W, H);
     canvas.className = 'pdf-pic';
+    // (What the reader waits for — a page on the screen too coarse for the zoom — is drawn slice after slice without
+    // waiting for a frame between: a frame on a busy phone is far longer than a slice, and the drawing took three times
+    // as long. The slices still give the page back between them, and the zoom's glide runs on the compositor.)
+    (canvas as HTMLCanvasElement & { krFast?: boolean }).krFast = fast;
     let ok = false;
     if (this.native) {
       ok = await this.nativeDraw(n, canvas, { width: W }).catch(() => false);
     }
+    if (!ok && (this.pinching || this.zoomHold)) { this.give(canvas); return; }
     if (!ok) {
       const ctx = canvas.getContext('2d', { alpha: false })!;
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
@@ -767,8 +808,11 @@ export class PdfViewer {
     this.sheets[n - 1].insertBefore(canvas, this.sheets[n - 1].firstChild);
     s.pic = canvas; s.level = level; s.at = scale;
     if (old !== canvas) this.give(old);
-    el.classList.remove('loading');
-    el.dataset.res = level === 2 && !this.sizeFor(n, 2).tiled ? 'full' : 'low';
+    el.classList.remove('loading'); el.classList.add('drawn');
+    // (Sharp as a whole: the screen's part drawn before it, and the old zoom's tiles, are no longer needed.)
+    if (level === 2 && !this.sizeFor(n, 2).tiled) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; }
+    this.markRes(n);
+    this.trimMemory();
     if (!s.seen) { s.seen = true; this.opts.onPageRender?.(n); }
     this.firstPicDone();
   }
@@ -790,7 +834,12 @@ export class PdfViewer {
     return true;
   }
 
-  /* ---------- tiles: a zoomed page drawn sharp in pieces, only where it is seen ---------- */
+  /* ---------- tiles: a zoomed page drawn sharp in pieces, only where it is seen ----------
+   * The page's grid of cells (TILE device pixels) at the zoom; what is drawn is a block of cells, in ONE pass of the
+   * page's drawing — first the cells on the screen, then the ones around it in a few blocks (a strip above, below,
+   * either side). (A tile of its own per cell had pdf.js run the whole page's drawing once for every tile: eight runs
+   * of a dense page, five to seven seconds on a slowed phone before the screen was sharp.) After a zoom the tiles of
+   * the zoom before stay under the new ones, scaled to the new size (`old`), until the screen is covered again. */
 
   private tileGrid(n: number): { full: number; cols: number; rows: number; W: number; H: number } {
     const d = this.device();
@@ -798,57 +847,144 @@ export class PdfViewer {
     return { full: W, cols: Math.ceil(W / TILE), rows: Math.ceil(H / TILE), W, H };
   }
 
-  /** The next tile the page needs where it is seen (with half a tile around it), or null. */
-  private missingTile(n: number): { c: number; r: number } | null {
-    if (!this.sizeFor(n, 2).tiled) return null;
-    const s = this.shown.get(n); if (!s?.pic) return null;
+  /** The cells of page n seen on the screen, with `margin` device pixels around it (null: none of it is seen), and the
+   *  screen's middle in cells. */
+  private cellRange(n: number, margin: number): { c0: number; c1: number; r0: number; r1: number; cx: number; cy: number } | null {
     const el = this.pages[n - 1]; const d = this.device();
     const top = this.layoutTops()[n - 1], left = el.offsetLeft + (el.offsetParent === this.inner ? this.inner.offsetLeft : 0);
     const g = this.tileGrid(n);
     // (Screen positions to the sheet's device pixels: the window's offset into the sheet, and the shrink of a page
     // narrowed to the ordinary width.)
     const box = this.shownBox(n), k = box.k; const ox = box.x * this.scale * d, oy = box.y * this.scale * d;
-    const x0 = ((this.scroll.scrollLeft - left) / k) * d - TILE / 2 + ox, x1 = ((this.scroll.scrollLeft + this.scroll.clientWidth - left) / k) * d + TILE / 2 + ox;
-    const y0 = ((this.scroll.scrollTop - top) / k) * d - TILE / 2 + oy, y1 = ((this.scroll.scrollTop + this.scroll.clientHeight - top) / k) * d + TILE / 2 + oy;
-    const c0 = Math.max(0, Math.floor(x0 / TILE)), c1 = Math.min(g.cols - 1, Math.floor(x1 / TILE));
-    const r0 = Math.max(0, Math.floor(y0 / TILE)), r1 = Math.min(g.rows - 1, Math.floor(y1 / TILE));
-    // (Middle of the screen first.)
-    const cy = (((this.scroll.scrollTop + this.scroll.clientHeight / 2 - top) / k) * d + oy) / TILE, cx = (((this.scroll.scrollLeft + this.scroll.clientWidth / 2 - left) / k) * d + ox) / TILE;
-    let best: { c: number; r: number } | null = null, bd = Infinity;
-    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-      if (s.tiles?.has(`${this.scale}:${c}:${r}`)) continue;
-      const dd = (r + 0.5 - cy) ** 2 + (c + 0.5 - cx) ** 2; if (dd < bd) { bd = dd; best = { c, r }; }
-    }
-    if (!best && s.at === this.scale && s.level === 2) this.pages[n - 1].dataset.res = 'full';
-    // Tiles well out of view are let go of.
-    if (s.tiles) for (const [key, cv] of s.tiles) { const [, c, r] = key.split(':').map(Number); if (c < c0 - 1 || c > c1 + 1 || r < r0 - 1 || r > r1 + 1) { cv.remove(); s.tiles.delete(key); } }
-    return best;
+    const sl = this.scroll.scrollLeft, st = this.scroll.scrollTop, cw = this.scroll.clientWidth, ch = this.scroll.clientHeight;
+    const x0 = ((sl - left) / k) * d - margin + ox, x1 = ((sl + cw - left) / k) * d + margin + ox;
+    const y0 = ((st - top) / k) * d - margin + oy, y1 = ((st + ch - top) / k) * d + margin + oy;
+    const c0 = Math.max(0, Math.floor(x0 / TILE)), c1 = Math.min(g.cols - 1, Math.ceil(x1 / TILE) - 1);
+    const r0 = Math.max(0, Math.floor(y0 / TILE)), r1 = Math.min(g.rows - 1, Math.ceil(y1 / TILE) - 1);
+    if (c0 > c1 || r0 > r1) return null;
+    const cx = (((sl + cw / 2 - left) / k) * d + ox) / TILE, cy = (((st + ch / 2 - top) / k) * d + oy) / TILE;
+    return { c0, c1, r0, r1, cx, cy };
   }
 
-  private async drawTile(n: number, t: { c: number; r: number }): Promise<void> {
+  /** The next block of cells page n lacks within `margin` of the screen — the missing cell nearest the middle, with
+   *  the missing cells along its row and the rows above and below missing the same — or null. */
+  private missingBlock(n: number, margin: number): Block | null {
+    const s = this.shown.get(n); if (!s?.pic) return null;
+    const R = this.cellRange(n, margin); if (!R) return null;
+    const has = (c: number, r: number) => s.tileAt === this.scale && !!s.tiles?.has(`${c}:${r}`);
+    let bc = -1, br = -1, bd = Infinity;
+    for (let r = R.r0; r <= R.r1; r++) for (let c = R.c0; c <= R.c1; c++) {
+      if (has(c, r)) continue;
+      const dd = (r + 0.5 - R.cy) ** 2 + (c + 0.5 - R.cx) ** 2; if (dd < bd) { bd = dd; bc = c; br = r; }
+    }
+    if (bc < 0) return null;
+    const most = Math.max(1, Math.floor(MAX_BLOCK / (TILE * TILE)));
+    let a = bc, b = bc;
+    for (let grew = true; grew && b - a + 1 < most;) { grew = false; if (b < R.c1 && !has(b + 1, br)) { b++; grew = true; } if (b - a + 1 < most && a > R.c0 && !has(a - 1, br)) { a--; grew = true; } }
+    const rowMissing = (r: number) => { for (let c = a; c <= b; c++) if (has(c, r)) return false; return true; };
+    const rows = Math.max(1, Math.floor(most / (b - a + 1)));
+    let t = br, u = br;
+    for (let grew = true; grew && u - t + 1 < rows;) { grew = false; if (u < R.r1 && rowMissing(u + 1)) { u++; grew = true; } if (u - t + 1 < rows && t > R.r0 && rowMissing(t - 1)) { t--; grew = true; } }
+    return { c0: a, c1: b, r0: t, r1: u };
+  }
+
+  /** Tiles well out of view are let go of (a canvas holding several cells, once none of them is near). */
+  private trimTiles(n: number): void {
+    const s = this.shown.get(n); if (!s?.tiles?.size) return;
+    const R = this.cellRange(n, AROUND);
+    const keep = new Set<HTMLCanvasElement>();
+    for (const [key, cv] of s.tiles) {
+      const [c, r] = key.split(':').map(Number);
+      if (R && c >= R.c0 - 1 && c <= R.c1 + 1 && r >= R.r0 - 1 && r <= R.r1 + 1) keep.add(cv); else s.tiles.delete(key);
+    }
+    s.tileLayer?.querySelectorAll('canvas').forEach((cv) => { if (!keep.has(cv)) { cv.remove(); cv.width = cv.height = 0; } });
+  }
+
+  /** Page n is drawn at the screen's resolution where it is seen (and `margin` around it). */
+  private covered(n: number, margin: number): boolean { return !this.missingBlock(n, margin); }
+
+  /** A page in view whose picture is too coarse for the zoom (stretched from another zoom, or a zoomed page's whole
+   *  picture) gets the part on the screen drawn first: one pass for what is seen, before the whole page. */
+  private needsView(n: number): boolean {
+    const s = this.shown.get(n); if (!s?.pic) return false;
+    const sz = this.sizeFor(n, 2);
+    if (sz.tiled) return true;
+    if (s.level === 2 && s.at === this.scale) return false;
+    if (s.pic.width >= sz.px * 0.9) return false;   // (a sharper picture shrunk: sharp already)
+    // (Most of the page on the screen: the whole page is hardly more to draw.)
+    const R = this.cellRange(n, 0); if (!R) return false;
+    const g = this.tileGrid(n);
+    return (R.c1 - R.c0 + 1) * (R.r1 - R.r0 + 1) < g.cols * g.rows * 0.6;
+  }
+
+  private async drawBlock(n: number, b: Block, fast = false): Promise<void> {
+    this.lastFast = fast;
     const s = this.shown.get(n); if (!s) return;
     const scale = this.scale; const g = this.tileGrid(n); const d = this.device();
-    const x = t.c * TILE, y = t.r * TILE, w = Math.min(TILE, g.W - x), hh = Math.min(TILE, g.H - y);
-    const key = `${scale}:${t.c}:${t.r}`;
+    const x = b.c0 * TILE, y = b.r0 * TILE, w = Math.min((b.c1 + 1) * TILE, g.W) - x, hh = Math.min((b.r1 + 1) * TILE, g.H) - y;
+    if (w <= 0 || hh <= 0) return;
     const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = hh; canvas.className = 'pdf-tile';
+    if (fast) offscreen(canvas);   // (the screen's part after a zoom: see draw())
     Object.assign(canvas.style, { left: `${x / d}px`, top: `${y / d}px`, width: `${w / d}px`, height: `${hh / d}px` });
     let ok = false;
     if (this.native) ok = await this.nativeDraw(n, canvas, { width: g.W, tileX: x, tileY: y, tileW: w, tileH: hh }).catch(() => false);
     if (!ok) {
       let page: PDFPageProxy; try { page = await this.doc.getPage(n); } catch { return; }
-      const ctx = canvas.getContext('2d', { alpha: false })!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, hh);
-      const task = page.render({ canvas, canvasContext: ctx, viewport: page.getViewport({ scale: scale * d, offsetX: -x, offsetY: -y }) });
-      this.running = { n, cancel: () => task.cancel() };
-      try { await task.promise; ok = true; } catch { ok = false; } finally { this.running = null; }
+      // (Two fingers down or a button's zoom begun while the page was fetched: not drawn — it is for the size before.)
+      if (scale === this.scale && this.shown.get(n) === s && !this.pinching && !this.zoomHold) {
+        const ctx = canvas.getContext('2d', { alpha: false })!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, hh);
+        const task = page.render({ canvas, canvasContext: ctx, viewport: page.getViewport({ scale: scale * d, offsetX: -x, offsetY: -y }) });
+        this.running = { n, cancel: () => task.cancel() };
+        try { await task.promise; ok = true; } catch { ok = false; } finally { this.running = null; }
+      }
     }
-    if (!ok || this.destroyed || this.shown.get(n) !== s || scale !== this.scale) return;
-    if (!s.tileLayer) { s.tileLayer = h('div', { class: 'pdf-tiles' }); s.pic?.after(s.tileLayer); }
-    (s.tiles ??= new Map()).set(key, canvas);
+    if (!ok || this.destroyed || this.shown.get(n) !== s || scale !== this.scale) { canvas.width = canvas.height = 0; return; }
+    if (s.tileAt !== scale) { this.clearTiles(s); s.tileAt = scale; }
+    if (!s.tileLayer) { s.tileLayer = h('div', { class: 'pdf-tiles' }); const under = s.old ?? s.pic; if (under) under.after(s.tileLayer); else this.sheets[n - 1].prepend(s.tileLayer); }
+    s.tiles ??= new Map();
+    for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) s.tiles.set(`${c}:${r}`, canvas);
     s.tileLayer.append(canvas);
-    if (!this.missingTile(n)) this.pages[n - 1].dataset.res = 'full';
+    // (The cells it covered again: a canvas left holding none of them is let go of.)
+    const used = new Set(s.tiles.values()); s.tileLayer.querySelectorAll('canvas').forEach((cv) => { if (!used.has(cv)) { cv.remove(); cv.width = cv.height = 0; } });
+    // The screen covered at the new zoom: the old zoom's tiles under it go.
+    if (s.old && this.covered(n, 0)) this.clearOld(s);
+    if (this.covered(n, 0)) s.viewDone = true;
+    this.markRes(n);
+    this.trimMemory();
   }
 
-  private dropTiles(s: Shown): void { s.tiles?.forEach((c) => c.remove()); s.tiles?.clear(); }
+  /** The page's `data-res`: "full" when it is drawn at the screen's resolution for the zoom where it is seen. */
+  private markRes(n: number): void {
+    const s = this.shown.get(n); if (!s) return;
+    const sharp = s.level === 2 && s.at === this.scale && (!this.sizeFor(n, 2).tiled || this.covered(n, AROUND));
+    this.pages[n - 1].dataset.res = sharp ? 'full' : 'low';
+  }
+
+  /** The tiles of the zoom (all its cells); the layer stays. */
+  private clearTiles(s: Shown): void {
+    s.tileLayer?.querySelectorAll('canvas').forEach((c) => { c.remove(); c.width = c.height = 0; });
+    s.tiles?.clear(); s.viewDone = false;
+  }
+  /** The old zoom's tiles. */
+  private clearOld(s: Shown): void {
+    if (!s.old) return; s.old.querySelectorAll('canvas').forEach((c) => { c.width = c.height = 0; }); s.old.remove(); s.old = undefined;
+  }
+  private dropTiles(s: Shown): void { this.clearTiles(s); this.clearOld(s); }
+
+  /** The pixels held in the pages' canvases, kept under a ceiling (Android's web view gives up near 16 million): the
+   *  tiles of pages off the screen go first, then the pictures of the pages farthest from it. */
+  private budget(): number { return deviceMemory() <= 4 ? 8e6 : 12e6; }
+  private pxOf(s: Shown): number { let v = (s.pic?.width ?? 0) * (s.pic?.height ?? 0); for (const l of [s.tileLayer, s.old]) l?.querySelectorAll('canvas').forEach((c) => { v += c.width * c.height; }); return v; }
+  private pxHeld(): number { let v = 0; for (const s of this.shown.values()) v += this.pxOf(s); return v; }
+  private trimMemory(): void {
+    const budget = this.budget();
+    let total = this.pxHeld();
+    if (total <= budget) return;
+    // (Never the pages the drawing wants — those either side of the screen: let go of and drawn again, round and round.)
+    const far = [...this.shown.keys()].filter((n) => n < this.first || n > this.last).sort((a, b) => Math.max(this.first - b, b - this.last) - Math.max(this.first - a, a - this.last));
+    for (const n of far) { const s = this.shown.get(n)!; if (!s.tiles?.size && !s.old) continue; const before = this.pxOf(s); this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; total -= before - this.pxOf(s); if (total <= budget) return; }
+    for (const n of far) { if (n >= this.first - 2 && n <= this.last + 3) continue; total -= this.pxOf(this.shown.get(n)!); this.releasePage(n); if (total <= budget) return; }
+  }
 
   private async buildText(n: number): Promise<void> {
     const s = this.shown.get(n); if (!s) return;
@@ -881,7 +1017,7 @@ export class PdfViewer {
     // (A page far off the screen is skipped by the browser: what is taken off it is taken off as takeOff says.)
     const off = () => { this.give(s.pic); this.dropTiles(s); s.tileLayer?.remove(); el.querySelectorAll('.textLayer').forEach((c) => c.remove()); };
     if (this.destroyed) off(); else takeOff([el], off);
-    el.classList.remove('loading'); delete el.dataset.res;
+    el.classList.remove('loading', 'drawn'); delete el.dataset.res;
     this.shown.delete(n); this.released++;
     // (pdf.js lets go of what it kept to draw the page.)
     this.letGo(n);
@@ -919,7 +1055,16 @@ export class PdfViewer {
   /** The zoom changed: pictures stay (stretched) until redrawn; tiles and text layers belong to the old size. */
   private dropForScale(): void {
     takeOff([...this.shown.keys()].map((n) => this.pages[n - 1]), () => {
-      for (const [n, s] of this.shown) { this.dropTiles(s); s.tileLayer?.remove(); s.tileLayer = undefined; s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low'; }
+      for (const [n, s] of this.shown) {
+        // The tiles drawn for the zoom before stay, scaled to the new size, under the new ones until those cover the
+        // screen (a layer only partly drawn is dropped when an older one covering the screen is there).
+        if (s.tileLayer && s.tiles?.size && s.tileAt && (s.viewDone || !s.old)) {
+          this.clearOld(s); s.old = s.tileLayer; s.oldAt = s.tileAt; s.old.classList.add('old');
+        } else { this.clearTiles(s); s.tileLayer?.remove(); }
+        s.tileLayer = undefined; s.tiles = undefined; s.tileAt = undefined; s.viewDone = false;
+        if (s.old && s.oldAt) { s.old.style.transformOrigin = '0 0'; s.old.style.transform = `scale(${(this.scale / s.oldAt).toFixed(5)})`; }
+        s.textCancel?.(); s.text = undefined; this.pages[n - 1].dataset.res = 'low';
+      }
       this.inner.querySelectorAll('.textLayer').forEach((c) => c.remove());
     });
     // (Spare canvases are the old size: of no use again.)
@@ -952,7 +1097,9 @@ export class PdfViewer {
     // it — the picture slid 40 px off the fingers. The scroll's own moves are added back, so the picture holds.)
     let sl0 = 0, st0 = 0;
     const render = () => { this.inner.style.transform = `translate(${(dx + el.scrollLeft - sl0).toFixed(1)}px, ${(dy + el.scrollTop - st0).toFixed(1)}px) scale(${f.toFixed(4)})`; };
-    const onScrollWhile = () => { if (active) render(); };
+    // (One write a frame, however many moves come between two: only the compositor's transform changes.)
+    let raf = 0; const later = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (active) render(); }); };
+    const onScrollWhile = () => { if (active) later(); };
     // A touch's events go to the element it began on, and bubble from there: when that element leaves the page
     // mid-pinch — a text layer dropped by the zoom animation the pinch ended, or rebuilt — they no longer reach the
     // scroll, and the pinch hung there, stretched, its zoom lost. So while two fingers are down the fingers' own
@@ -971,10 +1118,12 @@ export class PdfViewer {
       const hi = 4;
       if (want < lo) want = lo - (lo - want) * 0.35; if (want > hi) want = hi + (want - hi) * 0.35;
       f = want / startScale; dx = mx - mx0; dy = my - my0;
-      render();
+      later();
     };
     const begin = (e: TouchEvent) => {
       this.settleZoom(); active = true; this.pinching = true; startDist = dist(e.touches); startScale = this.scale; f = 1; dx = dy = 0;
+      // (What was being drawn is for the size before: stopped, so the fingers' frames have the processor.)
+      this.running?.cancel();
       rect = el.getBoundingClientRect(); lo = minScale();
       // (A page still gliding from a fling is stopped where it is: the point under the fingers is taken from here.)
       el.scrollTo({ left: el.scrollLeft, top: el.scrollTop, behavior: 'instant' as ScrollBehavior });
@@ -990,7 +1139,7 @@ export class PdfViewer {
     };
     const finish = () => {
       if (!active) return;
-      active = false; this.pinching = false;
+      active = false; this.pinching = false; cancelAnimationFrame(raf); raf = 0;
       listen(false); targets = []; el.removeEventListener('scroll', onScrollWhile);
       const shown = startScale * f, target = Math.min(4, Math.max(lo, shown));
       this.inner.style.transform = ''; this.inner.style.transformOrigin = ''; this.inner.style.willChange = '';
@@ -1092,6 +1241,8 @@ export class PdfViewer {
   private settleZoom(): void { this.zoomAnim?.finish(); }
   /** Two fingers are on the page (the crop finder waits). */
   private pinching = false;
+  /** A button's or a double tap's zoom is animating (drawing waits for the new size). */
+  private zoomHold = false;
   /** When a zoom last moved the scroll itself. */
   private laidOutAt = 0;
   /** A short animated zoom (double tap, the zoom buttons): the picture scales with a transition, then the
@@ -1103,6 +1254,7 @@ export class PdfViewer {
     const f = target / this.scale;
     if (Math.abs(f - 1) < 0.001) return;
     const inner = this.inner;
+    this.zoomHold = true; this.running?.cancel();
     inner.style.transformOrigin = `${cx - inner.offsetLeft}px ${cy - inner.offsetTop}px`;
     inner.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
     inner.style.willChange = 'transform';
@@ -1113,6 +1265,7 @@ export class PdfViewer {
     const done = () => {
       if (this.zoomAnim !== anim) return; this.zoomAnim = null; cancelAnimationFrame(raf); window.clearTimeout(timer); inner.removeEventListener('transitionend', onEnd);
       inner.style.transition = ''; inner.style.transform = ''; inner.style.transformOrigin = ''; inner.style.willChange = '';
+      this.zoomHold = false;
       this.zoomAbout(target, cx, cy, vx, vy);
     };
     this.zoomAnim = anim; inner.addEventListener('transitionend', onEnd);
