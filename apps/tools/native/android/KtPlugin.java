@@ -483,7 +483,7 @@ public class KtPlugin extends Plugin {
             String path = call.getString("path", null), url = call.getString("url", null), mime = call.getString("mime", "video/*");
             Intent i = new Intent(Intent.ACTION_VIEW);
             if (path != null && !path.isEmpty()) { Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", fileOf(path)); i.setDataAndType(u, mime); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
-            else i.setDataAndType(Uri.parse(url), mime);
+            else { i.setDataAndType(Uri.parse(url), mime); if (url != null && url.startsWith("content:")) i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
             i.putExtra("title", call.getString("title", ""));
             Intent ch = Intent.createChooser(i, call.getString("title", "")); ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(ch); call.resolve();
         } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
@@ -1350,6 +1350,11 @@ public class KtPlugin extends Plugin {
     @PluginMethod public void mpvCommand(PluginCall call) { try { KtMpv.get().command(new org.json.JSONArray(call.getArray("args", new com.getcapacitor.JSArray()).toString())); call.resolve(); } catch (Exception e) { call.reject(e.getMessage()); } }
     @PluginMethod public void mpvSet(PluginCall call) { try { KtMpv.get().set(call.getString("name", ""), call.getString("value", "")); call.resolve(); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }
     @PluginMethod public void mpvGet(PluginCall call) { try { JSObject r = new JSObject(); r.put("value", KtMpv.get().getString(call.getString("name", ""))); call.resolve(r); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage())); } }
+    /** A frame saved for real (KtMpv.shot): its name and where it went, or the reason it could not be saved. */
+    @PluginMethod public void mpvShot(PluginCall call) {
+        final String name = call.getString("name", "frame.png"); final boolean subs = Boolean.TRUE.equals(call.getBoolean("subs", false));
+        bg.execute(() -> { try { call.resolve(JSObject.fromJSONObject(KtMpv.get().shot(getContext(), name, subs))); } catch (Throwable e) { call.reject(String.valueOf(e.getMessage() == null ? e : e.getMessage())); } });
+    }
     @PluginMethod public void mpvClose(PluginCall call) { KtMpv.get().close(); call.resolve(); }
     /** The player's sound for tracks a web view cannot decode: ffmpeg turning them into AAC as they play (needs the ffmpeg pack). */
     @PluginMethod public void audioUrl(PluginCall call) { run(call, () -> { if (KtPacks.installed(getContext(), "ffmpeg") == null) throw new Exception("pack:ffmpeg"); JSObject r = new JSObject(); String src = call.getString("src", ""); if (src == null || src.isEmpty()) throw new Exception("src"); r.put("url", engine().stream().audioUrl(src)); call.resolve(r); }); }

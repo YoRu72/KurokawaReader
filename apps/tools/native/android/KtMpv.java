@@ -69,8 +69,9 @@ final class KtMpv {
         MPVLib.setOptionString("demuxer-max-bytes", String.valueOf(megs << 20));
         MPVLib.setOptionString("demuxer-max-back-bytes", String.valueOf(megs << 20));
         MPVLib.setOptionString("cache", "yes");
-        // (Saved frames — the player's «save the frame», its screenshots — where the phone keeps pictures.)
-        try { File shots = new File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "Kurokawa"); shots.mkdirs(); MPVLib.setOptionString("screenshot-directory", shots.getAbsolutePath()); MPVLib.setOptionString("screenshot-template", "%F-%wH.%wM.%wS.%wT"); } catch (Throwable ignored) {}
+        // (Saved frames go through shot() below: written by mpv into the app's own cache — always writable — and then
+        // handed to the phone's picture store. A public folder written by path fails silently on Android 11+.)
+        MPVLib.setOptionString("screenshot-template", "%F-%wH.%wM.%wS.%wT");
         MPVLib.setOptionString("network-timeout", "60");
         try { android.view.Display d = a.getWindowManager().getDefaultDisplay(); MPVLib.setOptionString("display-fps-override", String.valueOf(d.getRefreshRate())); } catch (Throwable ignored) {}
         MPVLib.init();
@@ -152,6 +153,52 @@ final class KtMpv {
         if (!created) throw new IllegalStateException("mpv not started");
         String[] a = new String[args.length()]; for (int i = 0; i < a.length; i++) a[i] = args.getString(i);
         MPVLib.command(a);
+    }
+    /** The frame on screen saved as a picture: mpv writes it (with the subtitles drawn on it, or the picture alone)
+     *  into the cache, then it is published to Pictures/Kurokawa — by MediaStore on Android 10+, as a file before.
+     *  Returns { name, uri, path? }; throws with a readable reason when anything fails (nothing is said «saved» unknown). */
+    org.json.JSONObject shot(android.content.Context ctx, String name, boolean subs) throws Exception {
+        if (!created) throw new IllegalStateException("mpv not started");
+        String clean = (name == null ? "" : name).replaceAll("[\\\\/:*?\"<>|\\u0000-\\u001f]+", " ").trim();
+        if (clean.isEmpty()) clean = "frame.png";
+        boolean jpg = clean.toLowerCase(java.util.Locale.ROOT).matches(".*\\.jpe?g$");
+        if (!jpg && !clean.toLowerCase(java.util.Locale.ROOT).endsWith(".png")) clean = clean + ".png";
+        String mime = jpg ? "image/jpeg" : "image/png";
+        File dir = new File(ctx.getCacheDir(), "shots"); dir.mkdirs();
+        File tmp = new File(dir, System.currentTimeMillis() + (jpg ? ".jpg" : ".png"));
+        try {
+            MPVLib.command(new String[] { "screenshot-to-file", tmp.getAbsolutePath(), subs ? "subtitles" : "video" });
+            if (!tmp.isFile() || tmp.length() == 0) throw new java.io.IOException("mpv wrote no picture");
+            org.json.JSONObject r = new org.json.JSONObject();
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.content.ContentResolver cr = ctx.getContentResolver();
+                android.content.ContentValues cv = new android.content.ContentValues();
+                cv.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, clean);
+                cv.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime);
+                cv.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/Kurokawa");
+                cv.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
+                android.net.Uri u = cr.insert(android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY), cv);
+                if (u == null) throw new java.io.IOException("the picture store refused the file");
+                try (java.io.InputStream in = new java.io.FileInputStream(tmp); java.io.OutputStream out = cr.openOutputStream(u)) {
+                    if (out == null) throw new java.io.IOException("the picture store gave no place to write");
+                    byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) out.write(b, 0, n);
+                } catch (Exception e) { try { cr.delete(u, null, null); } catch (Throwable ignored) {} throw e; }
+                cv.clear(); cv.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0); cr.update(u, cv, null, null);
+                // (The name the store really gave — it adds « (1)» when one is already there.)
+                String given = clean;
+                try (android.database.Cursor c = cr.query(u, new String[] { android.provider.MediaStore.MediaColumns.DISPLAY_NAME }, null, null, null)) { if (c != null && c.moveToFirst() && c.getString(0) != null) given = c.getString(0); } catch (Throwable ignored) {}
+                r.put("name", given); r.put("uri", u.toString()); r.put("mime", mime);
+            } else {
+                File pics = new File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "Kurokawa");
+                if (!pics.isDirectory() && !pics.mkdirs()) throw new java.io.IOException("cannot make " + pics.getAbsolutePath());
+                File f = new File(pics, clean); String stem = clean.replaceAll("\\.[^.]+$", ""), ext = clean.substring(stem.length());
+                for (int i = 1; f.exists(); i++) f = new File(pics, stem + " (" + i + ")" + ext);
+                try (java.io.InputStream in = new java.io.FileInputStream(tmp); java.io.OutputStream out = new java.io.FileOutputStream(f)) { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) out.write(b, 0, n); }
+                try { android.media.MediaScannerConnection.scanFile(ctx, new String[] { f.getAbsolutePath() }, new String[] { mime }, null); } catch (Throwable ignored) {}
+                r.put("name", f.getName()); r.put("path", f.getAbsolutePath()); r.put("mime", mime);
+            }
+            return r;
+        } finally { tmp.delete(); }
     }
     void set(String name, String value) { if (created) MPVLib.setPropertyString(name, value); }
     String getString(String name) { return created ? MPVLib.getPropertyString(name) : null; }

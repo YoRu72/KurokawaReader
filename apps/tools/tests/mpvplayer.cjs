@@ -28,6 +28,8 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       mpvSet: async (o) => { window.__calls.push(['set', o.name, o.value]); }, mpvCommand: async (o) => { window.__calls.push(['cmd', ...o.args]); }, mpvClose: async () => { window.__calls.push(['close']); },
       localUrl: async (o) => ({ url: 'http://127.0.0.1:9/file?p=' + encodeURIComponent(o.path) }), streamUrl: async () => ({ url: 'http://127.0.0.1:9/t1/0' }),
       openWith: async (o) => { window.__calls.push(['openWith', o.path || o.url]); },
+      // (A saved frame: the name and the place the phone answers, or its refusal when the test asks for one.)
+      mpvShot: async (o) => { window.__calls.push(['shot', o.name, o.subs]); if (window.__shotFail) throw new Error(window.__shotFail); return { name: o.name, uri: 'content://media/external/images/media/77', mime: /jpg$/.test(o.name) ? 'image/jpeg' : 'image/png' }; },
     }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
     if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); const st = JSON.parse(localStorage.getItem('kt.settings') || '{}'); st.playerWith = 'app'; st.subLangs = ['ar', 'en']; localStorage.setItem('kt.settings', JSON.stringify(st));
@@ -75,9 +77,31 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   await p.evaluate(() => document.querySelector('.kt-bottom button[aria-label="Tools"]').click()); await p.waitForSelector('.kt-tool-grid'); await p.locator('.kt-tool', { hasText: 'Frame navigation' }).click(); await p.waitForSelector('.kt-framepad'); await p.click('.kt-framepad .kt-fp-info'); await p.waitForSelector('.kt-frame-row');
   await p.locator('.kt-frame-row .chip', { hasText: '+1' }).first().click(); await p.waitForTimeout(100); c = await calls();
   check('a frame on → mpv frame-step', c.some((x) => x[0] === 'cmd' && x[1] === 'frame-step'));
-  await p.locator('.sheet button', { hasText: 'Save the frame' }).click(); await p.waitForTimeout(100); c = await calls();
-  check('the frame saved → mpv screenshot', c.some((x) => x[0] === 'cmd' && x[1] === 'screenshot'));
+  await p.locator('.sheet button', { hasText: 'Save the frame' }).click(); await p.waitForTimeout(150); c = await calls();
+  check('the frame saved → mpv asked for a real file (not the old screenshot command)', c.some((x) => x[0] === 'shot') && !c.some((x) => x[0] === 'cmd' && x[1] === 'screenshot'));
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()));
+  // The camera: the «Save frame» pad — the subtitles switch, PNG/JPG, saved with the phone's own answer, and a refusal said.
+  await p.evaluate(() => document.querySelectorAll('.kt-framepad').forEach((x) => x.remove()));
+  await p.evaluate(() => [...document.querySelectorAll('.kt-tools button')].find((b) => b.getAttribute('aria-label') === 'Screenshot').click());
+  await p.waitForSelector('.kt-shotpad', { timeout: 3000 });
+  check('the camera opens the Save frame pad', !!(await p.$('.kt-shotpad .kt-fp-title')) && /Save frame/.test(await p.textContent('.kt-shotpad .kt-fp-title')));
+  const n0 = (await calls()).length;
+  await p.locator('.kt-shotpad button', { hasText: 'Save picture' }).click(); await p.waitForTimeout(200); c = (await calls()).slice(n0);
+  const shot1 = c.find((x) => x[0] === 'shot'); console.log('shot:', JSON.stringify(shot1));
+  check('saved without subtitles as PNG (the remembered default)', shot1 && shot1[2] === false && /^Film \d\d\.\d\d\.\d{3}\.png$/.test(shot1[1]));
+  check('«Saved: name» with an Open action, said only after the phone answered', await p.evaluate(() => { const t = document.querySelector('.toast'); return !!t && /Saved: «⁨Film .*\.png⁩»/.test(t.textContent) && !!t.querySelector('.toast-act'); }));
+  await p.click('.toast .toast-act'); await p.waitForTimeout(100); c = await calls();
+  check('Open hands the picture\'s address to the phone', c.some((x) => x[0] === 'openWith' && x[1] === 'content://media/external/images/media/77'));
+  await p.click('.kt-shotpad .kt-fp-switch input'); await p.locator('.kt-shotpad .kt-fp-segbtn', { hasText: 'JPG' }).click();
+  await p.locator('.kt-shotpad button', { hasText: 'Save picture' }).click(); await p.waitForTimeout(200); c = await calls(); const shot2 = c.filter((x) => x[0] === 'shot').pop();
+  check('with subtitles and JPG once switched (remembered)', shot2 && shot2[2] === true && /\.jpg$/.test(shot2[1]));
+  await p.evaluate(() => { window.__shotFail = 'the picture store refused the file'; });
+  await p.keyboard.press('s'); await p.waitForTimeout(250); c = await calls();
+  check('S saves at once; a refusal is said with its reason, never «saved»', c.filter((x) => x[0] === 'shot').length === 4 && await p.evaluate(() => { const t = document.querySelector('.toast.error'); return !!t && /not saved: the picture store refused the file/.test(t.textContent); }));
+  await p.evaluate(() => { window.__shotFail = ''; });
+  await p.screenshot({ path: process.env.SHOT_PAD || '/dev/null' }).catch(() => undefined);
+  await p.click('.kt-shotpad .kt-fp-head button[aria-label="Close"]'); await p.waitForTimeout(100);
+  check('the pad closes', !(await p.$('.kt-shotpad')));
   await p.keyboard.press('Escape'); await p.waitForTimeout(300); c = await calls();
   check('closed: mpv let go, the page opaque again', c.some((x) => x[0] === 'close') && !(await p.evaluate(() => document.documentElement.classList.contains('kt-mpv-on'))));
   check('no page errors', errors.length === 0 || (console.log(errors), false));

@@ -32,6 +32,8 @@ export interface PlayerPrefs {
   /** Saved frames carry the subtitle on screen (drawn in the player's style). */
   /** Saved frames with the subtitles drawn on (their own fonts): off unless asked. */
   frameSubs: boolean;
+  /** Saved frames as PNG (exact) or JPG (smaller). */
+  frameFormat?: 'png' | 'jpg';
   /** Playback: repeat (off, all, one), closing at the end, the brightness kept between videos, playing on in the
    *  background, chapter skip by double tap. */
   repeat: 'off' | 'all' | 'one'; closeAtEnd: boolean; rememberBrightness: boolean; brightness: number; backgroundPlay: boolean;
@@ -68,7 +70,7 @@ export const DEFAULT_PREFS: PlayerPrefs = {
   skipAmount: 85, autoSkip: 'button', skipSponsor: 'button', skipSilence: false, heatmap: true, filters: { ...DEFAULT_FILTERS }, ambient: false, showRemaining: false, doubleTapArea: 35, shuffle: false,
   tapLeft: 'seek', tapCentre: 'playpause', tapRight: 'seek', swapSides: false, swipeSensitivity: 100, holdSwipeSpeed: true, rememberHoldSpeed: false,
   controlsTimeout: 3.5, seekPreview: true, showClock: false,
-  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'frames', 'rotation', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false, frameSubs: false,
+  bar: ['skip', 'speed', 'ab', 'cut', 'aspect', 'shot', 'frames', 'rotation', 'pip'], accent: '', seekStyle: 'thin', controlsDim: 55, showTitle: true, chapterMarks: true, controlSize: 'normal', hwdec: 'hw', deband: false, gpuNext: false, audioLangs: [], audioChannels: 'auto', autoSubs: false, frameSubs: false, frameFormat: 'png',
   repeat: 'off', closeAtEnd: false, rememberBrightness: false, brightness: 1, backgroundPlay: true, pipOnLeave: true,
   topTools: ['chapters'], portraitTools: [], seekBelowButtons: false, singleTap: 'controls', panZoomed: true, subtitleSwipe: true, rememberAspect: true, autoQueueFolder: true, immersive: 'both', reduceMotion: false, glassControls: false, alwaysDark: true, mpvConf: '',
   subItalic: false, subOutline: '#000000', subOutlineWidth: 2, subBgOpacity: 60, sub2Pos: 10, sub2Size: 85, subSpeed: 1, subForceLtr: false,

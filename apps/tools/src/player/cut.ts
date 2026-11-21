@@ -1,14 +1,17 @@
-// A/B → a clip: fast (stream copy from the keyframe before A) or exact (re-encoded), with the subtitles burnt
+// A/B → a clip: fast (stream copy from the keyframe before A) or exact (re-encoded); the subtitles left out, burnt
 // in — the loaded track written out shifted to the clip's start, the video's own fonts dumped beside it, and
-// ffmpeg's `subtitles=` filter (libass) drawing them; the result lands in Movies/KUROKAWACLIPS on a phone, the download folder on a computer.
+// ffmpeg's `subtitles=` filter (libass) drawing them — or kept as a track of their own in an MKV, their fonts attached;
+// the result lands in Movies/KUROKAWACLIPS on a phone, the download folder on a computer. The argument lists are
+// built by clipArgs (pure, checked by the tests).
 import { h, toast, openSheet, pickButton, icon } from '../ui/dom';
 import { t, formatBytes, localDigits } from '../i18n';
 import { ktPlugin } from '../native';
 import { getSettings } from '../settings';
 import { shiftAss, cuesToSrt, type Cue } from './subs';
 import type { PlayerSource } from './player';
+import { clipArgs, clipOutExt, pictureSub, shiftCues, forceStyle, cuesToStyledAss, type ClipPlan, type ClipSubs } from './clipArgs';
 
-export interface CutJob { src: PlayerSource; a: number; b: number; duration: number; subtitle?: { name: string; ass?: string; cues: Cue[]; delay: number; /** How the player draws it (SRT/VTT): font family, size (% of the player's), colours, outline, bold, position. */ style?: { font: string; size: number; color: string; outline: string; outlineWidth: number; bold: boolean; italic: boolean; pos: number; background: string } }; video: HTMLVideoElement; fps?: number; setRange?(a: number, b: number): void }
+export interface CutJob { src: PlayerSource; a: number; b: number; duration: number; subtitle?: { name: string; lang?: string; ass?: string; cues: Cue[]; delay: number; /** How the player draws it (SRT/VTT): font family, size (% of the player's), colours, outline, bold, position. */ style?: { font: string; size: number; color: string; outline: string; outlineWidth: number; bold: boolean; italic: boolean; pos: number; background: string } }; video: HTMLVideoElement; fps?: number; setRange?(a: number, b: number): void; /** The file's own subtitle track shown by mpv (its number among the file's subtitle streams), kept as a track when asked. */ embeddedSub?: { index: number; name: string; codec?: string } }
 type FfProgress = { id: string; time: number; size?: number; speed?: number; done?: boolean; error?: string };
 type Bridge = { ffmpeg(o: { id: string; args: string[]; cwd?: string }): Promise<{ code: number; log: string }>; ffmpegCancel(id: string): Promise<void>; ffprobe(path: string): Promise<unknown>; writeTemp(name: string, text: string): Promise<string>; writeTempBytes?(o: { name: string; b64: string; sub?: string }): Promise<string>; onFfmpegProgress(cb: (p: FfProgress) => void): () => void; ffmpegAvailable(): Promise<{ ok: boolean; path?: string; why?: string }> };
 type Plugin = { ffmpeg(o: { id: string; args: string[] }): Promise<{ code: number; log: string }>; ffmpegCancel(o: { id: string }): Promise<void>; ffprobe(o: { path: string }): Promise<{ json: string }>; writeTemp(o: { name: string; text: string }): Promise<{ path: string }>; writeTempBytes?(o: { name: string; b64: string; sub?: string }): Promise<{ path: string }>; clipsDir(): Promise<{ dir: string }>; addListener(ev: 'ffmpegProgress', fn: (p: FfProgress) => void): Promise<{ remove(): void }> };
@@ -23,7 +26,7 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
   if (!canCut()) { sh.body.append(h('p', { class: 'hint' }, t('cutUnavailable'))); return; }
   const input = job.src.localPath ?? job.src.url; const isLocal = !!job.src.localPath || /^https?:\/\/127\.0\.0\.1/.test(job.src.url);
   if (!isLocal) sh.body.append(h('p', { class: 'hint' }, t('cutRemoteNote')));
-  let a = job.a, b = job.b; let mode: 'fast' | 'exact' = 'fast'; let burn = false; /* (Asked for, not assumed: off until ticked.) */ let res: '' | '1080' | '720' | '480' = ''; let codec: 'h264' | 'hevc' = 'h264'; let quality = 23;
+  let a = job.a, b = job.b; let mode: 'fast' | 'exact' = 'fast'; let subs: ClipSubs = 'none'; /* (Asked for, not assumed: none until chosen.) */ const hasSubs = !!job.subtitle || !!job.embeddedSub; let res: '' | '1080' | '720' | '480' = ''; let codec: 'h264' | 'hevc' = 'h264'; let quality = 23;
   // REX Player's clip sheet: what comes out (a video, its sound, a GIF), the sound kept or not.
   let kind: 'video' | 'audio' | 'gif' = 'video'; let mute = false; let gifWidth = 480; let gifFps = 12;
   const D = job.duration || job.video.duration || Math.max(b, 1); const frame = 1 / (job.fps || 30);
@@ -52,9 +55,18 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
       h('button', { type: 'button', class: 'chip small', title: t('cutShow'), onclick: () => show(which === 'a' ? a : b) }, '▶')));
   const preview = h('button', { type: 'button', class: 'btn tonal small', onclick: () => { job.setRange?.(a, b); show(a); void job.video.play().catch(() => undefined); sh.close(); toast(t('cutPreviewing')); } }, icon('play'), t('cutPreview'));
   sh.body.append(h('div', { class: 'cut-head' }, track, h('div', { class: 'row' }, h('span', null, t('cutLength')), badge)), endRow('a', aIn), endRow('b', bIn), h('div', { class: 'row-actions' }, preview));
-  const modePick = pickButton(t('cutMode'), [['fast', t('cutFast')], ['exact', t('cutExact')]], mode, (v) => { mode = v; if (v === 'fast') { burn = false; burnBox.checked = false; } draw(); }, t('close'));
-  const burnBox = h('input', { type: 'checkbox', checked: burn, disabled: !job.subtitle, onchange: () => { burn = burnBox.checked; if (burn) { mode = 'exact'; modePick.setValue('exact'); } draw(); } }) as HTMLInputElement;
-  // (The player's own look — its font, size, colours and outline — kept on the burnt subtitle, with that font's file carried along for libass.)
+  const modePick = pickButton(t('cutMode'), [['fast', t('cutFast')], ['exact', t('cutExact')]], mode, (v) => { mode = v; if (v === 'fast' && subs === 'burn') { subs = 'none'; subsPick.setValue('none'); } draw(); }, t('close'));
+  // The subtitles: none, burnt into the picture (re-encoded, so the exact mode), or kept as a track of their own (MKV,
+  // their fonts carried along — the fast mode keeps it too). A file's own track shown by mpv can only be kept.
+  const subsChoices: [ClipSubs, string][] = [['none', t('cutSubsNone')], ...(job.subtitle ? [['burn', t('cutSubsBurn')] as [ClipSubs, string]] : []), ['soft', t('cutSubsSoft')]];
+  const subsPick = pickButton(t('cutSubs'), subsChoices, subs, (v) => { subs = v; if (v === 'burn' && mode !== 'exact') { mode = 'exact'; modePick.setValue('exact'); } draw(); }, t('close'));
+  if (!hasSubs) subsPick.disabled = true;
+  // (Kept as a track: in MP4 by default — what plays everywhere —, or MKV for the same look; a subtitle of pictures only in MKV.)
+  const picOnly = !job.subtitle && pictureSub(job.embeddedSub?.codec); let softBox: 'mp4' | 'mkv' = picOnly ? 'mkv' : 'mp4';
+  const boxPick = pickButton(t('cutSubsBox'), picOnly ? [['mkv', 'MKV']] : [['mp4', 'MP4'], ['mkv', 'MKV']], softBox, (v) => { softBox = v; draw(); }, t('close'));
+  if (picOnly) boxPick.disabled = true;
+  const subsHint = () => !hasSubs ? t('cutNoSubtitle') : subs === 'burn' ? t('cutSubsBurnHint') : subs === 'soft' ? (picOnly ? t('cutSubsPictureMkv') : softBox === 'mp4' ? t('cutSubsSoftMp4Hint') : t('cutSubsSoftHint')) : (job.subtitle?.name ?? job.embeddedSub?.name ?? '');
+  // (The player's own look — its font, size, colours and outline — kept on the subtitle, with that font's file carried along.)
   let styled = true; const styledBox = h('input', { type: 'checkbox', checked: true, disabled: !job.subtitle, onchange: () => { styled = styledBox.checked; } }) as HTMLInputElement;
   const opts = h('div', { class: 'cut-opts' });
   const draw = () => {
@@ -62,8 +74,9 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
       h('div', { class: 'row' }, h('span', null, t('cutKind')), pickButton(t('cutKind'), [['video', t('cutKindVideo')], ['audio', t('cutKindAudio')], ['gif', 'GIF']], kind, (v) => { kind = v; draw(); }, t('close'))),
       ...(kind === 'video' ? [
         h('div', { class: 'row' }, h('span', null, t('cutMode'), h('small', { class: 'src' }, mode === 'fast' ? t('cutFastHint') : t('cutExactHint'))), modePick),
-        h('label', { class: 'row switch-row' }, h('span', null, t('cutBurn'), h('small', { class: 'src' }, job.subtitle ? job.subtitle.name : t('cutNoSubtitle'))), burnBox),
-        h('label', { class: 'row switch-row' }, h('span', null, t('cutBurnStyled'), h('small', { class: 'src' }, t('cutBurnStyledHint'))), styledBox),
+        h('div', { class: 'row cut-subs-row' }, h('span', null, t('cutSubs'), h('small', { class: 'src', dir: 'auto' }, subsHint())), subsPick),
+        ...(subs === 'soft' ? [h('div', { class: 'row' }, h('span', null, t('cutSubsBox')), boxPick)] : []),
+        ...((subs === 'burn' || (subs === 'soft' && softBox === 'mkv')) && job.subtitle && !job.subtitle.ass ? [h('label', { class: 'row switch-row' }, h('span', null, t('cutBurnStyled'), h('small', { class: 'src' }, t('cutBurnStyledHint'))), styledBox)] : []),
         h('label', { class: 'row switch-row' }, h('span', null, t('cutMute')), h('input', { type: 'checkbox', checked: mute, onchange: (e: Event) => { mute = (e.target as HTMLInputElement).checked; } })),
         ...(mode === 'exact' ? [h('div', { class: 'row' }, h('span', null, t('resolution')), pickButton(t('resolution'), [['', t('cutSourceRes')], ['1080', '1080p'], ['720', '720p'], ['480', '480p']], res, (v) => { res = v; }, t('close'))), h('div', { class: 'row' }, h('span', null, t('codec')), pickButton(t('codec'), [['h264', 'H.264'], ['hevc', 'HEVC']], codec, (v) => { codec = v; }, t('close'))), h('div', { class: 'row' }, h('span', null, t('quality'), h('small', { class: 'src' }, t('qualityHint'))), h('input', { type: 'range', min: '16', max: '32', step: '1', value: String(quality), oninput: (e: Event) => { quality = Number((e.target as HTMLInputElement).value); } }))] : [])] : []),
       ...(kind === 'audio' ? [h('p', { class: 'hint' }, t('cutAudioHint'))] : []),
@@ -82,60 +95,64 @@ export async function cutClipSheet(job: CutJob): Promise<void> {
       const d = desk(); const p = plug(); const android = !d;
       const outDir = d ? `${(getSettings().downloadDir || (await window.kurokawaTools!.defaultDir())).replace(/[\\/]$/, '')}` : (await p!.clipsDir()).dir;
       const base = job.src.name.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, ' ').trim(); const inExt = (/\.(\w+)$/.exec(job.src.name)?.[1] ?? 'mkv').toLowerCase();
-      if (kind !== 'video') burn = false;
-      const outExt = kind === 'audio' ? 'm4a' : kind === 'gif' ? 'gif' : mode === 'fast' ? (['mkv', 'mp4', 'webm', 'mov', 'ts'].includes(inExt) ? (inExt === 'mov' ? 'mp4' : inExt) : 'mkv') : 'mp4';
-      const out = `${outDir}/${base} ${fmt(a).replace(/[:.]/g, '')}-${fmt(b).replace(/[:.]/g, '')}${burn ? ' sub' : ''}.${outExt}`;
-      const args: string[] = ['-y', '-hide_banner', '-nostdin']; let encoders: string[][] = [[]];
-      if (job.src.headers) for (const [k, v] of Object.entries(job.src.headers)) args.push('-headers', `${k}: ${v}\r\n`);
+      if (kind !== 'video' || !hasSubs) subs = 'none';
+      const outExt = clipOutExt(kind, mode, subs, inExt, softBox);
+      const out = `${outDir}/${base} ${fmt(a).replace(/[:.]/g, '')}-${fmt(b).replace(/[:.]/g, '')}${subs === 'burn' ? ' sub' : subs === 'soft' ? ' subs' : ''}.${outExt}`;
       // (A fast cut copies the picture as it is, so it can only begin on a keyframe: begun at A itself, players show
       // nothing until the next one — seconds late. It begins on the keyframe at or before A instead, said so.)
       let from = a;
       if (kind === 'video' && mode === 'fast') { const kf = await keyframeBefore(input, a, job.src.headers).catch(() => null); if (kf !== null && kf <= a + 0.05) from = kf; }
-      // (Asked a hair after the keyframe: at its very time, a container's coarse index lands on the keyframe before it.)
-      args.push('-ss', fmt(from < a ? from + 0.05 : from), '-to', fmt(b), '-i', input);
-      if (kind === 'audio') args.push('-vn', '-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
-      else if (kind === 'gif') args.push('-an', '-vf', `fps=${gifFps},scale=${gifWidth}:-2:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4`, '-loop', '0');
-      else if (mode === 'fast') { args.push('-map', mute ? '0:v' : '0', '-c', 'copy', '-avoid_negative_ts', 'make_zero'); if (mute) args.push('-an'); if (outExt === 'mp4') args.push('-map', '-0:t?', '-c:s', 'mov_text', '-movflags', '+faststart'); }
-      else {
-        const vf: string[] = []; if (res) vf.push(`scale=-2:${res}`);
-        if (burn && job.subtitle) {
-          const content = job.subtitle.ass ? shiftAss(job.subtitle.ass, -from + job.subtitle.delay) : cuesToSrt(job.subtitle.cues.map((c) => ({ ...c, start: c.start - from + job.subtitle!.delay, end: c.end - from + job.subtitle!.delay })).filter((c) => c.end > 0));
-          const subName = job.subtitle.ass ? 'clip.ass' : 'clip.srt'; const subPath = d ? await d.writeTemp(subName, content) : (await p!.writeTemp({ name: subName, text: content })).path;
-          const fontsDir = subPath.replace(/[\\/][^\\/]*$/, '/fonts');
-          // The video's attached fonts, dumped beside the subtitle so libass finds them.
-          if (isLocal) { const probe = d ? await d.ffprobe(input).catch(() => null) : await p!.ffprobe({ path: input }).then((r) => JSON.parse(r.json)).catch(() => null); const streams = ((probe as { streams?: { index: number; codec_type: string; tags?: { filename?: string } }[] } | null)?.streams ?? []).filter((s) => s.codec_type === 'attachment' && s.tags?.filename); if (streams.length) { const dumpArgs = ['-y', '-hide_banner', '-nostdin']; streams.forEach((s, i) => dumpArgs.push(`-dump_attachment:${s.index}`, `${fontsDir}/${s.tags!.filename!.replace(/[\\/]/g, '_') || `font${i}`}`)); dumpArgs.push('-i', input); line.textContent = t('cutDumpingFonts'); await (d ? d.ffmpeg({ id: `${id}-fonts`, args: dumpArgs }) : p!.ffmpeg({ id: `${id}-fonts`, args: dumpArgs })).catch(() => undefined); } }
-          // The fonts the subtitle names (an ASS's styles), and the player's own font for a plain SRT/VTT, written beside it;
-          // the player's style handed to libass as force_style so the clip looks as the screen did.
-          let force = '';
-          try {
-            const F = await import('./fonts'); const want = job.subtitle.ass ? F.fontsUsed(job.subtitle.ass) : (styled && job.subtitle.style?.font ? [job.subtitle.style.font] : []);
-            if (want.length) { const files = await F.fontFiles(want); for (const [fam, bytes] of Object.entries(files)) { let b64 = ''; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); b64 = btoa(b64); const name = `${fam.replace(/[^\w.-]+/g, '_')}.ttf`; if (d?.writeTempBytes) await d.writeTempBytes({ name, b64, sub: 'fonts' }); else if (p?.writeTempBytes) await p.writeTempBytes({ name, b64, sub: 'fonts' }); } }
-            if (styled && !job.subtitle.ass && job.subtitle.style) {
-              const st = job.subtitle.style; const bgr = (hex: string) => { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex); return m ? `&H00${m[3]}${m[2]}${m[1]}&`.toUpperCase() : '&H00FFFFFF&'; };
-              const h0 = job.video.videoHeight || 720; const size = Math.round((h0 / 18) * (st.size / 100));
-              force = [st.font ? `FontName=${st.font.replace(/[,:']/g, '')}` : '', `FontSize=${size}`, `PrimaryColour=${bgr(st.color)}`, `OutlineColour=${bgr(st.outline)}`, `Outline=${Math.max(0, Math.round(st.outlineWidth * (h0 / 720) * 10) / 10)}`, `Bold=${st.bold ? -1 : 0}`, `Italic=${st.italic ? -1 : 0}`, `Alignment=2`, `MarginV=${Math.round(h0 * 0.04 + (h0 * 0.9 * (100 - st.pos)) / 100)}`, st.background === 'box' ? 'BorderStyle=4,BackColour=&H80000000&' : ''].filter(Boolean).join(',');
-            }
-          } catch { /* the default look then */ }
-          vf.push(`subtitles='${esc(subPath)}':fontsdir='${esc(fontsDir)}'${force ? `:force_style='${esc(force)}'` : ''}`);
+      const plan: ClipPlan = { input, a, b, from, out, kind, mode, subs, mute, res, codec, quality, gifWidth, gifFps, android, headers: job.src.headers, softBox };
+      const writeText = async (name: string, text: string) => (d ? await d.writeTemp(name, text) : (await p!.writeTemp({ name, text })).path);
+      /** Font files written beside the subtitle (in «fonts»), each with its path and type, for libass or to attach. */
+      const writeFonts = async (fams: string[]): Promise<{ path: string; mime: string }[]> => {
+        const outF: { path: string; mime: string }[] = []; if (!fams.length) return outF;
+        const F = await import('./fonts'); const files = await F.fontFiles(fams);
+        for (const [fam, bytes] of Object.entries(files)) {
+          let b64 = ''; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); b64 = btoa(b64);
+          const otf = bytes[0] === 0x4f && bytes[1] === 0x54 && bytes[2] === 0x54 && bytes[3] === 0x4f; const name = `${fam.replace(/[^\w.-]+/g, '_')}.${otf ? 'otf' : 'ttf'}`;
+          const path = d?.writeTempBytes ? await d.writeTempBytes({ name, b64, sub: 'fonts' }) : p?.writeTempBytes ? (await p.writeTempBytes({ name, b64, sub: 'fonts' })).path : '';
+          if (path) outF.push({ path, mime: otf ? 'application/vnd.ms-opentype' : 'application/x-truetype-font' });
         }
-        const mbps = Math.round(Math.max(1.5, 14 - quality * 0.4) * (res === '480' ? 0.35 : res === '720' ? 0.6 : 1));
-        // (The encoders to try in turn: on a phone its own (MediaCodec, which most phones take only in NV12), then x264,
-        // then ffmpeg's built-in MPEG-4 — one of them is always there.)
-        encoders = android
-          ? [['-vf', [...vf, 'format=nv12'].join(','), '-c:v', codec === 'hevc' ? 'hevc_mediacodec' : 'h264_mediacodec', '-bitrate_mode', 'vbr', '-b:v', `${mbps}M`, '-g', '60'],
-            ['-vf', [...vf, 'format=yuv420p'].join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(quality)],
-            ['-vf', [...vf, 'format=yuv420p'].join(','), '-c:v', 'mpeg4', '-q:v', '3']]
-          : [['-vf', [...vf, 'format=yuv420p'].join(','), '-c:v', codec === 'hevc' ? 'libx265' : 'libx264', '-preset', 'medium', '-crf', String(quality)]];
-        args.push('-map', '0:v:0'); if (!mute) args.push('-map', '0:a:0?'); else args.push('-an');
-        if (!mute) args.push('-c:a', 'aac', '-b:a', '192k'); args.push('-movflags', '+faststart');
+        return outF;
+      };
+      const probeStreams = async () => { if (!isLocal) return null; const probe = d ? await d.ffprobe(input).catch(() => null) : await p!.ffprobe({ path: input }).then((r) => JSON.parse(r.json)).catch(() => null); return ((probe as { streams?: { index: number; codec_type: string; tags?: { filename?: string } }[] } | null)?.streams ?? null); };
+      const h0 = job.video.videoHeight || 720;
+      if (subs === 'burn' && job.subtitle) {
+        const content = job.subtitle.ass ? shiftAss(job.subtitle.ass, -from + job.subtitle.delay) : cuesToSrt(shiftCues(job.subtitle.cues, -from + job.subtitle.delay));
+        const subName = job.subtitle.ass ? 'clip.ass' : 'clip.srt'; const subPath = await writeText(subName, content);
+        const fontsDir = subPath.replace(/[\\/][^\\/]*$/, '/fonts');
+        // The video's attached fonts, dumped beside the subtitle so libass finds them.
+        const streams = (await probeStreams())?.filter((s) => s.codec_type === 'attachment' && s.tags?.filename) ?? [];
+        if (streams.length) { const dumpArgs = ['-y', '-hide_banner', '-nostdin']; streams.forEach((s, i) => dumpArgs.push(`-dump_attachment:${s.index}`, `${fontsDir}/${s.tags!.filename!.replace(/[\\/]/g, '_') || `font${i}`}`)); dumpArgs.push('-i', input); line.textContent = t('cutDumpingFonts'); await (d ? d.ffmpeg({ id: `${id}-fonts`, args: dumpArgs }) : p!.ffmpeg({ id: `${id}-fonts`, args: dumpArgs })).catch(() => undefined); }
+        // The fonts the subtitle names (an ASS's styles), and the player's own font for a plain SRT/VTT, written beside it;
+        // the player's style handed to libass as force_style so the clip looks as the screen did.
+        let force = '';
+        try {
+          const F = await import('./fonts'); await writeFonts(job.subtitle.ass ? F.fontsUsed(job.subtitle.ass) : (styled && job.subtitle.style?.font ? [job.subtitle.style.font] : []));
+          if (styled && !job.subtitle.ass && job.subtitle.style) force = forceStyle(job.subtitle.style, h0);
+        } catch { /* the default look then */ }
+        plan.burnFilter = `subtitles='${esc(subPath)}':fontsdir='${esc(fontsDir)}'${force ? `:force_style='${esc(force)}'` : ''}`;
+      } else if (subs === 'soft') {
+        // Kept as a track: the loaded subtitle written for the clip (a plain one turned into ASS in the player's look when
+        // asked, so it shows the same elsewhere), or the file's own track copied; the video's fonts and the ones it
+        // uses carried in the MKV.
+        const streams = await probeStreams(); plan.videoAttachments = streams ? streams.filter((s) => s.codec_type === 'attachment').length : undefined;
+        if (job.subtitle) {
+          const shifted = shiftCues(job.subtitle.cues, -from + job.subtitle.delay);
+          const asAss = !!job.subtitle.ass || (softBox === 'mkv' && styled && !!job.subtitle.style);
+          const content = job.subtitle.ass ? shiftAss(job.subtitle.ass, -from + job.subtitle.delay) : asAss ? cuesToStyledAss(shifted, job.subtitle.style!, h0) : cuesToSrt(shifted);
+          plan.softFile = await writeText(asAss ? 'clip-track.ass' : 'clip-track.srt', content); plan.softTitle = job.subtitle.name; plan.softLang = job.subtitle.lang;
+          if (softBox === 'mkv') try { const F = await import('./fonts'); plan.attach = await writeFonts(job.subtitle.ass ? F.fontsUsed(job.subtitle.ass) : (styled && job.subtitle.style?.font ? [job.subtitle.style.font] : [])); } catch { plan.attach = []; }
+        } else if (job.embeddedSub) { plan.softTrack = job.embeddedSub.index; plan.softTitle = job.embeddedSub.name; }
       }
-      args.push('-progress', 'pipe:1', '-nostats', out);
+      const attempts = clipArgs(plan);
       // (From here the clip is cut in the background: the sheet closes, the progress is in a card and the
       // notifications, and it goes on wherever you go; a pop-up says when it is done.)
       const mime = kind === 'audio' ? 'audio/*' : kind === 'gif' ? 'image/gif' : 'video/*';
       const { runClip } = await import('./clipJob');
       sh.close();
-      void runClip({ id, title: out.split(/[\\/]/).pop()!, out, mime, total: b - from, attempts: encoders.map((enc) => { const i = args.lastIndexOf('-progress'); return [...args.slice(0, i), ...enc, ...args.slice(i)]; }), from: from < a - 0.05 ? from : undefined, srcName: job.src.name });
+      void runClip({ id, title: out.split(/[\\/]/).pop()!, out, mime, total: b - from, attempts, from: from < a - 0.05 ? from : undefined, srcName: job.src.name });
       return;
     } catch (e) { const m = String((e as Error).message ?? e); sh.body.replaceChildren(h('p', { class: 'empty small' }, /cancel|stopped|255/i.test(m) ? t('cancelled') : m)); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); void cutClipSheet(job); } }, t('back'))); }
   }
@@ -166,3 +183,4 @@ export function keyframeFromCrc(text: string, t: number): number | null {
   }
   return best;
 }
+

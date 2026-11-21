@@ -108,7 +108,10 @@ export function openPlayer(src: PlayerSource): void {
     h('div', { class: 'kt-row' }, timeNow, bar, timeEnd),
     h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('undo', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('rotate', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null, volBox,
       h('span', { class: 'grow' }), customBox, toolBox, iconButton('grid', t('playerTools'), () => toolsSheet()), iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
-  const centre = h('div', { class: 'kt-centre' }, h('div', { class: 'kt-flash' })); const flash = centre.firstChild as HTMLElement;
+  // The big round play/pause in the middle (phone and computer): shown and hidden with the controls; only its own
+  // disc takes a tap — the rest of the middle stays the stage's, for taps, double-taps and swipes.
+  const bigPlay = h('button', { type: 'button', class: 'kt-bigplay', 'aria-label': t('play'), title: t('play'), onclick: (e: Event) => { e.stopPropagation(); toggle(); showControls(); } }, icon('play'));
+  const centre = h('div', { class: 'kt-centre' }, h('div', { class: 'kt-flash' }), bigPlay); const flash = centre.firstChild as HTMLElement;
   const ripple = h('div', { class: 'kt-ripple', hidden: true });
   const unlockBtn = iconButton('lock', t('unlock'), () => lock(false)); unlockBtn.classList.add('kt-unlock'); unlockBtn.hidden = true;
   const root = h('div', { class: 'player-view kt-player', role: 'dialog', 'aria-label': src.name }, stage, centre, ripple, top, bottom, unlockBtn, skipOp);
@@ -186,6 +189,8 @@ export function openPlayer(src: PlayerSource): void {
     measureFps(); void checkSound(); window.setTimeout(() => void autoSubs(), 4000);
   }, { once: true });
   video.addEventListener('timeupdate', onTime); video.addEventListener('progress', drawBuffer);
+  const paintBig = () => { const on = !video.paused; bigPlay.replaceChildren(icon(on ? 'pause' : 'play')); bigPlay.setAttribute('aria-label', on ? t('pause') : t('play')); bigPlay.title = on ? t('pause') : t('play'); bigPlay.classList.toggle('playing', on); };
+  video.addEventListener('play', paintBig); video.addEventListener('pause', paintBig);
   video.addEventListener('play', () => { playBtn.replaceChildren(icon('pause')); playBtn.setAttribute('aria-label', t('pause')); scheduleHide(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   video.addEventListener('pause', () => { playBtn.replaceChildren(icon('play')); playBtn.setAttribute('aria-label', t('play')); showControls(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
   video.addEventListener('ended', () => {
@@ -284,7 +289,8 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- controls visibility
   function showControls() { controlsOn = true; root.classList.remove('hide-ui'); scheduleHide(); }
-  function hideControls() { if (video.paused || locked) return; controlsOn = false; root.classList.add('hide-ui'); preview?.hide(); }
+  // (The timer never hides them while paused; a tap does — `byTap`.)
+  function hideControls(byTap = false) { if ((video.paused && byTap !== true) || locked) return; controlsOn = false; root.classList.add('hide-ui'); preview?.hide(); }
   function scheduleHide() { window.clearTimeout(hideTimer); hideTimer = window.setTimeout(hideControls, Math.max(1, getPrefs().controlsTimeout) * 1000); }
   function lock(on: boolean) { locked = on; root.classList.toggle('locked', on); unlockBtn.hidden = !on; if (on) { root.classList.add('hide-ui'); setTimeout(() => { unlockBtn.classList.add('faded'); }, 2500); } else { unlockBtn.classList.remove('faded'); showControls(); } }
   scheduleHide();
@@ -336,8 +342,11 @@ export function openPlayer(src: PlayerSource): void {
     else if (gesture === 'volume') { const v = Math.max(0, Math.min(1 + P.volumeBoost / 100, start.vol - dy / (r.height * 0.6) * 1.5)); setVolume(v); flashText(`🔊 ${localDigits(Math.round(v * 100))}%`); }
     else if (gesture === 'bright') { brightness = Math.max(0.2, Math.min(1.6, start.br - dy / (r.height * 0.6) * 1.2)); applyFilters(); flashText(`☀ ${localDigits(Math.round(brightness * 100))}%`); if (getPrefs().rememberBrightness) updatePrefs({ brightness }); }
   });
+  let bigTimer = 0;
+  /** The big button shown for a moment over hidden controls (a tap that played or paused). */
+  const flashBig = () => { root.classList.add('big-flash'); window.clearTimeout(bigTimer); bigTimer = window.setTimeout(() => root.classList.remove('big-flash'), 700); };
   const runTap = (a: TapAction, side: number) => {
-    if (a === 'playpause') { toggle(); flashText(video.paused ? '❚❚' : '▶'); return; }
+    if (a === 'playpause') { toggle(); flashBig(); return; }
     if (a === 'chapter') { chapterStep(side < 0 ? -1 : 1); return; }
     if (a !== 'seek') return;
     // Seeks add up while the same side is tapped again (+10, +20, +30…), shown in a ripple on that side.
@@ -361,7 +370,11 @@ export function openPlayer(src: PlayerSource): void {
     const action = (z: number): TapAction => (z < 0 ? getPrefs().tapLeft : z > 0 ? getPrefs().tapRight : getPrefs().tapCentre);
     if (seekAcc.total && zone === seekAcc.side && action(zone) === 'seek') { window.clearTimeout(tapTimer); lastTap = now; runTap('seek', side); return; }
     if (now - lastTap < 300 && zone === lastTapZone) { window.clearTimeout(tapTimer); lastTap = now; runTap(action(zone), zone === 0 ? 0 : side); return; }
-    lastTap = now; lastTapZone = zone; tapTimer = window.setTimeout(() => { if (getPrefs().singleTap === 'playpause' && zone === 0) { if (video.paused) void video.play(); else video.pause(); return; } if (controlsOn) hideControls(); else showControls(); }, 280);
+    lastTap = now; lastTapZone = zone; tapTimer = window.setTimeout(() => {
+      // («Tap plays/pauses»: a tap in the middle plays or pauses — the big button flashes there —; a tap on either side
+      // still shows or hides the controls, paused or not. Otherwise any tap shows them, or hides them, paused too.)
+      if (getPrefs().singleTap === 'playpause' && zone === 0) { toggle(); flashBig(); return; }
+      if (controlsOn) hideControls(true); else showControls(); }, 280);
   };
   stage.addEventListener('pointerup', endPointer); stage.addEventListener('pointercancel', endPointer);
   stage.addEventListener('wheel', (e) => { if (locked) return; e.preventDefault(); if (e.ctrlKey) { zoom = Math.max(1, Math.min(6, zoom - e.deltaY / 500)); applyTransform(); } else setVolume(Math.max(0, Math.min(1 + P.volumeBoost / 100, (video.volume * boost) - e.deltaY / 1000))); showControls(); }, { passive: false });
@@ -388,7 +401,7 @@ export function openPlayer(src: PlayerSource): void {
     else if (k === 'f') void fullscreen(); else if (k === 'm') { video.muted = !video.muted; flashText(video.muted ? '🔇' : '🔊'); } else if (k === '.' || k === 'e') frameStep(1); else if (k === ',') frameStep(-1);
     else if (k === '>' || k === ']' || k === '+') setSpeed(speed + (k === '+' ? 0.05 : 0.1)); else if (k === '<' || k === '[' || k === '-') setSpeed(speed - (k === '-' ? 0.05 : 0.1)); else if (k === '=') setSpeed(1);
     else if (k === 'Escape') { e.preventDefault(); if (isFull()) void exitFull(); else close(); }
-    else if (k === 'a') abPress(); else if (k === 's' || k === 'S') screenshot(); else if (k === 'v') cycleSub(); else if (k === 'b') cycleAudio(); else if (k === 'c') cycleCrop(); else if (k === 'r') { rotate = ((rotate + 90) % 360) as 0; applyTransform(); flashText(`${localDigits(rotate)}°`); }
+    else if (k === 'a') abPress(); else if (k === 's' || k === 'S') void saveFrame(); else if (k === 'v') cycleSub(); else if (k === 'b') cycleAudio(); else if (k === 'c') cycleCrop(); else if (k === 'r') { rotate = ((rotate + 90) % 360) as 0; applyTransform(); flashText(`${localDigits(rotate)}°`); }
     else if (k === 'z' || k === 'g') nudgeSub(-0.1); else if (k === 'x' || k === 'h') nudgeSub(0.1); else if (k === 'H') syncMark('heard'); else if (k === 'J') syncMark('seen');
     else if (k === 'n') neighbour(1); else if (k === 'p') neighbour(-1); else if (k === 't') flashText(`${fmtTime(video.currentTime)} / ${fmtTime(video.duration)}`, true); else if (k === 'i') infoSheet(); else if (k === 'B') addBookmark();
     else if (k === '?') shortcutsSheet(); else if (k === 'Home') seekTo(0); else if (k === 'End') seekTo((video.duration || 1) - 1); else if (/^[0-9]$/.test(k) && video.duration) seekTo(video.duration * Number(k) / 10);
@@ -418,9 +431,35 @@ export function openPlayer(src: PlayerSource): void {
   const stageRo = new ResizeObserver(() => layoutPicture()); stageRo.observe(stage); video.addEventListener('resize', () => layoutPicture()); video.addEventListener('loadedmetadata', () => layoutPicture());
   function applyAspect() { layoutPicture(); if (applyAspectMpv()) return; video.style.objectFit = aspect === 'fill' ? 'cover' : aspect === 'stretch' ? 'fill' : 'contain'; video.style.aspectRatio = ''; video.style.width = video.style.height = ''; if (/^\d/.test(aspect)) { const [w, hh] = aspect.split(':').map(Number); const r = stage.getBoundingClientRect(); const stageR = r.width / r.height, want = w / hh; if (want > stageR) { video.style.width = '100%'; video.style.height = `${(stageR / want) * 100}%`; } else { video.style.height = '100%'; video.style.width = `${(want / stageR) * 100}%`; } video.style.objectFit = 'fill'; } aspectBtn.textContent = aspectName(aspect); }
   function cycleCrop() { crop = CROPS[(CROPS.indexOf(crop) + 1) % CROPS.length]; applyTransform(); flashText(crop ? `${t('cropTo')} ${localDigits(crop)}` : t('cropOff')); }
-  function screenshotMpv(): boolean { if (!mpv) return false; mpv.screenshot(getPrefs().frameSubs === true); toast(t('screenshotSaved')); return true; }
-  function screenshot() { if (screenshotMpv()) return; try { const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0); // (The subtitles only when asked: an ASS track as libass drew it, in its own fonts; an SRT in the player's look.)
-    if (getPrefs().frameSubs === true) { if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); else drawCuesOn(g, c.width, c.height); } c.toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${src.name.replace(/\.[^.]+$/, '')} ${fmtTime(video.currentTime).replace(/:/g, '.')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('screenshotSaved')); }, 'image/png'); } catch { toast(t('screenshotFailed'), 'error'); } }
+  // ---- saved frames: the camera opens the «Save frame» pad; S and a long press on the camera save at once, with the
+  // choices remembered there (subtitles drawn on or not, PNG or JPG). Said «saved» only once it really is, with its name.
+  const shotExt = (): 'png' | 'jpg' => (getPrefs().frameFormat === 'jpg' ? 'jpg' : 'png');
+  const shotName = (ext: string) => { const s0 = video.currentTime; const hh = Math.floor(s0 / 3600), m = Math.floor((s0 % 3600) / 60), sec = Math.floor(s0 % 60), ms = Math.floor((s0 % 1) * 1000); return `${src.name.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'frame'} ${hh ? `${hh}.` : ''}${String(m).padStart(2, '0')}.${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}.${ext}`; };
+  const shotFail = (e: unknown) => toast(t('frameSaveFailed', { why: String((e as Error)?.message ?? e).slice(0, 200) || '?' }), 'error', 8000);
+  let shotBusy = false;
+  async function saveFrame(): Promise<void> {
+    if (shotBusy) return; const subs = getPrefs().frameSubs === true; const ext = shotExt(); const name = shotName(ext);
+    if (mpv) {
+      shotBusy = true;
+      try {
+        const r = await mpv.screenshot({ subs, name });
+        const pl = ktPlugin() as unknown as { openWith?(o: { path?: string; url?: string; mime: string; title: string }): Promise<void> } | null;
+        const where = r.path ? { path: r.path } : r.uri ? { url: r.uri } : null;
+        toast(t('frameSavedName', { name: r.name }), 'info', 7000, pl?.openWith && where ? { label: t('open'), run: () => void pl.openWith!({ ...where, mime: r.mime ?? 'image/*', title: r.name }).catch(shotFail) } : undefined);
+      } catch (e) { shotFail(e); } finally { shotBusy = false; }
+      return;
+    }
+    try {
+      const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; if (!c.width || !c.height) throw new Error(t('screenshotFailed'));
+      const g = c.getContext('2d')!; g.filter = video.style.filter.replace(/url\([^)]*\)/g, '') || 'none'; g.drawImage(video, 0, 0);
+      // (The subtitles only when asked: an ASS track as libass drew it, in its own fonts; an SRT in the player's look.)
+      if (subs) { if (ass) g.drawImage(assCanvas, 0, 0, c.width, c.height); else drawCuesOn(g, c.width, c.height); }
+      if (ext === 'jpg') { g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); }
+      c.toBlob((b) => { if (!b) { shotFail(t('screenshotFailed')); return; } const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast(t('frameSavedName', { name })); }, ext === 'jpg' ? 'image/jpeg' : 'image/png', 0.92);
+    } catch { toast(t('screenshotFailed'), 'error'); }
+  }
+  /** The camera: the «Save frame» pad on the video. */
+  function screenshot() { toggleFramePad(true, 'shot'); }
   /** The lines on screen now (an SRT/VTT the page draws) painted onto a saved frame in the player's style. */
   function drawCuesOn(g: CanvasRenderingContext2D, w: number, hh: number): void {
     if (!current || current.ass) return; const now = cuesAt(current.cues, (video.currentTime - subDelay) * getPrefs().subSpeed); if (!now.length) return;
@@ -1028,7 +1067,7 @@ export function openPlayer(src: PlayerSource): void {
     { id: 'speed', icon: 'gauge', label: t('playbackSpeed'), run: () => speedSheet() },
     { id: 'decoder', icon: 'chip', label: t('toolDecoder'), run: () => decoderSheet() },
     { id: 'rotation', icon: 'screenRotate', label: t('toolScreenRotation'), run: () => cycleOrientation() },
-    { id: 'frames', icon: 'aperture', label: t('toolFrames'), run: () => toggleFramePad(), on: () => !!framePad },
+    { id: 'frames', icon: 'aperture', label: t('toolFrames'), run: () => toggleFramePad(!(framePad && padMode === 'frames')), on: () => !!framePad && padMode === 'frames' },
     { id: 'zoom', icon: 'zoomIn', label: t('toolZoom'), run: () => zoomSheet() },
     { id: 'pip', icon: 'mini', label: t('pip'), run: () => void pip(), show: () => nativePip() || ('pictureInPictureEnabled' in document && document.pictureInPictureEnabled && !mpv) },
     { id: 'aspect', icon: 'aspect', label: t('toolAspect'), run: () => cycleAspect() },
@@ -1047,7 +1086,7 @@ export function openPlayer(src: PlayerSource): void {
     { id: 'sleep', icon: 'timer', label: t('sleepTimer'), run: () => sleepSheet(), on: () => !!sleepAt },
     { id: 'quality', icon: 'hq', label: t('toolQuality'), run: () => qualitySheet() },
     { id: 'cut', icon: 'scissors', label: t('toolCut'), run: () => void cutSheet() },
-    { id: 'shot', icon: 'camera', label: t('screenshot'), run: () => screenshot() },
+    { id: 'shot', icon: 'camera', label: t('screenshot'), run: () => toggleFramePad(!(framePad && padMode === 'shot'), 'shot'), on: () => !!framePad && padMode === 'shot' },
     { id: 'bookmark', icon: 'bookmarkAdd', label: t('addBookmark'), run: () => addBookmark() },
     { id: 'jump', icon: 'clock', label: t('jumpToTime'), run: () => jumpSheet() },
     { id: 'info', icon: 'info', label: t('mediaInfo'), run: () => infoSheet() },
@@ -1060,6 +1099,8 @@ export function openPlayer(src: PlayerSource): void {
     // (The bar's own speed, A/B, aspect and skip buttons kept: their labels follow what they set.)
     if (!withLabel && x.id === 'speed') return speedBtn; if (!withLabel && x.id === 'ab') return abBtn; if (!withLabel && x.id === 'aspect') return aspectBtn; if (!withLabel && x.id === 'skip') return skipBtn;
     const b = h('button', { type: 'button', class: (withLabel ? 'kt-tool' : 'icon-btn') + (x.on?.() ? ' on' : ''), title: x.label, 'aria-label': x.label, 'aria-pressed': x.on ? String(!!x.on()) : null, onclick: () => x.run() }, x.text ? h('b', { class: 'kt-tool-text' }, x.text) : icon(x.icon), withLabel ? h('span', null, x.label) : null);
+    // (The camera held: the frame saved at once, with the pad's remembered choices.)
+    if (x.id === 'shot' && !withLabel) onLongPress(b, () => void saveFrame());
     return b;
   }
   function drawTools() {
@@ -1102,14 +1143,39 @@ export function openPlayer(src: PlayerSource): void {
    *  saved as a picture, made A or B of the cut. */
   // ---- REX Player's floating frame controls: on the video while switched on — a frame back, the frame saved, a frame
   // on, A, clear, B and cut —, so stepping through frames needs no menu each time (the full sheet: a tap on the time).
-  let framePad: HTMLElement | null = null; let padPaint: (() => void) | null = null;
-  function toggleFramePad(on = !framePad) {
-    framePad?.remove(); framePad = null; if (padPaint) video.removeEventListener('seeked', padPaint); padPaint = null; drawTools(); if (!on) return;
-    video.pause(); const rate = () => fps || 30;
-    const info = h('button', { type: 'button', class: 'kt-fp-info', dir: 'ltr', onclick: () => frameSheet() });
+  let framePad: HTMLElement | null = null; let padPaint: (() => void) | null = null; let padMode: 'frames' | 'shot' = 'frames'; let repeatTimer = 0;
+  const stopRepeat = () => { window.clearTimeout(repeatTimer); window.clearInterval(repeatTimer); repeatTimer = 0; };
+  /** The pad on the video: `frames` (REX Player's frame controls) or `shot` — the «Save frame» pad: a frame back or on
+   *  (held: on and on), a second back or on, the exact time, the subtitles drawn on or not, PNG or JPG, the picture
+   *  saved, or a clip begun at this frame. The paused video itself is the preview. */
+  function toggleFramePad(on = !framePad, mode: 'frames' | 'shot' = 'frames') {
+    stopRepeat(); framePad?.remove(); framePad = null; if (padPaint) video.removeEventListener('seeked', padPaint); padPaint = null; drawTools(); if (!on) return;
+    padMode = mode; video.pause(); const rate = () => fps || 30;
+    const info = h('button', { type: 'button', class: 'kt-fp-info', dir: 'ltr', title: t('toolFrames'), onclick: () => frameSheet() });
     const paint = () => { info.textContent = `${fmtTime(video.currentTime)}.${String(Math.floor((video.currentTime % 1) * 1000)).padStart(3, '0')} · ${t('frameShort')} ${localDigits(Math.round(video.currentTime * rate()))}`; };
     const step = (n: number) => { video.pause(); if (mpv && Math.abs(n) === 1) { mpv.command(n > 0 ? 'frame-step' : 'frame-back-step'); window.setTimeout(paint, 250); return; } seekTo(Math.max(0, video.currentTime + n / rate())); window.setTimeout(paint, 200); };
     const btn = (ic: string, label: string, fn: () => void, text?: string) => { const b = h('button', { type: 'button', class: 'kt-fp-btn', 'aria-label': label, title: label, onclick: (e: Event) => { e.stopPropagation(); fn(); } }, text ? h('b', null, text) : icon(ic)); return b; };
+    if (mode === 'shot') {
+      // (Held: a step at once, then on and on until let go; a key's Enter or Space is a single step.)
+      const held = (ic: string, label: string, fn: () => void, text?: string) => { const b = h('button', { type: 'button', class: 'kt-fp-btn', 'aria-label': label, title: label, onclick: (e: MouseEvent) => { e.stopPropagation(); if (!e.detail) fn(); } }, text ? h('b', null, text) : icon(ic));
+        b.addEventListener('pointerdown', (e) => { e.stopPropagation(); stopRepeat(); fn(); repeatTimer = window.setTimeout(() => { repeatTimer = window.setInterval(fn, 110); }, 420); });
+        for (const ev of ['pointerup', 'pointercancel', 'pointerleave'] as const) b.addEventListener(ev, stopRepeat); return b; };
+      const secStep = (d: number) => { video.pause(); seekTo(Math.max(0, video.currentTime + d)); window.setTimeout(paint, 200); };
+      const subsSw = h('input', { type: 'checkbox', checked: getPrefs().frameSubs === true, 'aria-label': t('frameSubsSwitch'), onchange: () => updatePrefs({ frameSubs: subsSw.checked }) }) as HTMLInputElement;
+      const seg = h('div', { class: 'kt-fp-seg', role: 'group', 'aria-label': t('frameFormat') });
+      const drawSeg = () => seg.replaceChildren(...(['png', 'jpg'] as const).map((f) => h('button', { type: 'button', class: 'kt-fp-segbtn' + (shotExt() === f ? ' on' : ''), 'aria-pressed': String(shotExt() === f), onclick: (e: Event) => { e.stopPropagation(); updatePrefs({ frameFormat: f }); drawSeg(); } }, f.toUpperCase())));
+      drawSeg();
+      framePad = h('div', { class: 'kt-framepad kt-shotpad', role: 'group', 'aria-label': t('frameSaveTitle'), onpointerdown: (e: Event) => e.stopPropagation(), onclick: (e: Event) => e.stopPropagation() },
+        h('div', { class: 'kt-fp-head' }, h('b', { class: 'kt-fp-title grow' }, t('frameSaveTitle')), info, btn('close', t('close'), () => toggleFramePad(false))),
+        h('div', { class: 'kt-fp-row kt-fp-nav', dir: 'ltr' }, held('', t('back1s'), () => secStep(-1), '−1s'), held('rewind', t('frameBack'), () => step(-1)), held('fastForward', t('frameForward'), () => step(1)), held('', t('forward1s'), () => secStep(1), '+1s')),
+        h('label', { class: 'switch-row kt-fp-switch' }, h('span', null, t('frameSubsSwitch'), h('small', null, t('frameSubsSwitchHint'))), subsSw),
+        h('div', { class: 'kt-fp-line' }, h('span', null, t('frameFormat')), seg),
+        h('div', { class: 'kt-fp-acts' },
+          h('button', { type: 'button', class: 'btn primary small', onclick: (e: Event) => { e.stopPropagation(); void saveFrame(); } }, icon('camera'), h('span', null, t('frameSavePicture'))),
+          h('button', { type: 'button', class: 'btn tonal small', onclick: (e: Event) => { e.stopPropagation(); const at = video.currentTime; toggleFramePad(false); void cutSheet(at); } }, icon('scissors'), h('span', null, t('frameClipHere')))),
+        h('small', { class: 'kt-fp-hint' }, t('frameQuickHint')));
+      root.append(framePad); paint(); padPaint = paint; video.addEventListener('seeked', paint); drawTools(); return;
+    }
     const back = btn('rewind', t('frameBack'), () => step(-1)); const fwd = btn('fastForward', t('frameForward'), () => step(1));
     onLongPress(back, () => step(-10)); onLongPress(fwd, () => step(10));
     // (Saved frames with the subtitles on them — in their own fonts — or the picture alone: off unless turned on here.)
@@ -1117,7 +1183,7 @@ export function openPlayer(src: PlayerSource): void {
     subsBtn.classList.toggle('on', getPrefs().frameSubs === true); subsBtn.setAttribute('aria-pressed', String(getPrefs().frameSubs === true));
     framePad = h('div', { class: 'kt-framepad', onpointerdown: (e: Event) => e.stopPropagation(), onclick: (e: Event) => e.stopPropagation() },
       info,
-      h('div', { class: 'kt-fp-row' }, back, btn('camera', t('frameSave'), () => screenshot()), fwd, subsBtn, btn('close', t('close'), () => toggleFramePad(false))),
+      h('div', { class: 'kt-fp-row' }, back, btn('camera', t('frameSave'), () => void saveFrame()), fwd, subsBtn, btn('close', t('close'), () => toggleFramePad(false))),
       h('div', { class: 'kt-fp-row' },
         btn('', t('framePointA'), () => { abA = video.currentTime; flashText(`A ${fmtTime(abA)}`); drawMarks(); }, 'A'),
         btn('close', t('toolAbLoop'), () => { abA = null; abB = null; abBtn.classList.remove('on'); drawMarks(); flashText(t('toolAbLoop') + ' ✕'); }),
@@ -1132,7 +1198,7 @@ export function openPlayer(src: PlayerSource): void {
     const b = (label: string, fn: () => void, cls = 'chip') => h('button', { type: 'button', class: cls, onclick: fn }, label);
     sh.body.append(info, h('div', { class: 'kt-frame-row', dir: 'ltr' }, b('−10', () => step(-10)), b('−1', () => step(-1)), b('+1', () => step(1)), b('+10', () => step(10))),
       h('div', { class: 'row-actions wrap' },
-        h('button', { type: 'button', class: 'btn tonal small', onclick: () => screenshot() }, icon('camera'), t('frameSave')),
+        h('button', { type: 'button', class: 'btn tonal small', onclick: () => void saveFrame() }, icon('camera'), t('frameSave')),
         h('label', { class: 'row switch-row' }, h('span', null, t('frameWithSubs')), h('input', { type: 'checkbox', checked: getPrefs().frameSubs === true, onchange: (e: Event) => updatePrefs({ frameSubs: (e.target as HTMLInputElement).checked }) })),
         h('button', { type: 'button', class: 'btn tonal small', onclick: () => { abA = video.currentTime; flashText(`A ${fmtTime(abA)}`); drawMarks(); } }, t('framePointA')),
         h('button', { type: 'button', class: 'btn tonal small', onclick: () => { abB = Math.max((abA ?? 0) + 0.04, video.currentTime); flashText(`B ${fmtTime(abB)}`); abBtn.classList.add('on'); drawMarks(); } }, t('framePointB')),
@@ -1260,7 +1326,14 @@ export function openPlayer(src: PlayerSource): void {
       if (keys.includes('pitchCorrection')) video.preservesPitch = getPrefs().pitchCorrection;
     })));
   }
-  async function cutSheet() { const { cutClipSheet } = await import('./cut'); await cutClipSheet({ src, a: abA ?? Math.max(0, video.currentTime - 30), b: abB ?? video.currentTime, duration: video.duration, subtitle: current ? { name: current.name, ass: current.ass ? (await import('./subFont')).styledText(current.ass) : undefined, cues: current.cues, delay: subDelay , style: { font: getPrefs().subFont, size: getPrefs().subSize, color: getPrefs().subColor, outline: getPrefs().subOutline, outlineWidth: getPrefs().subOutlineWidth, bold: getPrefs().subBold, italic: getPrefs().subItalic, pos: getPrefs().subPos, background: getPrefs().subBackground } } : undefined, video, fps: fps || undefined, setRange: (x, y) => { abA = x; abB = y; abBtn.classList.add('on'); drawMarks(); } }); }
+  /** The clip sheet: on the A/B set, or (`from`: «Make a clip from here») begun at that frame, ten seconds long. */
+  async function cutSheet(from?: number) {
+    const { cutClipSheet } = await import('./cut');
+    // (mpv showing the file's own subtitle track, none loaded by the page: that track, by its number among the file's.)
+    const own = mpv && !current ? mpv.tracks().filter((x) => x.type === 'sub' && !x.external) : []; const ownAt = own.findIndex((x) => x.selected);
+    const embeddedSub = ownAt >= 0 ? { index: ownAt, name: own[ownAt].title || own[ownAt].lang || `#${ownAt + 1}`, codec: own[ownAt].codec } : undefined;
+    const D0 = video.duration || 0; const a0 = from !== undefined ? from : abA ?? Math.max(0, video.currentTime - 30); const b0 = from !== undefined ? (D0 ? Math.min(D0, from + 10) : from + 10) : abB ?? video.currentTime;
+    await cutClipSheet({ src, a: a0, b: b0, duration: video.duration, embeddedSub, subtitle: current ? { name: current.name, lang: current.lang, ass: current.ass ? (await import('./subFont')).styledText(current.ass) : undefined, cues: current.cues, delay: subDelay , style: { font: getPrefs().subFont, size: getPrefs().subSize, color: getPrefs().subColor, outline: getPrefs().subOutline, outlineWidth: getPrefs().subOutlineWidth, bold: getPrefs().subBold, italic: getPrefs().subItalic, pos: getPrefs().subPos, background: getPrefs().subBackground } } : undefined, video, fps: fps || undefined, setRange: (x, y) => { abA = x; abB = y; abBtn.classList.add('on'); drawMarks(); } }); }
 
   // ---- REX Player's extras: the ambient glow, chapters, skipping openings (AniSkip), another player
   // The ambient glow: the picture's average colour spilled around it, a few times a second.
@@ -1349,7 +1422,7 @@ export function openPlayer(src: PlayerSource): void {
   // ---- closing
   function close() {
     barRo.disconnect(); pipArm(false); window.removeEventListener('ktpip', onPipChange);
-    playerGone = true;
+    playerGone = true; window.clearTimeout(bigTimer); stopRepeat(); if (framePad) toggleFramePad(false);
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (Opened by another app: the position and the length handed back to it, and the app steps aside.)
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
