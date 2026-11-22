@@ -43,7 +43,7 @@ jobs:
           cp -r apps/tools/dist/. site/tools/
           touch site/.nojekyll
           # The releases page (/releases/): its list made from GitHub's releases now, so it never waits on the API.
-          mkdir -p site/releases && cp apps/reader/releases/index.html site/releases/
+          mkdir -p site/releases && cp -r apps/reader/releases/. site/releases/
           gh api --paginate --slurp "repos/${{ github.repository }}/releases?per_page=100" > releases.raw.json
           node apps/reader/scripts/releases.mjs releases.raw.json > site/releases/releases.json
           V=$(node -p "require('./apps/reader/package.json').version")
