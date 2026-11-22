@@ -9,7 +9,7 @@ import { saveText } from '../native';
 import { myStore } from '../myStore';
 import type { EditorDeps } from '../theme/editor';
 import { themeById, DEFAULT_THEME, type BlurPref } from '../theme/themes';
-import { themeGallery } from '../theme/gallery';
+import { themeGalleryLive } from '../theme/galleryLive';
 import { themeIo } from '../themeIo';
 import { SCENE_GROUPS, MIX_GROUPS, sceneEntry, type SceneGroup } from '../theme/sceneList';
 // (The palette themes join the list with this page: theme/palettes.ts registers them as it loads.)
@@ -219,7 +219,7 @@ export function appearanceCard(rerender: () => void): HTMLElement {
   const ed = editorDeps(rerender);
   const editor = () => import('../theme/editor');
   const ownColours = !def.classic && !!(def.dark?.roles || def.light?.roles);
-  const gallery = themeGallery({
+  const gallery = themeGalleryLive({
     t: (k, v) => t(k as 'appearance', v), icon, formatBytes, io: themeIo,
     current: () => { const x = getSettings(); return { theme: themeById(x.theme).id, mode: document.documentElement.dataset.ui === 'light' ? 'light' : 'dark', darkTone: x.darkTone }; },
     // (A theme with colours of its own brings them — a theme of the reader's, as it was saved.)

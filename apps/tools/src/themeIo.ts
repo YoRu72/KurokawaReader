@@ -47,7 +47,7 @@ async function indexBytes(): Promise<Uint8Array> {
 /** A pack's tokens: only a light theme's values in the reader's-theme format (colours and numbers in ranges, fixed
  *  words — theme/custom.ts's `sanitise`, every CSS string then built by `toDef`), never CSS or script text; no
  *  pictures of its own (those come as a pack's assets). Nothing else is accepted. */
-async function packTokens(raw: unknown, header: PackHeader): Promise<unknown> {
+async function packTokens(raw: unknown, header: Pick<PackHeader, 'id' | 'name' | 'by'>): Promise<unknown> {
   if (raw === undefined || raw === null) return undefined;
   const o = raw as { kurokawaTheme?: unknown; theme?: Record<string, unknown> };
   if (!o || typeof o !== 'object' || o.kurokawaTheme !== 1 || !o.theme || typeof o.theme !== 'object') throw new Error('not a theme of the known format');
@@ -55,13 +55,28 @@ async function packTokens(raw: unknown, header: PackHeader): Promise<unknown> {
   const my = sanitise({ ...o.theme, v: 1, id: 'my-repo', name: header.name, at: 0 });
   for (const m of [my.dark, my.light]) if (m && (m.bg.kind === 'picture' || m.bg.kind === 'pack')) throw new Error('a light theme has no pictures');
   const def = toDef(my);
-  return { ...def, id: header.id, name: cleanThemeName(String(header.name ?? header.id)) || header.id, by: typeof header.by === 'string' ? cleanThemeName(header.by) : undefined, custom: false, base: undefined };
+  return { ...def, repoChecked: true, id: header.id, name: cleanThemeName(String(header.name ?? header.id)) || header.id, by: typeof header.by === 'string' ? cleanThemeName(header.by) : undefined, custom: false, base: undefined };
 }
 export const themeIo: PackIO = {
   indexUrl: INDEX_URL, fetchBytes: (url, progress) => (url === INDEX_URL ? indexBytes() : fetchBytes(url, progress)),
   getFile: (k) => db.getFile(k), putFile: (k, b) => db.putFile(k, b), deleteFile: (k) => db.deleteFile(k),
-  getMeta: (k) => db.getMeta(k), setMeta: (k, v) => db.setMeta(k, v), tokens: packTokens,
+  getMeta: (k) => db.getMeta(k), setMeta: checkedMeta,
 };
+/** The shared installer (theme/packs.ts, the Reader's too) keeps a pack's tokens as the pack gave them; here they are
+ *  checked as the list of installed themes is written: a record whose tokens are refused fails the write (the pack's
+ *  pictures just kept are dropped again, nothing is registered) and the others carry the checked theme. */
+async function checkedMeta<T>(key: string, v: T): Promise<void> {
+  if (key !== 'themes.installed' || !v || typeof v !== 'object') return db.setMeta(key, v);
+  const all = v as unknown as Record<string, { id: string; name?: string; by?: string; assets?: string[]; def?: unknown }>;
+  const out: typeof all = {};
+  for (const [id, rec] of Object.entries(all)) {
+    const raw = rec?.def as { repoChecked?: boolean } | null | undefined;
+    if (raw == null || raw.repoChecked) { out[id] = rec; continue; }
+    try { out[id] = { ...rec, def: await packTokens(raw, { id: rec.id, name: rec.name ?? rec.id, by: rec.by }) }; }
+    catch (err) { for (const a of rec.assets ?? []) await db.deleteFile(`theme:${rec.id}:${a}`).catch(() => undefined); throw new Error(`tokens refused: ${String((err as Error)?.message ?? err)}`); }
+  }
+  return db.setMeta(key, out as unknown as T);
+}
 /** Themes of the repository kept here, made usable at start (their checked tokens). */
 export async function registerKeptThemes(): Promise<string[]> {
   const { installed } = await import('./theme/packs'); const { registerTheme, THEMES } = await import('./theme/themes');

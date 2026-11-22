@@ -20,9 +20,6 @@ export interface GalleryDeps {
   mine?: { customise(id: string): void; menu(id: string): void; importTheme(): void };
   /** Pictures of the reader's own themes (by asset name), for their miniatures. */
   mineLoader?(id: string): Promise<Record<string, string>>;
-  /** Themes of the repository's list the reader has not seen yet (marked «New»), and the ones just shown to them. */
-  fresh?(): Set<string>;
-  shown?(ids: string[]): void;
 }
 
 type Kid = Node | string | null | undefined | false;
@@ -119,9 +116,7 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
       : el('button', { type: 'button', class: 'tg-edit', title: d.t('editorCustomise'), 'aria-label': `${d.t('editorCustomise')} — ${name}`, onclick: () => d.mine!.customise(def.id) }, d.icon('pencil'));
     return el('div', { class: 'tg-card' + (on ? ' on' : '') + (need ? ' needs' : '') + (prog ? ' busy' : '') + (err ? ' failed' : '') + (def.custom ? ' mine' : ''), 'data-theme': def.id, 'data-pack': def.custom ? undefined : packId }, pick, edit, act);
   }
-  const newMark = () => el('span', { class: 'tg-new' }, d.t('themeNew'));
-  const anyNew = () => !!d.fresh && !!index?.some((e) => d.fresh!().has(e.id) && !have[e.id]);
-  const addTile = () => el('button', { type: 'button', class: 'tg-card tg-add', onclick: () => void addSheet() }, el('span', { class: 'tg-add-ic' }, d.icon('plus')), el('span', { class: 'tg-meta' }, el('b', { class: 'tg-name' }, d.t('themeAdd'), anyNew() ? newMark() : null), el('small', { class: 'tg-state' }, d.t('themeAddHint'))));
+  const addTile = () => el('button', { type: 'button', class: 'tg-card tg-add', onclick: () => void addSheet() }, el('span', { class: 'tg-add-ic' }, d.icon('plus')), el('span', { class: 'tg-meta' }, el('b', { class: 'tg-name' }, d.t('themeAdd')), el('small', { class: 'tg-state' }, d.t('themeAddHint'))));
 
   async function addSheet(): Promise<void> {
     const s = d.sheet(d.t('themeAddTitle'));
@@ -139,7 +134,7 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
       const rows = index!.map((e) => {
         const known = THEMES.find((x) => (x.pack?.id ?? x.id) === e.id);
         const here = !!have[e.id];
-        return el('div', { class: 'tg-addrow', 'data-id': e.id }, el('div', { class: 'grow' }, el('b', null, known ? themeName(known, d.t) : e.name, d.fresh?.().has(e.id) ? newMark() : null), el('small', { class: 'src' }, [e.by ? d.t('themeBy', { who: e.by }) : '', d.formatBytes(e.size)].filter(Boolean).join(' · '))),
+        return el('div', { class: 'tg-addrow' }, el('div', { class: 'grow' }, el('b', null, known ? themeName(known, d.t) : e.name), el('small', { class: 'src' }, [e.by ? d.t('themeBy', { who: e.by }) : '', d.formatBytes(e.size)].filter(Boolean).join(' · '))),
           here ? el('span', { class: 'tg-here' }, d.icon('check'), d.t('themeHere'))
             : el('button', { type: 'button', class: 'btn tonal small', onclick: async (ev: Event) => {
               const b = ev.currentTarget as HTMLButtonElement; b.disabled = true; b.textContent = d.t('themeDownloadingShort');
@@ -148,8 +143,6 @@ export function themeGallery(d: GalleryDeps): HTMLElement {
             } }, d.icon('download'), d.t('themeGet', { size: d.formatBytes(e.size) })));
       });
       list.replaceChildren(...(rows.length ? rows : [el('p', { class: 'hint tg-empty' }, d.t('themeAddEmpty'))]));
-      // (Shown now: the marks stay while this list is open, and are gone the next time.)
-      d.shown?.(index!.map((e) => e.id));
       draw();
     };
     void paint(false);
