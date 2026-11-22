@@ -9,8 +9,11 @@
 <meta name="theme-color" content="#eef0ff">
 <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
 <style>
-/* DejaVu Sans (Bitstream Vera licence), Arabic glyphs only, two static weights: 400 and 700. Latin and digits keep the page font. */
-@font-face { font-family: "KR Arabic"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/DejaVuSans-arabic.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+/* IBM Plex Sans Arabic (SIL OFL 1.1), Arabic glyphs only, four static weights. Latin and digits keep the page font. */
+@font-face { font-family: "KR Arabic"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/IBMPlexSansArabic-400.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+@font-face { font-family: "KR Arabic"; font-style: normal; font-weight: 500; font-display: swap; src: url("fonts/IBMPlexSansArabic-500.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+@font-face { font-family: "KR Arabic"; font-style: normal; font-weight: 600; font-display: swap; src: url("fonts/IBMPlexSansArabic-600.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+@font-face { font-family: "KR Arabic"; font-style: normal; font-weight: 700 900; font-display: swap; src: url("fonts/IBMPlexSansArabic-700.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
 :root {
   /* A moonlit palette: blue, lavender dusk, a touch of rose — on a pale blue-lilac ground. */
   --p: #2c5aa6; --on-p: #fff; --pc: #d8e3ff; --on-pc: #0b2a5e;
@@ -63,7 +66,7 @@
 html { -webkit-text-size-adjust: 100%; background: var(--bg-a); }
 body { margin: 0; min-height: 100vh; color: var(--text); font: 16px/1.6 var(--ff); -webkit-font-smoothing: antialiased;
   background: linear-gradient(170deg, var(--bg-a) 0%, var(--bg-b) 46%, var(--bg-c) 100%) fixed; }
-:lang(ar) { font-synthesis: weight; --ff: "KR Arabic", "DejaVu Sans", "Noto Sans Arabic", "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif; }
+:lang(ar) { font-synthesis: none; --ff: "KR Arabic", "IBM Plex Sans Arabic", "Noto Sans Arabic", "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif; }
 :lang(ja) { --ff: "Google Sans Flex", "Roboto Flex", system-ui, "Hiragino Sans", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP", sans-serif; }
 :lang(ko) { --ff: "Google Sans Flex", "Roboto Flex", system-ui, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Noto Sans KR", sans-serif; }
 :lang(zh) { --ff: "Google Sans Flex", "Roboto Flex", system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif; }
@@ -457,6 +460,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
 /* Arabic: letters join, so no tracking or capitals; sizes and weights are the former page's (dark look rules above) */
 :lang(ar) *, :lang(ar) *::before, :lang(ar) *::after { letter-spacing: 0 !important; }
 :lang(ar) .hero h1, :lang(ar) h2 { font-variation-settings: normal; }
+:lang(ar) .hero h1 { margin: 0; font-size: clamp(28px, 5vw, 44px); line-height: 1.15; font-weight: 700; }
 :lang(ar) .eyebrow { text-transform: none; }
 </style>
 </head>
