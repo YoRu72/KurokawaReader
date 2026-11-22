@@ -1,6 +1,6 @@
 // node tests/scenehydro.cjs: the «Hydro» wallpaper (src/theme/scenes/hydro.json, ktscene/1, data only — the engine's
-// existing kinds: a mirror, glints, ring sprites that grow on a click, caustics and motes pushed by the pointer and a
-// click). Two paths, as tests/scene.cjs:
+// existing kinds: bands and a disc for the deepening water, the horizon and the moon's reflection, glints, ring sprites
+// that grow on a click, caustics and motes pushed by the pointer and a click). Two paths, as tests/scene.cjs:
 //  - always: Appearance lists it in «Rain and water» with its name (en, ar), its picture drawn; the mixer takes it as a
 //    base (cleaned as it is, composed within the budget); chosen without the engine, «drift» quietly instead;
 //  - the wasm present (dist/scene/ktscene.wasm or KT_SCENE_WASM): dark and light both draw non-blank, changing frames;

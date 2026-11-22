@@ -119,7 +119,8 @@ jobs:
     runs-on: ubuntu-latest
     # (90, was 60: a full Reader run — 107 tests one after another — reached test 101 at 56 minutes in runs 43807653380
     # and 43817284797 and was cut while sweep.cjs, allowed 15 minutes, ran; a full Tools run takes some 41.)
-    timeout-minutes: 90
+    # (150, was 90: the full Tools chain of 0.23 — 226 tests — now takes some 110-120 minutes and was cut at test 194.)
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:

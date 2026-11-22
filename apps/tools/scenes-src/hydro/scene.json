@@ -23,17 +23,22 @@
   {
    "id": "sky1",
    "dark": "#0a0d22",
-   "light": "#dfdcf2"
+   "light": "#d9d7f0"
   },
   {
    "id": "sky2",
    "dark": "#161a3a",
-   "light": "#cfd2ee"
+   "light": "#c4c5e9"
   },
   {
    "id": "haze",
    "dark": "#232a5c",
-   "light": "#d8cfee"
+   "light": "#dcd6f2"
+  },
+  {
+   "id": "mist",
+   "dark": "#232a5c",
+   "light": "#b9b4de"
   },
   {
    "id": "moon",
@@ -43,17 +48,17 @@
   {
    "id": "sea0",
    "dark": "#0c1131",
-   "light": "#c5cbea"
+   "light": "#8f97d0"
   },
   {
    "id": "sea1",
    "dark": "#020309",
-   "light": "#aab4e0"
+   "light": "#535ba6"
   },
   {
    "id": "water",
    "dark": "#04060f",
-   "light": "#b4bce3"
+   "light": "#4a529c"
   },
   {
    "id": "glint",
@@ -68,22 +73,22 @@
   {
    "id": "caustic2",
    "dark": "secondary",
-   "light": "#f3eefc"
+   "light": "#f1ecff"
   },
   {
    "id": "ring",
    "dark": "primary",
-   "light": "#2c5aa6"
+   "light": "#f7f5ff"
   },
   {
    "id": "ring2",
    "dark": "secondary",
-   "light": "#5e4f97"
+   "light": "#e2daf8"
   },
   {
    "id": "mote",
    "dark": "primary",
-   "light": "#2c5aa6"
+   "light": "#3a4f9a"
   },
   {
    "id": "lavender",
@@ -139,11 +144,11 @@
      ]
     ],
     "glow": {
-     "x": 0.68,
-     "y": 0.13,
-     "r": 0.5,
+     "x": 0.74,
+     "y": 0.26,
+     "r": 0.42,
      "colour": "haze",
-     "alpha": 0.45
+     "alpha": 0.4
     }
    }
   },
@@ -153,12 +158,12 @@
    "depth": 0.02,
    "parallax": 0.03,
    "params": {
-    "x": 0.68,
-    "y": 0.13,
-    "r": 0.028,
-    "halo": 5,
+    "x": 0.74,
+    "y": 0.26,
+    "r": 0.021,
+    "halo": 4.5,
     "colour": "moon",
-    "glow": 0.35
+    "glow": 0.26
    }
   },
   {
@@ -175,15 +180,43 @@
    }
   },
   {
-   "id": "surface",
-   "kind": "mirror",
+   "id": "deep",
+   "kind": "band",
    "depth": 0.32,
    "params": {
-    "y": 0.31,
-    "ripple": 5,
-    "alpha": 0.5,
-    "tint": "water",
-    "strength": 0.3
+    "y0": 0.31,
+    "y1": 1.05,
+    "top": "water",
+    "bottom": "water",
+    "a0": 0.18,
+    "a1": 0.5
+   }
+  },
+  {
+   "id": "horizon",
+   "kind": "band",
+   "depth": 0.32,
+   "params": {
+    "y0": 0.309,
+    "y1": 0.317,
+    "top": "glint",
+    "bottom": "glint",
+    "a0": 0.22,
+    "a1": 0
+   }
+  },
+  {
+   "id": "reflection",
+   "kind": "disc",
+   "depth": 0.32,
+   "opacity": 0.55,
+   "params": {
+    "x": 0.74,
+    "y": 0.355,
+    "r": 0.009,
+    "halo": 8,
+    "colour": "moon",
+    "glow": 0.3
    }
   },
   {
@@ -197,7 +230,7 @@
     "size": 700,
     "speed": 5,
     "alpha": 0.1,
-    "colour": "haze"
+    "colour": "mist"
    }
   },
   {
@@ -259,8 +292,8 @@
     },
     {
      "kind": "alpha",
-     "min": 0.06,
-     "max": 0.14
+     "min": 0.1,
+     "max": 0.22
     },
     {
      "kind": "velocity",
@@ -415,13 +448,13 @@
    "id": "glint",
    "layer": "path",
    "group": "glint",
-   "max": 150,
-   "rate": 45,
+   "max": 160,
+   "rate": 50,
    "prewarm": 1,
    "wind": 0,
    "shape": {
     "kind": "rect",
-    "x": 0.645,
+    "x": 0.705,
     "y": 0.325,
     "w": 0.07,
     "h": 0.66
@@ -434,8 +467,8 @@
     },
     {
      "kind": "size",
-     "min": 2,
-     "max": 4.5
+     "min": 5,
+     "max": 12
     },
     {
      "kind": "stretch",

@@ -82,7 +82,9 @@ export function startLiveChecks(): () => void {
   const onTimer = (): void => { if (Date.now() - lastLiveCheck() < EVERY_MS - 60_000) arm(); else auto(); };
   void import('./themeIo').then((m) => m.registerKeptThemes()).then(async (ids) => { if (ids.includes(getSettings().theme ?? '')) { const s = await import('./settings'); s.reloadThemePictures(); } }).catch(() => undefined);
   const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
-  const first = window.setTimeout(() => { if (idle) idle(auto, { timeout: 10_000 }); else auto(); }, 5000);
+  // (A start soon after a check — a reload, a restart — waits for the timer instead: the catalogues were just read.)
+  const start = (): void => { if (Date.now() - lastLiveCheck() < FOREGROUND_MS) arm(); else auto(); };
+  const first = window.setTimeout(() => { if (idle) idle(start, { timeout: 10_000 }); else start(); }, 5000);
   const onVis = (): void => { if (document.visibilityState === 'visible' && Date.now() - lastLiveCheck() >= FOREGROUND_MS) auto(); };
   document.addEventListener('visibilitychange', onVis);
   return () => { started = false; window.clearTimeout(first); window.clearTimeout(timer); document.removeEventListener('visibilitychange', onVis); };

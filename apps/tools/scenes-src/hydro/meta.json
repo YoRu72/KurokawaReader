@@ -1,6 +1,6 @@
 {
  "names": { "en": "Hydro", "ar": "صفحةُ الماء", "ja": "月夜の水面", "ko": "달빛 수면", "zh": "月下水面" },
- "version": "1.0",
+ "version": "1.1",
  "engine": 2,
- "preview": { "dark": ["#05060f", "#161a3a", "#2c5aa6", "#5e4f97"], "light": ["#ece8f7", "#cfd2ee", "#2c5aa6", "#9a467a"] }
+ "preview": { "dark": ["#05060f", "#161a3a", "#2c5aa6", "#5e4f97"], "light": ["#ece8f7", "#c4c5e9", "#8f97d0", "#535ba6"] }
 }

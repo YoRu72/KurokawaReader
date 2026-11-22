@@ -224,7 +224,7 @@ export function appearanceCard(rerender: () => void): HTMLElement {
     current: () => { const x = getSettings(); return { theme: themeById(x.theme).id, mode: document.documentElement.dataset.ui === 'light' ? 'light' : 'dark', darkTone: x.darkTone }; },
     // (A theme with colours of its own brings them — a theme of the reader's, as it was saved.)
     choose: (id) => { const n = themeById(id); useTheme(id, !(n.custom && n.followsAccent)); rerender(); },
-    sheet: (title) => { const x = openSheet(title, t('close')); return { body: x.body, close: x.close }; },
+    sheet: (title, onClose) => { const x = openSheet(title, t('close'), { onClose }); return { body: x.body, close: x.close }; },
     toast: (m, k, action, ms) => toast(m, k ?? 'info', ms ?? 4200, action),
     mine: { customise: (id) => void editor().then((m) => { m.myThemes(myStore); m.customise(ed, id); }), menu: (id) => void editor().then((m) => { m.myThemes(myStore); m.mineMenu(ed, id); }), importTheme: () => void editor().then((m) => { m.myThemes(myStore); return m.importFile(ed); }) },
     fresh: () => freshThemes,

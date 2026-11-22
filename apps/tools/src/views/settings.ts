@@ -5,6 +5,7 @@ import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
 import { t, getLang, getLangPref, setLangPref, LANGS, formatBytes, localDigits, dateLocale, countAddons, getDirPref, setDirPref, digitsPref, type DirPref } from '../i18n';
 import { BUILT_IN, getSettings, updateSettings } from '../settings';
 import { appearanceCard } from './appearance';
+import { releaseGalleryLive } from '../theme/galleryLive';
 import { navigate } from '../router';
 import { onBack } from '../ui/backstack';
 import { APP_VERSION, REPO, SITE_URL } from '../repo';
@@ -408,7 +409,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
   rerender();
   // (Back: a search typed is let go first, then a tab of the bar back to «All»; then Settings is left.)
   const unBack = onBack(() => { if (!root.isConnected) return false; if (search.value) { search.value = ''; applySearch(); return true; } if (tab !== 'all') { tab = 'all'; rerender(); return true; } return false; }, 'search', 'settings');
-  const was = root.dispose; root.dispose = () => { unBack(); headRo?.disconnect(); was?.(); };
+  const was = root.dispose; root.dispose = () => { unBack(); headRo?.disconnect(); releaseGalleryLive(root); was?.(); };
   if (section) setTimeout(() => body.querySelector(`#${CSS.escape(section)}`)?.scrollIntoView({ block: 'start' }), 50);
   void decorate;
   void s; void navigate; void localDigits; void formatBytes; void openSheet; void countAddons;
