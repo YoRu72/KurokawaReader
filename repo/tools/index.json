@@ -38,6 +38,8 @@
       },
       "version": "0.2.0",
       "module": "torrent-search/nyaa.mjs",
+      "sha256": "9ebd1026064d16b0c9ce336481119701508a33d8768fccca59c64401b5d688ea",
+      "size": 3602,
       "icon": "magnet",
       "settings": [
         {
@@ -95,6 +97,8 @@
       },
       "version": "0.2.1",
       "module": "torrent-search/torrentio.mjs",
+      "sha256": "b691bdc44fd0890664c69a586b5e268a5a14dca495eb9f3ebbbfe9d1b4741755",
+      "size": 3900,
       "icon": "magnet",
       "settings": [
         {
@@ -145,6 +149,8 @@
       },
       "version": "0.1.0",
       "module": "torrent-search/knaben.mjs",
+      "sha256": "9a10f12a1e1697b598242429e2f2a6e68f3948daf2a0b8e3cf5d9893ac0304fd",
+      "size": 1586,
       "icon": "magnet",
       "settings": [
         {
@@ -178,6 +184,8 @@
       },
       "version": "0.1.0",
       "module": "torrent-search/tpb.mjs",
+      "sha256": "039eb9cae9f6a93da71e8697b722d5c4d934daa5114a14cbc27e22e44373a342",
+      "size": 1463,
       "icon": "magnet",
       "settings": [
         {
@@ -202,6 +210,8 @@
       },
       "version": "0.1.0",
       "module": "torrent-search/yts.mjs",
+      "sha256": "7b9b46f9b3fa7281af0003efb70a417b726528a58bd4e14dd1afde7a9f53653a",
+      "size": 1489,
       "icon": "magnet",
       "settings": [
         {
@@ -226,6 +236,8 @@
       },
       "version": "0.1.1",
       "module": "torrent-search/eztv.mjs",
+      "sha256": "02b035a3917f354d710b30d6e13d5932aed0d9cd2fb54fe733671700c695b3a9",
+      "size": 1686,
       "icon": "magnet",
       "settings": [
         {
@@ -273,6 +285,8 @@
       },
       "version": "0.2.0",
       "module": "anime/nyaa.mjs",
+      "sha256": "7dff9486b5b73e97df29c7ab933a21d44eb473ee77539e6b0c8158615375d39a",
+      "size": 3331,
       "icon": "magnet",
       "settings": [
         {
@@ -319,6 +333,8 @@
       },
       "version": "0.1.1",
       "module": "anime/torrentio.mjs",
+      "sha256": "9d26110e7a0755dba790d6bdf6b0510b8e6e453a3df50d4d3c36391856e6b4cb",
+      "size": 2537,
       "icon": "magnet",
       "settings": [
         {
@@ -360,6 +376,8 @@
       },
       "version": "0.1.0",
       "module": "anime/seadex.mjs",
+      "sha256": "77a5e87593fc1e8607d34f85fa23299128d31ebe313ac91c3f6bf6684f9ba2d9",
+      "size": 1247,
       "icon": "star"
     },
     {
@@ -373,6 +391,8 @@
       },
       "version": "0.1.1",
       "module": "anime/animetosho.mjs",
+      "sha256": "65501d9b46b796307c6d7dccd39c85eb944cc7b69d0fc6a8ab8c5bcd3a4f8b89",
+      "size": 2460,
       "icon": "magnet"
     },
     {
@@ -414,6 +434,8 @@
       },
       "version": "0.2.0",
       "module": "subs/subdl.mjs",
+      "sha256": "5e21e6003ccb8e713239e866253d78818c329fd2c1787a12aaaa87aed8ec850b",
+      "size": 1252,
       "icon": "subtitles",
       "settings": [
         {
@@ -437,6 +459,8 @@
       },
       "version": "0.2.0",
       "module": "subs/opensubtitles.mjs",
+      "sha256": "7bb756025bcb85860677a6393fb7b375adc090a5f660dbcb47739944e6ffbdb0",
+      "size": 4584,
       "icon": "subtitles",
       "settings": [
         {
@@ -460,6 +484,8 @@
       },
       "version": "0.2.0",
       "module": "subs/subsource.mjs",
+      "sha256": "07f77640d7328b4b2ba46c07910d8801938b4b3f109f0199c0acb7f2ad8152ca",
+      "size": 3912,
       "icon": "subtitles"
     },
     {
@@ -473,6 +499,8 @@
       },
       "version": "0.1.0",
       "module": "subs/gestdown.mjs",
+      "sha256": "5f44da654af86b3bb33819f4aa4fa92c6ba7867e8a2b33447a505e56adddc315",
+      "size": 1912,
       "icon": "subtitles"
     },
     {
@@ -486,6 +514,8 @@
       },
       "version": "0.2.0",
       "module": "subs/podnapisi.mjs",
+      "sha256": "90768e3745c1c8849cd595a94f2d78a5a00d2d218e9fee3b9233ddb637d0c3fb",
+      "size": 2387,
       "icon": "subtitles"
     },
     {
@@ -499,6 +529,8 @@
       },
       "version": "0.1.0",
       "module": "subs/subf2m.mjs",
+      "sha256": "11943129b95f5a058350f593108234eae6935a84cacca1077bf6d7a8754a05d5",
+      "size": 3028,
       "icon": "subtitles"
     },
     {
@@ -512,6 +544,8 @@
       },
       "version": "0.2.0",
       "module": "subs/animetosho.mjs",
+      "sha256": "9f5b1ea6d457d99de8038d00c82727e98375da020052f8a30fb79412275a3c79",
+      "size": 3179,
       "icon": "subtitles"
     },
     {
@@ -525,6 +559,8 @@
       },
       "version": "0.2.0",
       "module": "subs/jimaku.mjs",
+      "sha256": "02189a14652fe98b4a91acce48a9329206337de6259ceec800065fe7fd1fbcdd",
+      "size": 1232,
       "icon": "subtitles",
       "settings": [
         {
@@ -548,6 +584,8 @@
       },
       "version": "0.1.0",
       "module": "subs/yify.mjs",
+      "sha256": "1f5cbbb203ab43f79d30ffe5598525aa7051f31acfceb9906669e042a6ea3525",
+      "size": 1829,
       "icon": "subtitles"
     },
     {

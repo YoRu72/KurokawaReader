@@ -16,7 +16,8 @@ import { tvSettingsCard } from './tvSettings';
 import { keptSitesCard } from '../video/signin';
 import { maxVideoOf, applyVideoQueue } from '../video/queue';
 import { advancedCard } from './engineSettings';
-import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, type AddonEntry } from '../addons';
+import { loadIndex, install, uninstall, installed, nameOf, descOf, updatesAvailable, addonSettings, setAddonSettings, addonStatus, installedVersion, needsApp, type AddonEntry, type AddonStatus } from '../addons';
+import { liveRows } from '../liveUpdates';
 import { updateRows } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
 
@@ -100,7 +101,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
       card.classList.toggle('collapsed', !open.has(card.id));
       const flip = () => { if (pc()) return; const on = card.classList.toggle('collapsed'); if (on) open.delete(card.id); else open.add(card.id); title.setAttribute('aria-expanded', String(!on)); };
       title.onclick = flip; title.onkeydown = (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } };
-      nav.append(h('button', { type: 'button', class: 'chip small', 'data-sec': card.id, onclick: () => { if (pc()) { showSec(card.id); return; } open.add(card.id); card.classList.remove('collapsed'); title.setAttribute('aria-expanded', 'true'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? '')));
+      nav.append(h('button', { type: 'button', class: 'chip small', 'data-sec': card.id, onclick: () => { if (pc()) { showSec(card.id); return; } open.add(card.id); card.classList.remove('collapsed'); title.setAttribute('aria-expanded', 'true'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', null, title.textContent ?? ''), title.querySelector('.new-dot:not([hidden])') ? h('i', { class: 'new-dot', 'aria-hidden': 'true' }) : null));
     }
     applySearch();
   };
@@ -218,11 +219,23 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         const ix = await loadIndex(fresh); const lang = getLang();
         const parents = ix.addons.filter((a) => !a.parent); const plat = nativePlatform();
         const upd = fresh ? await updatesAvailable().catch(() => []) : [];
+        // (Each row: the version here, when it was last updated, an update waiting for the app, a failed one's reason.)
+        const status: Record<string, AddonStatus> = await addonStatus(); const vers: Record<string, string | undefined> = {};
+        for (const id of getSettings().addons) vers[id] = await installedVersion(id);
+        const when = (ms: number) => new Date(ms).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short', year: 'numeric' });
+        const why = { checksum: t('addonFailChecksum'), size: t('addonFailSize'), nohash: t('addonFailNohash'), import: t('addonFailImport'), http: t('addonFailImport'), needsApp: t('addonNeedsApp') };
+        const lineOf = (a: AddonEntry): HTMLElement | null => {
+          const st = status[a.id]; const here = installed(a.id); const v = here ? vers[a.id] ?? a.version : a.version;
+          const bits: string[] = [t('addonVersion', { v })]; if (here && st?.at) bits.push(t('addonUpdatedAt', { d: when(st.at) }));
+          const wait = needsApp(a) && (!here || v !== a.version);
+          const fail = here && st?.failed && st.failed.version === a.version && v !== a.version ? t('addonUpdateFailed', { v: st.failed.version, why: why[st.failed.kind] }) : '';
+          return h('small', { class: 'src addon-ver', dir: 'auto' }, h('span', { dir: 'auto' }, bits.join(' · ')), wait ? h('span', { class: 'addon-needs-app' }, ` · ${t('addonNeedsApp')}`) : null, fail ? h('span', { class: 'addon-failed' }, ` · ${fail}`) : null);
+        };
         if (!parents.length) { addonsBox.replaceChildren(h('p', { class: 'src' }, t('addonsNone'))); return; }
         const rowOf = (a: AddonEntry, child = false): HTMLElement => {
           const ok = !a.platforms || a.platforms.includes(plat === 'ios' ? 'ios' : plat);
           // (The player is part of the app now: said so, nothing to install or remove.)
-          const builtIn = BUILT_IN.includes(a.id); const on = builtIn || installed(a.id); const btn = h('button', { type: 'button', class: `btn small ${on ? 'tonal' : 'primary'}`, disabled: !ok || (builtIn && !upd.includes(a.id)) }, icon(on ? (upd.includes(a.id) ? 'refresh' : builtIn ? 'check' : 'trash') : 'download'), on ? (upd.includes(a.id) ? t('addonUpdate') : builtIn ? t('addonBuiltIn') : t('addonRemove')) : t('addonInstall')) as HTMLButtonElement;
+          const builtIn = BUILT_IN.includes(a.id); const on = builtIn || installed(a.id); const btn = h('button', { type: 'button', class: `btn small ${on ? 'tonal' : 'primary'}`, disabled: !ok || (!on && needsApp(a)) || (builtIn && !upd.includes(a.id)) }, icon(on ? (upd.includes(a.id) ? 'refresh' : builtIn ? 'check' : 'trash') : 'download'), on ? (upd.includes(a.id) ? t('addonUpdate') : builtIn ? t('addonBuiltIn') : t('addonRemove')) : t('addonInstall')) as HTMLButtonElement;
           btn.addEventListener('click', async () => { btn.disabled = true; try { if (on && !upd.includes(a.id)) {
             // (undo-redo) Turned off at once, its files and packs deleted only when the Undo is over (and not if it is back by then).
             const fam = [a.id, ...(a.children ?? [])]; const was = [...getSettings().addons]; const off = () => { updateSettings({ addons: getSettings().addons.filter((x) => !fam.includes(x)) }); void drawAddons(); }; off();
@@ -230,7 +243,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
           const kids = (a.children ?? []).map((id) => ix.addons.find((x) => x.id === id)).filter(Boolean) as AddonEntry[];
           const withSettings = [a, ...kids].filter((x) => x.settings?.length && installed(x.id));
           const gear = withSettings.length ? iconButton('settings', t('addonSettings'), () => addonSettingsSheet(withSettings, lang)) : null;
-          return h('div', { class: 'addon-row' + (child ? ' child' : ''), dataset: { id: a.id } }, icon(a.icon ?? 'puzzle'), h('div', { class: 'grow' }, h('b', { dir: 'auto' }, nameOf(a, lang)), h('small', { class: 'src', dir: 'auto' }, descOf(a, lang)), kids.length ? h('small', { class: 'src' }, `${t('addonChildren')}: ${kids.map((k) => nameOf(k, lang)).join(' · ')}`) : null), gear, btn);
+          return h('div', { class: 'addon-row' + (child ? ' child' : ''), dataset: { id: a.id } }, icon(a.icon ?? 'puzzle'), h('div', { class: 'grow' }, h('b', { dir: 'auto' }, nameOf(a, lang)), h('small', { class: 'src', dir: 'auto' }, descOf(a, lang)), lineOf(a), kids.length ? h('small', { class: 'src' }, `${t('addonChildren')}: ${kids.map((k) => nameOf(k, lang)).join(' · ')}`) : null), gear, btn);
         };
         addonsBox.replaceChildren(...parents.map((a) => rowOf(a)));
       } catch (e) { addonsBox.replaceChildren(h('p', { class: 'src' }, t('addonsFailed', { error: String((e as Error).message ?? e) }))); }
@@ -241,7 +254,8 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const otherApps = card('apps', t('otherApps'), h('p', { class: 'hint' }, t('otherAppsHint')), readerBox);
     void drawOtherApp(readerBox.querySelector('.app-actions') as HTMLElement);
     // Updates
-    const updates = card('updates', t('updates'), ...updateRows(row, toggle, (label, opts, value, set) => row(label, pickButton(label, opts, value, (v) => { set(v); rerender(); }, t('close')))));
+    const updates = card('updates', t('updates'), ...updateRows(row, toggle, (label, opts, value, set) => row(label, pickButton(label, opts, value, (v) => { set(v); rerender(); }, t('close')))),
+      ...liveRows(toggle, h as never, (k, v) => t(k as 'updates', v), (ms) => new Date(ms).toLocaleString(dateLocale()), icon));
     const backupRow = h('div', { class: 'row-actions wrap' },
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../backup').then((m) => m.saveBackup()).then((p) => { if (p) toast(t('backupSaved')); }).catch((e) => toast(String((e as Error).message ?? e), 'error')) }, icon('upload'), t('backupSettings')),
       h('button', { type: 'button', class: 'btn tonal small', onclick: () => { const f = h('input', { type: 'file', accept: '.json', onchange: async () => { const file = f.files?.[0]; if (!file) return; try { const m = await import('../backup'); /* (undo-redo) asked first, the values replaced kept for «Undo restore» */ const n = await m.restoreAsked(m.parseBackup(await file.text())); if (n === null) return; toast(t('backupRestored', { n: localDigits(n) })); setTimeout(() => location.reload(), 1200); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } } }) as HTMLInputElement; f.click(); } }, icon('download'), t('restoreSettings')));

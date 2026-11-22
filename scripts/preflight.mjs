@@ -248,6 +248,14 @@ async function preflight(app) {
     if (y.length) for (const l of y.slice(0, 20)) console.log('        ' + l);
   });
 
+  // 6b. the repository's checksums (static: a forgotten hash cannot be merged) — the add-on index and the scene catalogue
+  if (app === 'tools') await guard('repository checksums', async () => {
+    for (const [script, label] of [['scripts/addons-index.mjs', 'add-on index checksums (addons-index.mjs --check)'], ['scripts/scenes.mjs', 'scene catalogue up to date (scenes.mjs --check)']]) {
+      if (!fs.existsSync(path.join(APP, script))) continue;
+      const r = await run('node', [script, '--check'], { cwd: APP }); add(label, r.code === 0 ? 'PASS' : 'FAIL', r.code === 0 ? '' : tail(r.out, 6));
+    }
+  });
+
   // 7. tests
   if (!NO_TESTS) {
     if (fs.existsSync(path.join(APP, 'scripts/themes.mjs')) && app === 'tools') { const th = await run('node', ['scripts/themes.mjs', '--check'], { cwd: APP }); add('themes up to date (themes.mjs --check)', th.code === 0 ? 'PASS' : 'FAIL', th.code === 0 ? '' : tail(th.out, 6)); }

@@ -1,7 +1,7 @@
 // Settings → Appearance: the theme gallery (theme/gallery.ts), how much glass is blurred, light or dark, the dark
 // tone (for the themes that follow it), the accent; a phone's battery choice, a computer's sidebar choice.
 import { h, icon, toast, openSheet, pickButton } from '../ui/dom';
-import { t, formatBytes, localDigits } from '../i18n';
+import { t, formatBytes, localDigits, getLang } from '../i18n';
 import { getSettings, updateSettings, glassNow, reloadThemePictures, setThemePreview, type Accent, type UiMode, type DarkTone, type Settings } from '../settings';
 import { onBack } from '../ui/backstack';
 import { undoScope } from '../ui/undo';
@@ -30,7 +30,7 @@ function bgName(id: string): string {
   if (id.startsWith('scene:mix:')) { const e = sceneEntry(id.slice(6)); return e ? t(e.name as 'animBg') : named(s.animBgMixes, id.slice(10)) ?? t('animBgScenes'); }
   if (id.startsWith('scene:user:')) return named(s.animBgLib, id.slice(11)) ?? t('animBgMine');
   const e = id.startsWith('scene:') ? sceneEntry(id.slice(6)) : undefined;
-  return e ? t(e.name as 'animBg') : t('animBgScenes');
+  return e ? e.label ?? t(e.name as 'animBg') : t('animBgScenes');
 }
 
 /** A theme put in use: its own colours brought (or the accent given back), its pictures read. */
@@ -90,7 +90,7 @@ function animRows(rerender: () => void): (HTMLElement | null)[] {
   const isUser = pref.startsWith('scene:user:'); const mine = isUser || libShown; if (isUser) libShown = false;
   const isSceneNow = pref.startsWith('scene:') && !isUser; const entry = isSceneNow ? sceneEntry(pref.slice(6)) : undefined;
   type Choice = 'off' | 'match' | 'drift' | 'flow' | 'scene' | 'mine';
-  const what = mine ? t('animBgMineHint') : entry ? t(entry.hint as 'animBgHint') : isSceneNow && pref.startsWith('scene:mix:') ? t('mixMineHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
+  const what = mine ? t('animBgMineHint') : entry ? (entry.repo ? entry.label ?? t('animBgScenes') : t(entry.hint as 'animBgHint')) : isSceneNow && pref.startsWith('scene:mix:') ? t('mixMineHint') : ({ off: t('animBgHint'), match: t('animBgMatchHint'), drift: t('animBgDriftHint'), flow: t('animBgFlowHint') } as Record<string, string>)[pref] ?? t('animBgHint');
   const choice = row(t('animBg'), pickButton<Choice>(t('animBg'), [['off', t('animBgOff')], ['match', t('animBgMatch')], ['drift', t('animBgDrift')], ['flow', t('animBgFlow')], ['scene', t('animBgScenes')], ['mine', t('animBgMine')]], mine ? 'mine' : isSceneNow ? 'scene' : (pref as Choice), (v) => {
     libShown = v === 'mine';
     if (v !== 'mine') updateSettings({ animBg: v === 'scene' ? (isSceneNow ? pref : 'scene:night-snowfall') : v });
@@ -150,6 +150,8 @@ function sceneGrid(current: string, rerender: () => void): HTMLElement {
     h('span', { class: 'abg-thumb abg-plus' }, icon('plus')), h('span', { class: 'abg-name' }, t('mixNew')));
   const mineTiles = h('div', { class: 'abg-tiles' }, newCard);
   const mineActs = h('div', { class: 'abg-mix-acts', hidden: true });
+  // (The repository's scenes, after the built-in ones: filled from the kept list once its module is here.)
+  const repoTiles = h('div', { class: 'abg-tiles' }); const repoGroup = h('div', { class: 'abg-group abg-repo' }, h('div', { class: 'abg-group-title' }, t('animBgGroupRepo')), repoTiles);
   const groups = [...SCENE_GROUPS.map(group), ...MIX_GROUPS.map(group), h('div', { class: 'abg-group abg-mine' }, mineTitle, mineTiles, mineActs)];
   const grid = h('div', { class: 'abg-grid', role: 'radiogroup', 'aria-label': t('animBgScenes'), onkeydown: (e: KeyboardEvent) => {
     const i = tiles.indexOf(document.activeElement as HTMLButtonElement); if (i < 0) return;
@@ -159,7 +161,22 @@ function sceneGrid(current: string, rerender: () => void): HTMLElement {
   } }, ...groups);
   if (!tiles.some((b) => b.tabIndex === 0) && tiles[0]) tiles[0].tabIndex = 0;
   // (The pictures: drawn one after another once the grid is on the page — the saved mixes' tiles added first.)
-  void Promise.all([import('../theme/sceneThumbs'), import('../theme/sceneMix')]).then(async ([m, mx]) => {
+  void Promise.all([import('../theme/sceneThumbs'), import('../theme/sceneMix'), import('../theme/sceneRepo')]).then(async ([m, mx, sr]) => {
+    // (Repository scenes: a newer engine needed — «needs the app update», not chosen; not downloaded yet — its catalogue
+    //  colours as the picture, fetched when chosen; «New» until shown once.)
+    const cat = await sr.keptScenes().catch(() => null); const list = await sr.listRepoScenes(cat).catch(() => []); const have = await sr.installedScenes();
+    const fresh = new Set(sr.newScenes(cat)); const lang = getLang(); const light = document.documentElement.dataset.ui === 'light';
+    for (const e of list) {
+      const b = tile(e.id, sr.nameOfScene(e, lang), sr.engineOk(e) ? (have[e.id] ? sr.nameOfScene(e, lang) : t('sceneToDownload')) : t('sceneNeedsApp'));
+      b.dataset.repo = '1';
+      if (fresh.has(e.id)) b.querySelector('.abg-name')?.append(h('span', { class: 'tg-new' }, t('themeNew')));
+      if (!sr.engineOk(e)) { b.disabled = true; b.classList.add('needs-app'); b.append(h('small', { class: 'src abg-needs' }, t('sceneNeedsApp'))); }
+      if (!have[e.id] || !sr.engineOk(e)) { const c = (light ? e.preview.light : e.preview.dark) ?? e.preview.dark ?? e.preview.light ?? ['#283048', '#141828']; const th = b.querySelector<HTMLElement>('.abg-thumb'); if (th) { th.style.backgroundImage = `linear-gradient(180deg, ${c.join(', ')})`; th.classList.add('drawn'); } b.dataset.still = '1'; }
+      repoTiles.append(b);
+    }
+    // (Only when there are some: in its place after the built-in groups.)
+    if (list.length) grid.insertBefore(repoGroup, grid.children[SCENE_GROUPS.length] ?? null);
+    if (fresh.size) { const seen = new Set(getSettings().seenScenes ?? []); fresh.forEach((x) => seen.add(x)); updateSettings({ seenScenes: [...seen] }); }
     const mine = mx.savedMixes();
     mineTitle.textContent = mine.length ? t('animBgGroupMineN', { n: localDigits(mine.length) }) : t('animBgGroupMine');
     for (const x of mine) mineTiles.append(tile(`mix:${x.id}`, x.name, t('mixMineHint')));
@@ -174,6 +191,7 @@ function sceneGrid(current: string, rerender: () => void): HTMLElement {
     await new Promise((r) => requestAnimationFrame(r));
     for (const b of tiles) {
       if (!grid.isConnected) break;
+      if (b.dataset.still) continue;
       const url = await m.sceneThumb(b.dataset.scene!); const th = b.querySelector<HTMLElement>('.abg-thumb'); if (!th) continue;
       th.style.backgroundImage = url.startsWith('gradient:') ? url.slice(9) : `url("${url}")`; th.classList.add('drawn');
     }
@@ -181,6 +199,20 @@ function sceneGrid(current: string, rerender: () => void): HTMLElement {
   return h('div', { class: 'row abg-grid-row' }, grid);
 }
 
+/** Repository themes not seen yet (the gallery's «New»), filled from the kept list. */
+const freshThemes = new Set<string>();
+/** How many repository themes and (a computer's) wallpapers are new, the theme set refreshed. */
+async function freshNow(pc: boolean): Promise<number> {
+  try {
+    const { readCatalog } = await import('../catalog'); const io = await import('../themeIo');
+    const ix = (await readCatalog('themes/themes.json', io.checkThemeIndex, { offlineOnly: true })).data;
+    const { installed } = await import('../theme/packs'); const have = await installed(io.themeIo);
+    freshThemes.clear(); for (const id of io.newThemes(ix, getSettings().seenThemes)) if (!have[id]) freshThemes.add(id);
+    let n = freshThemes.size;
+    if (pc) { const sc = await import('../theme/sceneRepo'); const cat = await sc.keptScenes().catch(() => null); n += sc.newScenes(cat).length; }
+    return n;
+  } catch { return 0; }
+}
 export function appearanceCard(rerender: () => void): HTMLElement {
   const s = getSettings(); const def = themeById(s.theme);
   const pc = document.documentElement.classList.contains('pc');
@@ -195,6 +227,8 @@ export function appearanceCard(rerender: () => void): HTMLElement {
     sheet: (title) => { const x = openSheet(title, t('close')); return { body: x.body, close: x.close }; },
     toast: (m, k, action, ms) => toast(m, k ?? 'info', ms ?? 4200, action),
     mine: { customise: (id) => void editor().then((m) => { m.myThemes(myStore); m.customise(ed, id); }), menu: (id) => void editor().then((m) => { m.myThemes(myStore); m.mineMenu(ed, id); }), importTheme: () => void editor().then((m) => { m.myThemes(myStore); return m.importFile(ed); }) },
+    fresh: () => freshThemes,
+    shown: (ids) => { const seen = new Set(getSettings().seenThemes ?? []); ids.forEach((x) => seen.add(x)); updateSettings({ seenThemes: [...seen] }); ids.forEach((x) => freshThemes.delete(x)); },
     mineLoader: async (id) => { const { minePictureUrls, loadMine } = await import('../theme/custom'); const my = loadMine(myStore).find((x) => x.id === id); return my ? minePictureUrls(myStore.io, my) : {}; },
   });
   const blurNow = { full: t('glassBlurFull'), reduced: t('glassBlurReduced'), off: t('glassBlurOff') }[glassNow.blur];
@@ -207,7 +241,14 @@ export function appearanceCard(rerender: () => void): HTMLElement {
       onchange: (e: Event) => { const i = e.target as HTMLInputElement; if (i.dataset.moved) { delete i.dataset.moved; toast(t('editorHueMoved'), 'info'); } } })));
   const themeSwatch = swatches.querySelector<HTMLElement>('.swatch.theme'); if (themeSwatch) themeSwatch.onclick = () => { updateSettings({ accent: 'theme', accentPrev: getSettings().accent === 'theme' ? getSettings().accentPrev : getSettings().accent }); rerender(); };
   const followsTone = def.classic || !!def.followsAccent && !def.force && !def.dark?.surfaces;
-  return h('section', { class: 'card', id: 'appearance' }, h('h3', null, t('appearance')),
+  // (Repository themes and wallpapers not seen yet: «New» on them, a dot on this card's title — from the kept lists, no network.)
+  const dot = h('span', { class: 'new-dot', role: 'img', 'aria-label': t('newDot'), title: t('newDot'), hidden: true });
+  void freshNow(pc).then((n) => {
+    dot.hidden = !n; (gallery as HTMLElement & { redraw?: () => void }).redraw?.();
+    // (The settings' side list on a computer: its Appearance entry carries the dot too.)
+    document.querySelectorAll<HTMLElement>('[data-sec="appearance"]').forEach((b) => { const d = b.querySelector('.new-dot'); if (n && !d) b.append(h('i', { class: 'new-dot', 'aria-hidden': 'true' })); else if (!n) d?.remove(); });
+  });
+  return h('section', { class: 'card', id: 'appearance' }, h('h3', null, t('appearance'), dot),
     h('p', { class: 'hint' }, t('themeGalleryHint')),
     gallery,
     def.classic ? null : row(t('glassBlur'), pickButton(t('glassBlur'), [['auto', t('glassBlurAuto')], ['full', t('glassBlurFull'), t('glassBlurFullHint')], ['reduced', t('glassBlurReduced'), t('glassBlurReducedHint')], ['off', t('glassBlurOff'), t('glassBlurOffHint')]], (s.glassBlur ?? 'auto') as BlurPref, (v) => { updateSettings({ glassBlur: v }); rerender(); }, t('close')), glassHint),

@@ -12,6 +12,8 @@ export interface SubResult { title: string; note?: string; language?: string; si
 type Mod = { search(q: SubQuery, ctx: { settings: Record<string, unknown>; lang: string }): Promise<SubResult[]>; resolve?(r: SubResult, q: SubQuery, ctx: { settings: Record<string, unknown> }): Promise<{ url: string; name?: string }> };
 
 const mods = new Map<string, Promise<Mod>>();
+// (An add-on updated while the app runs: its module is loaded afresh next time — addons.ts says which.)
+addEventListener('kt:addon-updated', (e) => { mods.delete(String((e as CustomEvent<string>).detail)); });
 async function load(id: string): Promise<Mod> {
   let m = mods.get(id);
   if (!m) { m = (async () => { const u = await moduleUrl(id); if (!u) throw new Error('not installed'); try { const mod = (await import(/* @vite-ignore */ u)) as { default?: Mod } & Mod; return mod.default ?? mod; } finally { URL.revokeObjectURL(u); } })(); mods.set(id, m); }

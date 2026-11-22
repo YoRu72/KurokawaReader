@@ -1862,3 +1862,16 @@ html.pc .files-view.pcx .files-strip .files-roots, html.pc .files-view.pcx .file
 .pcx-band { position: fixed; z-index: 900; pointer-events: none; border: 1px solid var(--md-primary); background: color-mix(in srgb, var(--md-primary) 16%, transparent); border-radius: 2px; }
 .nv-l bdi { display: block; }
 [dir="rtl"] .nv-l bdi, [dir="rtl"] .pcx-mi bdi { text-align: right; }
+/* Repository catalogues (liveUpdates.ts): «New» on themes and wallpapers not seen yet, a dot on the Appearance entry,
+   an add-on row's version line, a wallpaper that needs the app update. */
+.tg-new { display: inline-block; margin-inline-start: 6px; padding: 0 7px; border-radius: 999px; background: var(--md-primary-container, #2a3a55); color: var(--md-on-primary-container, #dbe6ff); font-size: 11px; font-weight: 600; line-height: 18px; vertical-align: middle; }
+.new-dot { display: inline-block; width: 8px; height: 8px; margin-inline-start: 8px; border-radius: 50%; background: var(--md-primary); vertical-align: middle; }
+.new-dot[hidden] { display: none; }
+.chip .new-dot { margin-inline-start: 6px; }
+.addon-ver { display: block; margin-top: 2px; }
+.addon-needs-app { color: var(--md-primary); font-weight: 600; }
+.addon-failed { color: var(--md-error, #ffb4ab); }
+.abg-tile.needs-app { cursor: default; opacity: .62; }
+.abg-tile .abg-needs { font-size: 11px; }
+.live-row { gap: 12px; }
+.live-row .live-last { margin: 0; flex: 1; }

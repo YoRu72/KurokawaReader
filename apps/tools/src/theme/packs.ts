@@ -22,6 +22,8 @@ export interface PackIO {
   fetchBytes(url: string, progress?: (done: number, total: number) => void): Promise<Uint8Array>;
   getFile(key: string): Promise<Blob | undefined>; putFile(key: string, b: Blob): Promise<void>; deleteFile(key: string): Promise<void>;
   getMeta<T>(key: string): Promise<T | undefined>; setMeta<T>(key: string, v: T): Promise<void>;
+  /** The theme a pack's tokens make, checked by the app (throws to refuse the pack); absent: the tokens as they are. */
+  tokens?(raw: unknown, header: PackHeader): Promise<unknown>;
 }
 export type PackErrorKind = 'offline' | 'missing' | 'checksum' | 'storage' | 'format';
 export class PackError extends Error { constructor(public kind: PackErrorKind, msg: string) { super(msg); } }
@@ -85,9 +87,11 @@ export async function installPack(io: PackIO, id: string, progress?: (done: numb
   if (buf.length !== e.size || (await sha256Hex(buf)) !== e.sha256) { indexCache = null; throw new PackError('checksum', `${e.file}: checksum differs`); }
   const { header, assets } = await parsePack(buf);
   if (header.id !== id) throw new PackError('format', 'pack is for another theme');
+  let def: unknown = header.tokens;
+  if (io.tokens) { try { def = await io.tokens(header.tokens, header); } catch (err) { throw new PackError('format', `tokens refused: ${String((err as Error)?.message ?? err)}`); } }
   try { for (const { a, bytes } of assets) await io.putFile(fileKey(id, a.name), new Blob([bytes as unknown as BlobPart], { type: a.type })); }
   catch (err) { for (const { a } of assets) await io.deleteFile(fileKey(id, a.name)).catch(() => undefined); throw new PackError('storage', String((err as Error)?.message ?? err)); }
-  const rec: Installed = { id, version: header.version, size: e.size, assets: assets.map((x) => x.a.name), at: Date.now(), notice: header.license?.notice, name: header.name, by: header.by, def: header.tokens };
+  const rec: Installed = { id, version: header.version, size: e.size, assets: assets.map((x) => x.a.name), at: Date.now(), notice: header.license?.notice, name: header.name, by: header.by, def };
   const all = await installed(io); all[id] = rec;
   try { await io.setMeta(META, all); } catch (err) { throw new PackError('storage', String((err as Error)?.message ?? err)); }
   dropUrls(id); return rec;

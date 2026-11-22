@@ -13,7 +13,7 @@
 // characters), at most MAX_OVERLAYS overlays and MAX_SAVED mixes.
 // Loaded only with the scene host or the mixer sheet (never at the start).
 import { getSettings } from '../settings';
-import { SCENES_ALL } from './sceneList';
+import { baseScenes } from './sceneList';
 
 export type OverlayKind = 'snow' | 'flakes' | 'rain' | 'mist' | 'petals' | 'motes' | 'stars' | 'bubbles' | 'frost';
 export const OVERLAY_KINDS: OverlayKind[] = ['snow', 'flakes', 'rain', 'mist', 'frost', 'petals', 'motes', 'stars', 'bubbles'];
@@ -52,7 +52,7 @@ export const RAINY = ['soft-rain', 'night-rain'];
 /* ---------- cleaning what is stored ---------- */
 const clamp = (v: unknown, [lo, hi]: readonly [number, number], d: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
-const baseIds = (): Set<string> => new Set(SCENES_ALL.map((s) => s.id));
+const baseIds = (): Set<string> => new Set(baseScenes().map((s) => s.id));
 /** A name as the reader may keep it: control and bidi-override characters out, spaces folded, at most NAME_MAX. */
 export function cleanName(v: unknown): string {
   if (typeof v !== 'string') return '';

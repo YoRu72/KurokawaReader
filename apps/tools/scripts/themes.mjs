@@ -20,7 +20,7 @@ export async function build(srcDir) {
   const meta = JSON.parse(await fs.readFile(path.join(srcDir, 'theme.json'), 'utf8'));
   const notice = meta.license ? (await fs.readFile(path.join(srcDir, meta.license.file), 'utf8')).trim() : undefined;
   let off = 0; const assets = []; const blobs = [];
-  for (const a of meta.assets) { const b = await fs.readFile(path.join(srcDir, a.file)); assets.push({ name: a.name, type: a.type, size: b.length, sha256: sha(b), offset: off }); off += b.length; blobs.push(b); }
+  for (const a of meta.assets ?? []) { const b = await fs.readFile(path.join(srcDir, a.file)); assets.push({ name: a.name, type: a.type, size: b.length, sha256: sha(b), offset: off }); off += b.length; blobs.push(b); }
   const header = { format: 1, id: meta.id, name: meta.name, by: meta.by, version: meta.version, license: meta.license ? { spdx: meta.license.spdx, notice } : undefined, assets, tokens: meta.tokens };
   const head = Buffer.from(JSON.stringify(header), 'utf8'); const len = Buffer.alloc(4); len.writeUInt32BE(head.length);
   const file = Buffer.concat([Buffer.from('KTHEME1\n', 'utf8'), len, head, ...blobs]);
