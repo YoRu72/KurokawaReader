@@ -50,3 +50,4 @@ html.pc .tg-grid { grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
   .tg-check { animation: tg-pop var(--dur-long) var(--spring, ease); }
 }
 @keyframes tg-pop { from { transform: scale(.2); opacity: 0; } }
+html:not(.pc) .tg-act { width: 40px; height: 40px; border-radius: 20px; }

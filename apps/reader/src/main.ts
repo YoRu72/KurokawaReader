@@ -181,7 +181,9 @@ else if (getSettings().openLastOnLaunch && startsOnLibrary) {
 
 // Offline support.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => undefined); });
+  // (The page's load may have come already: the module waits for the language's table before it runs.)
+  const reg = (): void => { navigator.serviceWorker.register('sw.js').catch(() => undefined); };
+  if (document.readyState === 'complete') reg(); else window.addEventListener('load', reg);
 } else if (isNative()) {
   // The installed app ships its files; an offline cache left by an older version would only duplicate them (and books).
   void navigator.serviceWorker?.getRegistrations?.().then((regs) => regs.forEach((r) => void r.unregister())).catch(() => {});
