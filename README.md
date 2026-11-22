@@ -1,13 +1,11 @@
 # Kurokawa apps
 
-[العربية](README.ar.md)
+Two calm, offline-first apps that share one look (Material 3 Expressive), one AniList link and one [add-on repository](repo/). Sources and add-ons are only what you add yourself.
 
-Two apps that share one look (Material 3 Expressive), one set of languages (العربية · English · 日本語 · 한국어 · 中文), one AniList link, and one [add-on repository](repo/).
-
-| App | What it is | Get it |
+| App | What it does | Get it |
 |---|---|---|
-| **[KurokawaReader](apps/reader/)** · قارئ كروكاوا | An offline reader for EPUB, PDF, Word, Excel, PowerPoint, text, comics and more — with sources (the Internet Archive, Shamela, web folders, LNReader and Mangayomi extensions), a converter, cloud sync and read-aloud. | [Download page](https://yoru72.github.io/KurokawaReader/releases/) · [Releases `v*`](../../releases) · [Web app](https://yoru72.github.io/KurokawaReader/) |
-| **[Kurokawa Tools](apps/tools/)** · أدوات كروكاوا | Downloads and streaming: HTTP, magnets and torrents (aria2c and a torrent engine of its own), debrid services, torrent search and anime add-ons, subtitles from many sites at once, archives, and a video player. | Releases `tools-v*` (pre-releases) |
+| **[Kurokawa Reader](apps/reader/)** | Reads EPUB, PDF, Word, Excel, PowerPoint, text, comics and more, offline, in one library with folders, tags and pins. Reading options and themes, PDF tools, a converter, read-aloud, sync and backup. Android · iOS · Windows · Linux · macOS · web. | [Download page](https://yoru72.github.io/KurokawaReader/releases/) · [Releases `v*`](../../releases) · [Web app](https://yoru72.github.io/KurokawaReader/) |
+| **[Kurokawa Tools](apps/tools/)** | Downloads over HTTP, magnets and torrents; a file browser and file picker; archives; a video player that saves frames and clips, with subtitles kept or burnt in; a battery monitor for wireless devices; a system monitor; themes and animated backgrounds. | Releases `tools-v*` (pre-releases) |
 
 ```bash
 cd apps/reader && npm install && npm run build     # the reader → apps/reader/dist

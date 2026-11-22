@@ -1,4 +1,6 @@
-[العربية](README.ar.md) · part of the [Kurokawa apps](../../README.md), beside **Kurokawa Tools** (downloads, torrents, streaming, a player)
+# Kurokawa Reader
+
+Part of the [Kurokawa apps](../../README.md), beside **Kurokawa Tools** (downloads, a file browser, a video player and system monitors).
 
 EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · FictionBook · OpenDocument · comics · images — one offline library.
 
@@ -11,15 +13,14 @@ EPUB · PDF · Word · Excel · PowerPoint · text & Markdown · HTML · Fiction
   <img src="docs/screenshots/manuscript-preset.png" width="48%" alt="Reading" />
 </p>
 
-- Chapters or continuous scrolling, bookmarks, highlights with notes, search, read-aloud, furigana, gestures, rebindable shortcuts
-- 27 themes, custom colours, textures and background pictures, your own fonts
-- Interface styles for the app itself — Classic (the default), Paper & Ink, Midnight Stacks, Reading Room, Obsidian and the Frosted Glass trio — chosen beside the book page, customised and saved as your own
-- Pins at the head of each shelf, deleting a book's file from the device too, and Undo / Redo throughout
-- Snapshots of selected text, built-in / device / AI translation, PNG export
-- A converter: PDF → Word keeping each page's layout (Arabic and CJK, tables, formulas, the PDF's own fonts); books to EPUB, Word, PDF (printed by the system on phones and the desktop: real text), HTML, Markdown, text, FB2, ODT, RTF and comics — going on in the background
-- Cloud sync (Dropbox · WebDAV · a Drive folder), portable backups, in-app updates on every platform
-- Online catalogs (OPDS): Project Gutenberg and other free libraries, or your own Calibre-Web, Kavita, Komga or Nextcloud shelf, browsed and fetched from inside the app
-- Sources, browsed the way Mihon browses its extensions: the Internet Archive; the Shamela library of Arabic works, read page by page from the site or fetched whole, with the site's own full-text search (no account) and وصلة الشاملة as an option; web folders (h5ai, Apache, nginx…) as shelves of series, each with its first volume's cover; extension repositories you add yourself — LNReader plugins and Mangayomi novel extensions run inside the app (sandboxed) — novels read chapter by chapter online or fetched for offline, with new-chapter and extension-update checks, a bell, a mark on the book and a notification; browser checks (Cloudflare) passed by the app itself — and a site that turns away anything but a browser reached through the app's own browser, which makes the requests itself (Android, iOS and the desktop), the reader asked to confirm they're human only when the site insists
+- **Library:** folders, series and tags, pins at the head of each shelf (tags too), covers, search, deleting a book's file from the device as well, and Undo / Redo throughout
+- **Reading:** chapters or continuous scrolling, bookmarks, highlights with notes, search, gestures, rebindable shortcuts, and text spacing in your hands — Smart justify, hyphenation, word and letter spacing, paragraph indent
+- **Themes:** 27 themes, custom colours, textures and background pictures, your own fonts; interface styles for the app itself (Classic by default, Paper & Ink, Midnight Stacks, Reading Room, Obsidian and the Frosted Glass trio), customised and saved as your own
+- **PDF:** sharp, quick zoom, a page grid, and PDF → Word keeping each page's layout (tables, formulas, the PDF's own fonts)
+- **Converter:** books to EPUB, Word, PDF, HTML, Markdown, text, FB2, ODT, RTF and comics, working in the background
+- **Read-aloud**, text snapshots and PNG export
+- **Sync and backup:** cloud sync (Dropbox · WebDAV · a Drive folder), portable backups, in-app updates on every platform
+- **Catalogues and add-ons you add yourself:** online catalogues (OPDS), web folders and extension repositories, browsed and fetched from inside the app, with checks for new chapters
 
 ```bash
 npm install && npm run build            # web → dist/
