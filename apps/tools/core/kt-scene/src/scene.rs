@@ -935,6 +935,33 @@ mod tests {
             assert!(s.all_finite() && s.live() <= 4096 && s.instances().count() > 0, "{name}");
             n += 1;
         }
-        assert!(n >= 14, "{n} scenes");
+        assert!(n >= 15, "{n} scenes");
+    }
+
+    #[test]
+    fn hydro_rings_from_a_click() {
+        // (Hydro, data only: a click drops three rings (2 + 1 inner) that grow and fade; untouched, it stays alive.)
+        const HYDRO: &str = include_str!("../../../src/theme/scenes/hydro.json");
+        let mut a = Scene::load(HYDRO.as_bytes(), 5).unwrap();
+        let mut b = Scene::load(HYDRO.as_bytes(), 5).unwrap();
+        for s in [&mut a, &mut b] {
+            s.viewport(1280.0, 800.0);
+            for _ in 0..120 {
+                s.step(1000.0 / 60.0);
+            }
+        }
+        let base = a.live();
+        assert!(base > 100, "{base}");
+        b.click(640.0, 560.0);
+        a.step(1000.0 / 60.0);
+        b.step(1000.0 / 60.0);
+        assert_eq!(b.live(), a.live() + 3, "a click drops three rings");
+        assert_ne!(a.state_hash(), b.state_hash());
+        for _ in 0..(60 * 5) {
+            a.step(1000.0 / 60.0);
+            b.step(1000.0 / 60.0);
+        }
+        // (Five seconds on: the rings have grown, faded and gone; nothing is left behind.)
+        assert!(b.all_finite() && b.live() <= a.live() + 1, "{} {}", b.live(), a.live());
     }
 }

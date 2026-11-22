@@ -1,4 +1,33 @@
 {
  "format": 1,
- "scenes": []
+ "scenes": [
+  {
+   "id": "hydro",
+   "names": {
+    "en": "Hydro",
+    "ar": "صفحةُ الماء",
+    "ja": "月夜の水面",
+    "ko": "달빛 수면",
+    "zh": "月下水面"
+   },
+   "version": "1.0",
+   "sha256": "a9c961d2f96baf2f2fc0b2b7d824923882edbd56fc92a67eef0d6d09686987bc",
+   "size": 11765,
+   "engine": 2,
+   "preview": {
+    "dark": [
+     "#05060f",
+     "#161a3a",
+     "#2c5aa6",
+     "#5e4f97"
+    ],
+    "light": [
+     "#ece8f7",
+     "#cfd2ee",
+     "#2c5aa6",
+     "#9a467a"
+    ]
+   }
+  }
+ ]
 }

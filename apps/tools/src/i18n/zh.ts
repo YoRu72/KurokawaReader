@@ -1555,6 +1555,8 @@ export const zh: Partial<Strings> = {
   animBgPetalsHint: "在黄昏光束中飘舞的花瓣",
   animBgNeon: "霓虹之夜",
   animBgNeonHint: "三层柔和的霓虹光，靠近指针时会膨胀",
+  animBgHydro: "月下水面",
+  animBgHydroHint: "月光下静谧的水面，波光在水中流转，轻点即泛起层层涟漪",
   animBgGroupSnow: "雪",
   animBgGroupWater: "雨与水",
   animBgGroupSky: "天空",

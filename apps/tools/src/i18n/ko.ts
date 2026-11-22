@@ -1555,6 +1555,8 @@ export const ko: Partial<Strings> = {
   animBgPetalsHint: "해 질 녘 빛줄기 사이로 흩날리는 꽃잎",
   animBgNeon: "네온의 밤",
   animBgNeonHint: "세 겹의 부드러운 네온 불빛, 포인터 가까이에서 부풀어 오릅니다",
+  animBgHydro: "달빛 수면",
+  animBgHydroHint: "달빛 아래 고요한 수면. 일렁이는 빛이 물속을 흐르고, 탭하면 물결이 번진다",
   animBgGroupSnow: "눈",
   animBgGroupWater: "비와 물",
   animBgGroupSky: "하늘",

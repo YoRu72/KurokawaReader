@@ -32,11 +32,12 @@ import starfield from './scenes/starfield.json';
 import meteors from './scenes/meteors.json';
 import petals from './scenes/petals.json';
 import neonNight from './scenes/neon-night.json';
+import hydro from './scenes/hydro.json';
 import { compose, mixById, type Mix, type Composed } from './sceneMix';
 import { REPO_DOCS, repoListed } from './sceneList';
 
 /** The scenes this build has, by id. */
-const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake, 'snowflakes': snowflakes, 'blizzard': blizzard, 'first-snow': firstSnow, 'rain': rain, 'waves': waves, 'underwater': underwater, 'fireflies': fireflies, 'starfield': starfield, 'meteors': meteors, 'petals': petals, 'neon-night': neonNight };
+const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake, 'snowflakes': snowflakes, 'blizzard': blizzard, 'first-snow': firstSnow, 'rain': rain, 'waves': waves, 'underwater': underwater, 'fireflies': fireflies, 'starfield': starfield, 'meteors': meteors, 'petals': petals, 'neon-night': neonNight, 'hydro': hydro };
 export const SCENE_IDS = Object.keys(SCENES);
 const ABI = 2;
 const PARAM_SPEED = 0;

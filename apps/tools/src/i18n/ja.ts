@@ -1555,6 +1555,8 @@ export const ja: Partial<Strings> = {
   animBgPetalsHint: "夕暮れの光の筋の中を舞う花びら",
   animBgNeon: "ネオンの夜",
   animBgNeonHint: "三層の柔らかなネオンの光。ポインターの近くでふくらむ",
+  animBgHydro: "月夜の水面",
+  animBgHydroHint: "月明かりの静かな水面。揺らめく光が水中を漂い、タップすると波紋が広がる",
   animBgGroupSnow: "雪",
   animBgGroupWater: "雨と水",
   animBgGroupSky: "空",

@@ -240,7 +240,8 @@ async function preflight(app) {
     const limit = (CONFIG.maxAddedFileKB || 1024) * 1024;
     const allow = (CONFIG.allowBig || []).map((g) => new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '§').replace(/\*/g, '[^/]*').replace(/§/g, '.*') + '$'));
     const big = [], junk = [];
-    for (const [f, st] of changed) { if (st !== 'A') continue; if (/(^|\/)(node_modules|dist|dist-old)\/|\.DS_Store$|(^|\/)meta\.json$|\.log$/.test(f)) junk.push(f); try { const sz = fs.statSync(path.join(ROOT, f)).size; if (sz > limit && !allow.some((r) => r.test(f))) big.push(`${f} ${(sz / 1048576).toFixed(1)} MB`); } catch {} }
+    // (esbuild's meta.json is junk; a wallpaper's scenes-src/<id>/meta.json is its catalogue entry.)
+    for (const [f, st] of changed) { if (st !== 'A') continue; if (/(^|\/)(node_modules|dist|dist-old)\/|\.DS_Store$|(^|\/)meta\.json$|\.log$/.test(f) && !/(^|\/)scenes-src\/[^/]+\/meta\.json$/.test(f)) junk.push(f); try { const sz = fs.statSync(path.join(ROOT, f)).size; if (sz > limit && !allow.some((r) => r.test(f))) big.push(`${f} ${(sz / 1048576).toFixed(1)} MB`); } catch {} }
     add(`no big or junk files added (limit ${CONFIG.maxAddedFileKB || 1024} KB)`, big.length || junk.length ? 'FAIL' : 'PASS', [...big, ...junk.map((j) => 'junk: ' + j)].slice(0, 6).join(', '));
     const y = [];
     for (const [f, st] of changed) { if (st === 'D' || !/\.css$/.test(f)) continue; for (const l of addedLines(f)) if (isYellow(l.text)) y.push(`${f}:${l.n} ${l.text.trim().slice(0, 70)}`); }

@@ -2647,6 +2647,8 @@ export const ar: Partial<Strings> = {
   animBgPetalsHint: "بتلاتٌ تتطايرُ في أشعّةِ نورِ الغسَق",
   animBgNeon: "ليلُ النيون",
   animBgNeonHint: "أضواءُ نيونٍ ناعمةٌ على ثلاثةِ أعماق، تتّسعُ قربَ المؤشِّر",
+  animBgHydro: "صفحةُ الماء",
+  animBgHydroHint: "ماءٌ ساكنٌ تحتَ القمر، يسري في جوفِه ضوءٌ متموِّج، وتبعثُ النقرةُ فيه حلقاتٍ تتّسع",
   animBgGroupSnow: "الثلج",
   animBgGroupWater: "المطرُ والماء",
   animBgGroupSky: "السماء",

@@ -32,6 +32,9 @@ async function build(dir, id) {
   for (const l of LANGS) if (typeof meta.names?.[l] !== 'string' || !meta.names[l].trim()) fail(`${id}: meta.json needs names.${l}`);
   if (typeof meta.version !== 'string' || !/^\d+(\.\d+){0,3}$/.test(meta.version)) fail(`${id}: meta.json version (dotted numbers)`);
   if (!Number.isInteger(meta.engine) || meta.engine < 1) fail(`${id}: meta.json engine (the level it needs, 1 or more)`);
+  // (A scene also built into the app, src/theme/scenes/<id>.json: the two files the same, so the catalogue never drifts from it.)
+  const builtIn = await fs.readFile(path.join(root, 'src', 'theme', 'scenes', `${id}.json`)).catch(() => null);
+  if (builtIn && !arg('--src') && sha(builtIn) !== sha(file)) fail(`${id}: scene.json differs from the built-in src/theme/scenes/${id}.json (keep them the same)`);
   const preview = {}; for (const m of ['dark', 'light']) if (Array.isArray(meta.preview?.[m])) preview[m] = meta.preview[m].filter((c) => /^#[0-9a-f]{6}$/i.test(c));
   return { file, entry: { id, names: Object.fromEntries(LANGS.map((l) => [l, meta.names[l]])), version: meta.version, sha256: sha(file), size: file.length, engine: meta.engine, preview } };
 }

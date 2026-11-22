@@ -123,7 +123,7 @@ function init({ settings, phone, lang, trapAfter }) {
     await choose(p, T.snow);
     // (The built-in scenes; the mixer's presets and «Your mixes» follow as three more groups — tests/scenemix.cjs.)
     const grid = await p.evaluate(() => ({ tiles: document.querySelectorAll('#appearance .abg-tile[data-scene]:not([data-scene^="mix:"])').length, groups: document.querySelectorAll('#appearance .abg-group').length, on: [...document.querySelectorAll('#appearance .abg-tile[aria-checked="true"]')].map((b) => b.dataset.scene) }));
-    ok('the scenes as a grid: 14 pictures in 4 groups (and the mixer\'s 3), Night snowfall marked', grid.tiles === 14 && grid.groups === 7 && grid.on.join() === 'night-snowfall', grid);
+    ok('the scenes as a grid: 15 pictures in 4 groups (and the mixer\'s 3), Night snowfall marked', grid.tiles === 15 && grid.groups === 7 && grid.on.join() === 'night-snowfall', grid);
     ok(`…«${T.motes}» and «${T.aurora}» among them`, (await p.locator('#appearance .abg-tile', { hasText: T.motes }).count()) === 1 && (await p.locator('#appearance .abg-tile', { hasText: T.aurora }).count()) === 1);
     const drawn = await waitFor(p, () => document.querySelectorAll('#appearance .abg-tile[data-scene] .abg-thumb.drawn').length === document.querySelectorAll('#appearance .abg-tile[data-scene]').length, null, 45000);
     const pics = await p.evaluate(() => [...document.querySelectorAll('#appearance .abg-tile[data-scene] .abg-thumb')].map((x) => x.style.backgroundImage.slice(0, 22)));
@@ -307,6 +307,8 @@ function init({ settings, phone, lang, trapAfter }) {
     const SEEN = {
       'motes': [0.002, 1.15], 'night-snowfall': [0.025, 1.8], 'aurora-lake': [0.04, 2], 'snowflakes': [0.003, 1.3], 'blizzard': [0.025, 1.6], 'first-snow': [0.025, 1.6], 'rain': [0.004, 1.15],
       'waves': [0.012, 1.3], 'underwater': [0.0005, 1.3], 'fireflies': [0.003, 1.5], 'starfield': [0.0012, 1.2], 'meteors': [0.007, 1.6], 'petals': [0.007, 1.5], 'neon-night': [0.002, 1.15],
+      // (Hydro: set before it was measured — the wasm is built in CI only —, at Motes' level, the calmest.)
+      'hydro': [0.002, 1.15],
     };
     const IDS = Object.keys(SEEN); const worst = []; const yellow = []; const seen = [];
     const ACC = ['graphite', 'teal', 'violet', 'gold']; const ROUTES = ['#/', '#/settings/appearance'];

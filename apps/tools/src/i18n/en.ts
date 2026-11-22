@@ -2652,6 +2652,8 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   animBgPetalsHint: "Petals drifting through rays of dusk light",
   animBgNeon: "Neon night",
   animBgNeonHint: "Soft neon lights at three depths that swell near the pointer",
+  animBgHydro: "Hydro",
+  animBgHydroHint: "Still moonlit water: caustic light drifts beneath, and a tap sends rings spreading across it",
   animBgGroupSnow: "Snow",
   animBgGroupWater: "Rain and water",
   animBgGroupSky: "Sky",
