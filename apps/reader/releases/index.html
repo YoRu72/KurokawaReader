@@ -6,8 +6,12 @@
 <title>Kurokawa Releases</title>
 <meta name="description" content="Download Kurokawa Reader for Android, iOS, Windows, macOS, Linux and the web — every release and its notes.">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#eef0ff">
 <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
 <style>
+/* Cairo (variable, SIL OFL), Arabic glyphs only: a visitor whose page has no Arabic text never downloads it. */
+@font-face { font-family: "Cairo"; font-style: normal; font-weight: 200 1000; font-display: swap; src: url("fonts/Cairo-arabic.woff2") format("woff2");
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
 :root {
   /* A moonlit palette: blue, lavender dusk, a touch of rose — on a pale blue-lilac ground. */
   --p: #2c5aa6; --on-p: #fff; --pc: #d8e3ff; --on-pc: #0b2a5e;
@@ -21,28 +25,38 @@
   --spring: linear(0,.009,.035 2.1%,.141,.281 6.7%,.723 12.9%,.938 16.7%,1.017,1.077,1.121,1.149 24.3%,1.159,1.163,1.161,1.154 29.9%,1.129 32.8%,1.051 39.6%,1.017 43.1%,.991,.977 51%,.974 53.8%,.975 57.1%,.997 69.8%,1.003 76.9%,1);
   --ff: "Google Sans Flex", "Roboto Flex", system-ui, -apple-system, "Segoe UI", "Noto Sans", "Noto Sans Arabic", sans-serif;
   --dx: 4px;
+  --cardbg: var(--card); --ring: transparent; --bf: blur(14px) saturate(1.2); --hf: blur(8px) saturate(1.2);
+  --opt: #fff; --herofx: none; --cardedge: 0 1px 0 var(--edge) inset;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --p: #9db8ec; --on-p: #0b2250; --pc: #213762; --on-pc: #d6e2ff;
-  --s: #b8adea; --scc: #2f2a5a; --on-scc: #e4ddff;
-  --t: #dfa4c8; --tc: #4a2842; --on-tc: #ffdaee;
-  --bg-a: #0b1226; --bg-b: #131637; --bg-c: #0c1630;
-  --card: rgba(26,34,66,.62); --row: rgba(34,44,84,.62); --bar: rgba(13,19,40,.72);
-  --text: #e3e8f8; --muted: #aeb9d6; --line: #34406a; --edge: rgba(150,170,230,.16);
-  --shadow: 0 12px 30px -18px rgba(0,0,0,.6);
-  --orb-1: rgba(70,100,190,.30); --orb-2: rgba(100,80,180,.26); --orb-3: rgba(160,90,140,.18);
+  /* The former dark look: neutral blue-greys, solid surfaces, the classic blue / violet / green accents. */
+  --p: #4fa3ff; --on-p: #04223f; --pc: #1c3756; --on-pc: #b9daff;
+  --s: #bca6ff; --scc: #2a2150; --on-scc: #e1d8ff;
+  --t: #6fdda9; --tc: #12352a; --on-tc: #6fdda9;
+  --bg-a: #0d1117; --bg-b: #0d1117; --bg-c: #0d1117;
+  --card: #151b24; --row: #1b2330; --bar: rgba(13,17,23,.94);
+  --text: #e7edf6; --muted: #9aa8bc; --line: #2a3546; --edge: rgba(255,255,255,.06);
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.25);
+  --orb-1: transparent; --orb-2: transparent; --orb-3: transparent;
+  --cardbg: var(--card); --ring: transparent; --bf: none; --hf: none; --opt: #151b24;
+  --herofx: radial-gradient(circle at 92% -10%, rgba(79,163,255,.13), transparent 55%);
+  --cardedge: 0 1px 0 rgba(255,255,255,.05) inset;
   color-scheme: dark;
 } }
 :root[data-theme="dark"] {
-  --p: #9db8ec; --on-p: #0b2250; --pc: #213762; --on-pc: #d6e2ff;
-  --s: #b8adea; --scc: #2f2a5a; --on-scc: #e4ddff;
-  --t: #dfa4c8; --tc: #4a2842; --on-tc: #ffdaee;
-  --bg-a: #0b1226; --bg-b: #131637; --bg-c: #0c1630;
-  --card: rgba(26,34,66,.62); --row: rgba(34,44,84,.62); --bar: rgba(13,19,40,.72);
-  --text: #e3e8f8; --muted: #aeb9d6; --line: #34406a; --edge: rgba(150,170,230,.16);
-  --shadow: 0 12px 30px -18px rgba(0,0,0,.6);
-  --orb-1: rgba(70,100,190,.30); --orb-2: rgba(100,80,180,.26); --orb-3: rgba(160,90,140,.18);
+  /* The former dark look: neutral blue-greys, solid surfaces, the classic blue / violet / green accents. */
+  --p: #4fa3ff; --on-p: #04223f; --pc: #1c3756; --on-pc: #b9daff;
+  --s: #bca6ff; --scc: #2a2150; --on-scc: #e1d8ff;
+  --t: #6fdda9; --tc: #12352a; --on-tc: #6fdda9;
+  --bg-a: #0d1117; --bg-b: #0d1117; --bg-c: #0d1117;
+  --card: #151b24; --row: #1b2330; --bar: rgba(13,17,23,.94);
+  --text: #e7edf6; --muted: #9aa8bc; --line: #2a3546; --edge: rgba(255,255,255,.06);
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.25);
+  --orb-1: transparent; --orb-2: transparent; --orb-3: transparent;
+  --cardbg: var(--card); --ring: transparent; --bf: none; --hf: none; --opt: #151b24;
+  --herofx: radial-gradient(circle at 92% -10%, rgba(79,163,255,.13), transparent 55%);
+  --cardedge: 0 1px 0 rgba(255,255,255,.05) inset;
   color-scheme: dark;
 }
 [dir="rtl"] { --dx: -4px; }
@@ -50,6 +64,7 @@
 html { -webkit-text-size-adjust: 100%; background: var(--bg-a); }
 body { margin: 0; min-height: 100vh; color: var(--text); font: 16px/1.6 var(--ff); -webkit-font-smoothing: antialiased;
   background: linear-gradient(170deg, var(--bg-a) 0%, var(--bg-b) 46%, var(--bg-c) 100%) fixed; }
+:lang(ar) { --ff: "Cairo", "Noto Sans Arabic", "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif; }
 :lang(ja) { --ff: "Google Sans Flex", "Roboto Flex", system-ui, "Hiragino Sans", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP", sans-serif; }
 :lang(ko) { --ff: "Google Sans Flex", "Roboto Flex", system-ui, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Noto Sans KR", sans-serif; }
 :lang(zh) { --ff: "Google Sans Flex", "Roboto Flex", system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif; }
@@ -63,9 +78,10 @@ button, input, select { font: inherit; color: inherit; }
 .orbs { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
   background: radial-gradient(60vmax 50vmax at 12% -8%, var(--orb-1), transparent 70%), radial-gradient(55vmax 45vmax at 98% 30%, var(--orb-2), transparent 70%), radial-gradient(50vmax 40vmax at 30% 112%, var(--orb-3), transparent 70%); }
 #fx { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+#bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
 
 /* Top bar */
-.top { position: sticky; top: 0; z-index: 10; background: var(--bar); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); border-bottom: 1px solid var(--edge); }
+.top { position: sticky; top: 0; z-index: 10; background: var(--bar); backdrop-filter: var(--bf); -webkit-backdrop-filter: var(--bf); border-bottom: 1px solid var(--edge); }
 .top .wrap { display: flex; align-items: center; gap: 10px; min-height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; color: var(--text); margin-inline-end: auto; }
 .brand img { width: 32px; height: 32px; border-radius: 10px; }
@@ -78,15 +94,16 @@ button, input, select { font: inherit; color: inherit; }
 .sel select { appearance: none; -webkit-appearance: none; height: 44px; border-radius: 22px; border: 0; background: var(--row); cursor: pointer; font-weight: 600; padding-block: 0; padding-inline: 38px 16px; transition: border-radius .5s var(--spring); }
 .sel select:hover { border-radius: 14px; }
 .sel svg { position: absolute; inset-inline-start: 12px; width: 18px; height: 18px; pointer-events: none; color: var(--p); }
-.sel option { color: #0e1a33; background: #fff; }
+.sel option { color: var(--text); background: var(--opt); }
 
 /* Cards */
-.card { background: var(--card); border-radius: 32px; box-shadow: 0 1px 0 var(--edge) inset, var(--shadow); transition: border-radius .6s var(--spring); }
+.card { background: var(--cardbg); border: 1px solid transparent; border-radius: 32px; box-shadow: var(--cardedge), var(--shadow); transition: border-radius .6s var(--spring); }
 .card:hover { border-radius: 44px; }
 
 /* Hero */
-.hero { position: relative; margin: 20px 0 8px; padding: 32px; backdrop-filter: blur(8px) saturate(1.2); -webkit-backdrop-filter: blur(8px) saturate(1.2); }
-.hero-in { display: grid; grid-template-columns: auto 1fr; gap: 32px; align-items: center; }
+.hero { position: relative; margin: 20px 0 8px; padding: 32px; backdrop-filter: var(--hf); -webkit-backdrop-filter: var(--hf); }
+.hero::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--herofx); pointer-events: none; }
+.hero-in { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 32px; align-items: center; }
 .emblem { position: relative; width: 148px; height: 148px; cursor: pointer; }
 .emblem .blob { position: absolute; inset: 0; background: conic-gradient(from 0deg, var(--p), var(--s), var(--t), var(--s), var(--p)); clip-path: var(--cookie, circle(50%)); animation: spin 28s linear infinite; transition: clip-path .9s var(--spring); }
 .emblem .face { position: absolute; inset: 9%; display: grid; place-items: center; background: var(--pc); clip-path: var(--cookie, circle(50%)); transition: clip-path .9s var(--spring); }
@@ -100,7 +117,7 @@ button, input, select { font: inherit; color: inherit; }
 .tag { position: relative; margin: 0; padding-inline-start: 18px; color: var(--muted); font-size: clamp(16px, 2.6vw, 19px); line-height: 1.55; max-width: 52ch; }
 .tag::before { content: ""; position: absolute; inset-inline-start: 0; top: .2em; bottom: .2em; width: 5px; border-radius: 5px; background: linear-gradient(var(--p), var(--t)); }
 .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; border-radius: 999px; background: var(--pc); color: var(--on-pc); font-size: 14px; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; border-radius: 999px; background: var(--pc); color: var(--on-pc); box-shadow: inset 0 0 0 1px var(--ring); font-size: 14px; font-weight: 600; }
 .chip.ghost { background: var(--scc); color: var(--on-scc); font-weight: 500; }
 .cta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
 .btn { appearance: none; border: 0; display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 56px; padding: 0 26px; border-radius: 28px; cursor: pointer; text-decoration: none; font-weight: 600; font-size: 16px; line-height: 1.2;
@@ -109,7 +126,7 @@ button, input, select { font: inherit; color: inherit; }
 .btn:active { transform: scale(.94); border-radius: 12px; }
 .btn svg { width: 20px; height: 20px; flex: none; }
 .btn small { font-weight: 500; opacity: .85; font-size: 14px; }
-.btn.ton { background: var(--scc); color: var(--on-scc); }
+.btn.ton { background: var(--scc); color: var(--on-scc); box-shadow: inset 0 0 0 1px var(--ring); }
 
 /* Section titles */
 h2 { scroll-margin-top: 84px; display: flex; align-items: center; gap: 10px; font-size: 24px; line-height: 1.15; margin: 40px 0 14px; letter-spacing: -.01em; font-weight: 740; font-variation-settings: "wght" 740, "wdth" 105, "ROND" 100; }
@@ -117,8 +134,8 @@ h2 svg { width: 22px; height: 22px; color: var(--t); flex: none; }
 
 /* Platforms */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; }
-.plat { min-width: 0; padding: 20px; display: flex; flex-direction: column; gap: 14px; border: 2px solid transparent; }
-.plat.mine { border-color: color-mix(in srgb, var(--p) 55%, transparent); }
+.plat { min-width: 0; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.plat.mine { border: 2px solid color-mix(in srgb, var(--p) 60%, transparent); padding: 19px; }
 .plat-h { display: flex; align-items: center; gap: 14px; }
 .badge-ic { width: 48px; height: 48px; display: grid; place-items: center; flex: none; background: var(--p); color: var(--on-p); clip-path: var(--cookie, circle(50%)); transition: clip-path .7s var(--spring); }
 .plat:nth-child(3n+2) .badge-ic { background: var(--s); color: var(--on-p); }
@@ -151,7 +168,7 @@ h2 svg { width: 22px; height: 22px; color: var(--t); flex: none; }
 /* Releases */
 .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 40px 0 14px; }
 .bar h2 { margin: 0; margin-inline-end: auto; }
-.search { display: flex; align-items: center; gap: 8px; background: var(--row); border-radius: 22px; padding: 0 16px; min-width: 0; flex: 0 1 320px; transition: border-radius .5s var(--spring); }
+.search { box-shadow: inset 0 0 0 1px var(--ring); display: flex; align-items: center; gap: 8px; background: var(--row); border-radius: 22px; padding: 0 16px; min-width: 0; flex: 0 1 320px; transition: border-radius .5s var(--spring); }
 .search:hover, .search:focus-within { border-radius: 14px; }
 .search svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
 .search input { border: 0; background: transparent; outline: none; padding: 0; min-height: 44px; width: 100%; min-width: 0; }
@@ -191,6 +208,18 @@ details.fold[open] > .panel { animation: pop .65s var(--spring) both; transform-
 footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px 16px 56px; }
 .skel { height: 150px; border-radius: 32px; background: var(--card); margin-bottom: 14px; animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .45; } }
+/* Arabic in Cairo: it sits taller, and its letters join, so no tracking */
+:lang(ar) body { line-height: 1.75; }
+:lang(ar) .hero h1 { font-weight: 800; font-variation-settings: "wght" 800; letter-spacing: 0; line-height: 1.35; transition: font-variation-settings .8s var(--spring); }
+:lang(ar) .hero h1:hover { font-variation-settings: "wght" 1000; }
+:lang(ar) h2 { letter-spacing: 0; line-height: 1.5; font-variation-settings: "wght" 760; }
+:lang(ar) .eyebrow { letter-spacing: 0; text-transform: none; font-size: 14px; }
+:lang(ar) .plat h3 { line-height: 1.5; font-variation-settings: "wght" 700; }
+:lang(ar) .tag { line-height: 1.9; }
+:lang(ar) .btn, :lang(ar) .copy button { line-height: 1.4; }
+:lang(ar) .file b, :lang(ar) .chip, :lang(ar) .tagb, :lang(ar) .hint, :lang(ar) .count { line-height: 1.6; }
+:lang(ar) .file .sub { line-height: 1.7; }
+:lang(ar) .rel-h .date { line-height: 1.6; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: .01s !important; }
 }
@@ -208,6 +237,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
 </head>
 <body>
 <div class="orbs" aria-hidden="true"></div>
+<canvas id="bg" aria-hidden="true"></canvas>
 <canvas id="fx" aria-hidden="true"></canvas>
 <header class="top"><div class="wrap">
   <a class="brand" href="#" id="brand"><img id="brandIcon" src="../icons/icon.svg" alt=""><span id="brandName">Kurokawa</span></a>
@@ -544,7 +574,7 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
   // ── Events ──────────────────────────────────────────────────────────────────────────────────────────────
   $('langSel').onchange = (e) => { lang = e.target.value; store.set('kr.rel.lang', lang); draw(); };
   const applyTheme = () => { const th = store.get('kr.rel.theme') || 'auto'; if (th === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', th); };
-  $('themeBtn').onclick = () => { const order = ['auto', 'light', 'dark']; const th = store.get('kr.rel.theme') || 'auto'; store.set('kr.rel.theme', order[(order.indexOf(th) + 1) % 3]); applyTheme(); chrome(); };
+  $('themeBtn').onclick = () => { const order = ['auto', 'light', 'dark']; const th = store.get('kr.rel.theme') || 'auto'; store.set('kr.rel.theme', order[(order.indexOf(th) + 1) % 3]); applyTheme(); chrome(); recolor(); };
   let timer; $('q').addEventListener('input', (e) => { clearTimeout(timer); timer = setTimeout(() => { query = e.target.value; shown = 8; releases(); }, 120); });
   $('moreBtn').onclick = () => { shown += 10; releases(); };
   $('brand').onclick = (e) => { e.preventDefault(); scrollTo({ top: 0, behavior: reduce.matches ? 'auto' : 'smooth' }); };
@@ -556,23 +586,74 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
     (navigator.clipboard?.writeText(b.dataset.copy) ?? Promise.reject()).then(done).catch(() => { const r = document.createRange(); r.selectNodeContents(b.previousElementSibling); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
   });
 
-  // ── A soft ripple where the page is touched: the canvas draws only while a ripple is alive ───────────────
-  const cv = $('fx'); const cx = cv.getContext('2d'); let rips = []; let raf = 0; let tint = '#2c5aa6';
-  const fit = () => { const d = Math.min(devicePixelRatio || 1, 2), w = innerWidth, h = innerHeight; if (cv.width !== Math.round(w * d) || cv.height !== Math.round(h * d)) { cv.width = Math.round(w * d); cv.height = Math.round(h * d); cv.style.width = w + 'px'; cv.style.height = h + 'px'; } cx.setTransform(d, 0, 0, d, 0, 0); };
-  const step = (now) => {
-    cx.clearRect(0, 0, cv.width, cv.height);
-    rips = rips.filter((r) => now - r.t < 800);
-    for (const r of rips) { const k = (now - r.t) / 800, e = 1 - (1 - k) * (1 - k) * (1 - k); cx.globalAlpha = .2 * (1 - k); cx.fillStyle = tint; cx.beginPath(); cx.arc(r.x, r.y, 24 + 150 * e, 0, 6.2832); cx.fill(); }
-    cx.globalAlpha = 1;
-    raf = rips.length ? requestAnimationFrame(step) : 0;
+  // ── The sky: drifting motes (stars in the dark, moon-dust in the light) and the tap ripple, one loop ──────
+  // One requestAnimationFrame loop draws both canvases; it sleeps while the tab is hidden and is off under
+  // reduced motion (a still field is painted once). Nothing in the loop reads layout.
+  const bg = $('bg'), bx = bg.getContext('2d'), cv = $('fx'), cx = cv.getContext('2d');
+  const darkMq = matchMedia('(prefers-color-scheme: dark)');
+  const isDark = () => { const th = store.get('kr.rel.theme') || 'auto'; return th === 'dark' || (th !== 'light' && darkMq.matches); };
+  let W = 0, H = 0, sy = 0, px = 0, py = 0, pin = false, raf = 0, last = 0, rips = [], fxDirty = false;
+  let motes = [], spr = [], dark = false, AM = 1, tint = '#2c5aa6', shoot = null, nextShoot = 0;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const sprite = (rgb, core) => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    r.addColorStop(0, core ? 'rgba(255,255,255,1)' : `rgba(${rgb},.9)`); r.addColorStop(.16, `rgba(${rgb},${core ? .85 : .55})`); r.addColorStop(.5, `rgba(${rgb},.15)`); r.addColorStop(1, `rgba(${rgb},0)`);
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64); return c; };
+  const mote = () => { const z = rnd(.25, 1); return { x: rnd(0, W), y: rnd(0, H), z, s: 3 + z * z * 11 + rnd(0, 2), a: .3 + .7 * z * rnd(.6, 1), c: (Math.random() * 3) | 0, tw: Math.random() < .3 ? rnd(.8, 2.2) : 0, ph: rnd(0, 6.28), vx: rnd(-5, 5) * z, vy: -rnd(3, 11) * z, ox: 0, oy: 0, wx: 0, wy: 0 }; };
+  const want = () => Math.min(W < 640 ? 60 : 140, Math.round(W * H / 5500));
+  const fit = () => {
+    W = innerWidth; H = innerHeight; const d = Math.min(devicePixelRatio || 1, 2);
+    for (const c of [bg, cv]) { c.width = Math.round(W * d); c.height = Math.round(H * d); c.style.width = W + 'px'; c.style.height = H + 'px'; c.getContext('2d').setTransform(d, 0, 0, d, 0, 0); }
+    const n = want(); while (motes.length < n) motes.push(mote()); motes.length = n; sy = scrollY;
+    if (reduce.matches && spr.length) paint(0, 0);
   };
-  addEventListener('pointerdown', (e) => {
-    if (reduce.matches) return;
-    rips.push({ x: e.clientX, y: e.clientY, t: performance.now() }); if (rips.length > 5) rips.shift();
-    if (!raf) { fit(); tint = getComputedStyle(document.documentElement).getPropertyValue('--p').trim() || tint; raf = requestAnimationFrame(step); }
-  }, { passive: true });
+  const recolor = () => {
+    dark = isDark(); AM = dark ? 1 : .62;
+    spr = (dark ? ['150,185,255', '190,172,255', '150,230,190'] : ['70,110,200', '120,96,200', '190,90,150']).map((c) => sprite(c, dark));
+    tint = getComputedStyle(document.documentElement).getPropertyValue('--p').trim() || tint;
+    const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = getComputedStyle(document.documentElement).getPropertyValue('--bg-a').trim() || (dark ? '#0d1117' : '#eef0ff');
+    if (!dark) shoot = null; if (reduce.matches) paint(0, 0);
+  };
+  const paint = (now, dt) => {
+    bx.clearRect(0, 0, W, H);
+    const live = rips.length > 0; const push = pin || live;
+    for (const m of motes) {
+      m.x += m.vx * dt; m.y += m.vy * dt; if (m.x < -20) m.x = W + 20; else if (m.x > W + 20) m.x = -20;
+      const by = (((m.y - sy * m.z * .35) % H) + H) % H;
+      if (dt && (push || m.ox || m.oy)) {
+        let ax = -m.ox * 5 - m.wx * 3.2, ay = -m.oy * 5 - m.wy * 3.2; const X = m.x + m.ox, Y = by + m.oy;
+        if (pin) { const dx = X - px, dy = Y - py, d2 = dx * dx + dy * dy; if (d2 < 16900 && d2 > 1) { const d = Math.sqrt(d2), f = 1 - d / 130; ax += dx / d * f * 240 * m.z; ay += dy / d * f * 240 * m.z; } }
+        for (const r of rips) { const k = (now - r.t) / 800, rr = 24 + 150 * (1 - (1 - k) ** 3), dx = X - r.x, dy = Y - r.y, d = Math.hypot(dx, dy) || 1, w = 1 - Math.abs(d - rr) / 30; if (w > 0) { const f = w * (1 - k) * 1500 * m.z; ax += dx / d * f; ay += dy / d * f; } }
+        m.wx += ax * dt; m.wy += ay * dt; m.ox += m.wx * dt; m.oy += m.wy * dt;
+        if (!push && Math.abs(m.ox) + Math.abs(m.oy) + Math.abs(m.wx) + Math.abs(m.wy) < .05) m.ox = m.oy = m.wx = m.wy = 0;
+      }
+      let al = m.a * AM; if (m.tw) al *= .7 + .3 * Math.sin(now * .001 * m.tw + m.ph);
+      bx.globalAlpha = al; bx.drawImage(spr[m.c], m.x + m.ox - m.s, by + m.oy - m.s, m.s * 2, m.s * 2);
+    }
+    bx.globalAlpha = 1;
+    if (dark && dt) {
+      if (!shoot && now > nextShoot) { shoot = { x: rnd(.1, .7) * W, y: rnd(0, .35) * H, t: now }; nextShoot = now + rnd(7000, 15000); }
+      if (shoot) { const k = (now - shoot.t) / 1200; if (k >= 1) shoot = null; else { const hx = shoot.x + 520 * k * 1.2 * .9, hy = shoot.y + 520 * k * 1.2 * .42, g = bx.createLinearGradient(hx, hy, hx - 110, hy - 50); g.addColorStop(0, `rgba(235,242,255,${.8 * Math.sin(k * 3.1416)})`); g.addColorStop(1, 'rgba(160,190,255,0)'); bx.strokeStyle = g; bx.lineWidth = 1.5; bx.beginPath(); bx.moveTo(hx, hy); bx.lineTo(hx - 110, hy - 50); bx.stroke(); } }
+    }
+    if (live || fxDirty) {
+      cx.clearRect(0, 0, W, H); rips = rips.filter((r) => now - r.t < 800);
+      for (const r of rips) { const k = (now - r.t) / 800, e = 1 - (1 - k) ** 3; cx.globalAlpha = .2 * (1 - k); cx.fillStyle = tint; cx.beginPath(); cx.arc(r.x, r.y, 24 + 150 * e, 0, 6.2832); cx.fill(); }
+      cx.globalAlpha = 1; fxDirty = rips.length > 0;
+    }
+  };
+  const frame = (now) => { const dt = Math.min(.05, (now - last) / 1000) || .016; last = now; paint(now, dt); raf = requestAnimationFrame(frame); };
+  const start = () => { if (!raf && !document.hidden && !reduce.matches) { last = performance.now(); raf = requestAnimationFrame(frame); } };
+  const stop = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+  addEventListener('pointerdown', (e) => { if (reduce.matches) return; rips.push({ x: e.clientX, y: e.clientY, t: performance.now() }); if (rips.length > 5) rips.shift(); fxDirty = true; px = e.clientX; py = e.clientY; start(); }, { passive: true });
+  addEventListener('pointermove', (e) => { px = e.clientX; py = e.clientY; pin = e.pointerType === 'mouse'; }, { passive: true });
+  addEventListener('pointerup', (e) => { if (e.pointerType !== 'mouse') pin = false; }, { passive: true });
+  document.documentElement.addEventListener('pointerleave', () => { pin = false; });
+  addEventListener('scroll', () => { sy = scrollY; }, { passive: true });
+  addEventListener('resize', fit);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else start(); });
+  const motion = () => { if (reduce.matches) { stop(); rips = []; cx.clearRect(0, 0, W, H); paint(0, 0); } else start(); };
+  reduce.addEventListener?.('change', motion); darkMq.addEventListener?.('change', () => { recolor(); });
 
-  applyTheme(); chrome();
+  applyTheme(); chrome(); fit(); recolor(); motion();
 
   // ── Data: the list made when the site was published; GitHub's own as a fallback ──────────────────────────
   const fromGitHub = async () => {
