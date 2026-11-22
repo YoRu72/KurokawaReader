@@ -787,6 +787,7 @@ export const en = {
   translateWholeBook: 'Translate the whole book',
   brightnessMode: 'Brightness control',
   brightnessApp: 'In-app dimming (edge swipe)',
+  brightnessAppPc: 'In-app dimming',
   brightnessDevice: 'Device brightness (no in-app dimming)',
   browseModels: 'Browse models',
   noModelsFound: 'No models came back for this key.',

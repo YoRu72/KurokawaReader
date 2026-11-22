@@ -2,6 +2,10 @@
 // after another into a single scroll — that is what "read together" means —
 // while PDFs get the page-based viewer.
 import { markReading } from '../resume';
+import { ensureStyle } from '../ui/lazycss';
+import READER_CSS from '../styles/reader.lazy.css' with { type: 'text' };
+// (The reading screen's styles: with this view, not with the library's — before anything of it is drawn.)
+ensureStyle('kr-reader-css', READER_CSS as string);
 import { diagOpen, diagLeaveIntent, diagEvent, diagBackHeld } from '../diag';
 import { onBack, arrowBack } from '../ui/backstack';
 import { readingKeys, refreshReadingKeys, swipeTurned, inSystemZone, overBook } from '../readkeys';
@@ -67,7 +71,7 @@ import { openSheet, askText } from '../ui/dom';
 const searchKeep = (): boolean => { try { return localStorage.getItem('kr.searchKeep') !== '0'; } catch { return true; } };
 function keepToggle(onOff: () => void): HTMLElement {
   const box = h('input', { type: 'checkbox', checked: searchKeep(), onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; try { localStorage.setItem('kr.searchKeep', v ? '1' : '0'); } catch { /* none */ } if (!v) onOff(); } }) as HTMLInputElement;
-  return h('label', { class: 'search-keep' }, box, h('span', null, t('searchKeepLast')));
+  return h('label', { class: 'search-keep' }, h('span', { class: 'switch' }, box, h('i')), h('span', null, t('searchKeepLast')));
 }
 
 interface OpenDoc {

@@ -8,6 +8,7 @@
 .kr-dict-name { font-size: 14px; font-weight: 600; color: var(--md-on-surface); }
 .kr-dict-state { font-size: 12.5px; color: var(--md-on-surface-variant); font-variant-numeric: tabular-nums; }
 .kr-dict-fail { font-size: 12.5px; line-height: 1.45; color: var(--md-error); }
+.kr-dict-detail { display: block; font-size: 11px; line-height: 1.4; opacity: .7; font-family: ui-monospace, Menlo, Consolas, monospace; word-break: break-word; unicode-bidi: plaintext; text-align: start; }
 .kr-dict-actions { flex: none; display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
 .kr-dict-bar { height: 6px; border-radius: 3px; background: var(--md-surface-container-highest); overflow: hidden; margin-top: 6px; }
 .kr-dict-bar span { display: block; height: 100%; width: 0; background: var(--md-primary); border-radius: 3px; transition: width .2s linear; }
@@ -43,3 +44,4 @@ html.pc:not(.rail-off)[dir='rtl'] .kr-notice { left: calc(50% - var(--rail-w) / 
 .kr-dict-actions .btn, .kr-notice-actions .btn { min-height: 36px; height: auto; padding-block: 6px; white-space: normal; text-align: center; }
 /* A phone's narrow row: the buttons under the text, at its start side like the other buttons in Settings. */
 @media (max-width: 480px) { .kr-dict-row .kr-dict-actions { flex-basis: 100%; margin-inline-start: 0; justify-content: flex-start; } }
+html:not(.pc) .kr-notice .icon-btn.kr-notice-x { width: 44px; height: 44px; }

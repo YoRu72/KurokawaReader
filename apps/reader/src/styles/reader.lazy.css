@@ -262,11 +262,15 @@ html[dir='rtl'] .kr-slide .kr-slide-n { text-transform: none; letter-spacing: 0;
 /* PDF */
 .pdf-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--r-bg); }
 .pdf-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; padding: 12px 0 40vh; touch-action: pan-x pan-y; }
-.pdf-inner { display: block; will-change: transform; }
+/* (will-change only while a zoom moves it: set and cleared by the viewer.) */
+.pdf-inner { display: block; }
 .pdf-view[data-pagenums='false'] .pdf-page .pnum { display: none; }
 /* (A light shadow, and no animation on the hundreds of pages out of view: both cost a repaint on every frame of
    scrolling on a phone. Pages are laid out but not painted until near the screen.) */
 .pdf-page { position: relative; margin: 0 auto 14px; background: #f4f4f4; box-shadow: 0 1px 4px rgba(0,0,0,.35); overflow: hidden; content-visibility: auto; }
+/* (A page with its picture is always painted: skipped by content-visibility it flashed blank — black on a dark page —
+   for a frame each time a zoom brought it on the screen.) */
+.pdf-page.drawn { content-visibility: visible; }
 .pdf-page.loading { background: linear-gradient(100deg, #f2f2f2 30%, #fafafa 50%, #f2f2f2 70%) 0 0 / 200% 100%; animation: kr-shimmer 1.4s linear infinite; }
 .pdf-view[data-invert='true'] .pdf-page.loading { background: linear-gradient(100deg, #1e1e1e 30%, #2a2a2a 50%, #1e1e1e 70%) 0 0 / 200% 100%; }
 .pdf-page .pdf-pic { position: absolute; inset: 0; }
@@ -830,3 +834,6 @@ html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'][data-side='e
 .pg-hidden { border-style: dashed; }
 .pg-hidden::before { opacity: 0; }
 .pg-hidden i { top: 50%; left: -2px; right: -2px; height: 1.4px; transform: rotate(-45deg); }
+/* A finger needs 40 px (tests/uihunt.cjs): the PDF bar's page box on the side layout, and its buttons. */
+html:not(.pc) .pdf-bar[data-layout='side'] input[type='number'] { height: 40px; }
+html:not(.pc) .pdf-bar .icon-btn, html:not(.pc) .pdf-bar form button { min-height: 40px; }

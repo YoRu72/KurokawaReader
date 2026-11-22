@@ -711,6 +711,9 @@ kbd { font-family: var(--font-ui); background: var(--md-surface-container-highes
 .dest-row input[type=radio] { accent-color: var(--md-primary); width: 18px; height: 18px; }
 .dest-row input[type=text] { grid-column: 2 / -1; }
 .actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+/* A row of buttons of one width (the labels wrap inside them instead of making them unequal). */
+.actions-row.eq { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.actions-row.eq > .btn { white-space: normal; height: auto; min-height: 36px; text-align: center; justify-content: center; }
 .chip-sep { width: 1px; align-self: stretch; margin: 6px 4px; background: var(--md-outline-variant); flex: 0 0 auto; }
 .brightness-hud { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: color-mix(in srgb, var(--md-surface-container-highest) 85%, transparent); color: var(--md-on-surface); font: 500 14px var(--font-ui); z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
 .brightness-hud.on { opacity: 1; }
@@ -2105,7 +2108,6 @@ html[dir='rtl'] .tr-term .upd-arrow svg { transform: scaleX(-1); }
 body:has(.panel.open, .sheet) .tr-pill, body:has(.panel.open, .sheet) .tr-mini { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(200%); transition: opacity .15s, transform .2s; }
 body:has(.panel.open, .sheet) .tr-mini { transform: translateY(200%); }
 .search-keep { display: flex; align-items: center; gap: 10px; margin: 10px 2px 2px; font: 13.5px var(--font-ui); color: var(--md-on-surface-variant); cursor: pointer; }
-.search-keep input { width: 20px; height: 20px; accent-color: var(--md-primary); }
 .plain-list .hit.current > button { background: var(--md-secondary-container); }
 /* Stepping through a PDF's search hits over the page. */
 .search-nav { position: fixed; left: 50%; transform: translateX(-50%); top: calc(var(--safe-top) + 70px); z-index: 42; display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: var(--sh-full); background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); max-width: calc(100vw - 20px); box-sizing: border-box; font: 500 13.5px var(--font-ui); animation: pop2 var(--dur-med) var(--ease-spring); }
@@ -2400,3 +2402,15 @@ html[dir='rtl'] .fr-start svg { transform: scaleX(-1); }
 .vol-back-list .btn { justify-content: flex-start; min-height: 56px; padding: 10px 18px; gap: 14px; text-align: start; }
 .vol-back-list .btn > span { display: flex; flex-direction: column; gap: 2px; }
 .vol-back-list .btn small { font-weight: 400; font-size: 12.5px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
+
+/* ---- Found by tests/uihunt.cjs: touch targets and neighbours (a phone's finger needs 40 px; neighbours never touch) ---- */
+.topbar-actions { display: flex; align-items: center; gap: 2px; }
+html:not(.pc) .chip.small { height: 40px; }
+html:not(.pc) .btn.small { min-width: 40px; }
+html:not(.pc) .btn.small, html:not(.pc) .btn.tonal, html:not(.pc) .btn.text, html:not(.pc) .btn.outlined { min-height: 40px; }
+html:not(.pc) .update-toast .icon-btn, html:not(.pc) .row-actions .icon-btn { width: 40px; height: 40px; }
+/* Equal buttons in one row (tests/uihunt.cjs): the same basis, growing alike; a row that does not fit wraps. */
+.repos-add-row > .btn { flex: 1 1 150px; }
+/* No native spinner on any number box (the app's own steppers / typing do it). */
+input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+input[type='number']::-webkit-inner-spin-button, input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

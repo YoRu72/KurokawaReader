@@ -1,17 +1,27 @@
-import { en, type Strings } from './en';
+import type { Strings } from './en';
 
 export type Lang = 'en' | 'ar' | 'ja' | 'zh' | 'ko';
-// (English is always here, the fallback for any string; the language in use is fetched before the first view is
-// drawn, and another when chosen — not all five read at every start: a third of the startup's code.)
-const tables: Partial<Record<Lang, Partial<Strings>>> = { en };
-const loaders: Record<Exclude<Lang, 'en'>, () => Promise<Partial<Strings>>> = {
-  ar: () => import('./ar').then((m) => m.ar), ja: () => import('./ja').then((m) => m.ja), zh: () => import('./zh').then((m) => m.zh), ko: () => import('./ko').then((m) => m.ko),
+// (The language in use is fetched before the first view is drawn, and another when chosen — not all five read at
+// every start: a third of the startup's code. English is the fallback of any string a table lacks: fetched with
+// the language when that one is partial (ja, zh, ko), and when the screen is idle for Arabic, whose table is whole
+// — so an Arabic start does not carry the English table. index.html preloads the chunks the saved language needs.)
+const tables: Partial<Record<Lang, Partial<Strings>>> = {};
+const loaders: Record<Lang, () => Promise<Partial<Strings>>> = {
+  en: () => import('./en').then((m) => m.en), ar: () => import('./ar').then((m) => m.ar), ja: () => import('./ja').then((m) => m.ja), zh: () => import('./zh').then((m) => m.zh), ko: () => import('./ko').then((m) => m.ko),
 };
-/** The strings of `lang` fetched (at once when already here). */
-export async function loadLang(lang: Lang): Promise<void> {
-  if (tables[lang]) return;
-  try { tables[lang] = await loaders[lang as Exclude<Lang, 'en'>](); } catch { /* English meanwhile */ }
+const loading = new Map<Lang, Promise<void>>();
+function fetchTable(lang: Lang): Promise<void> {
+  if (tables[lang]) return Promise.resolve();
+  let p = loading.get(lang);
+  if (!p) { p = loaders[lang]().then((tb) => { tables[lang] = tb; }, () => { /* English meanwhile */ }).finally(() => loading.delete(lang)); loading.set(lang, p); }
+  return p;
 }
+/** The strings of `lang` fetched (at once when already here), with English beside them unless the table is whole. */
+export async function loadLang(lang: Lang): Promise<void> {
+  await Promise.all([fetchTable(lang), lang === 'en' || lang === 'ar' ? undefined : fetchTable('en')]);
+}
+/** English, the fallback, fetched when nothing else is (Arabic start). */
+export function loadFallback(): Promise<void> { return fetchTable('en'); }
 /** Interface languages, each named in its own language (the picker lists these). */
 export const LANGS: [Lang, string][] = [['en', 'English'], ['ar', 'العربية'], ['ja', '日本語'], ['zh', '简体中文'], ['ko', '한국어']];
 const isLang = (v: string | null): v is Lang => !!v && LANGS.some(([c]) => c === v);
@@ -80,7 +90,7 @@ export function applyDocumentLang(): void {
 
 /** Translate a key, substituting `{name}` placeholders. */
 export function t(key: keyof Strings, vars?: Record<string, string | number>): string {
-  let s = tables[current]?.[key] ?? en[key] ?? key;
+  let s = tables[current]?.[key] ?? tables.en?.[key] ?? key;
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, formatNumber(v));
   return s;
 }

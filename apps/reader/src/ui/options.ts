@@ -8,7 +8,7 @@ import { h, clear, icon, pickButton, pickSheet, askText } from './dom';
 import { colorField } from './colorpicker';
 import { t, countMinutes, localDigits, dateLocale } from '../i18n';
 import { keepAwake } from '../native';
-import { fits, only } from '../platform';
+import { fits, only, onPhone } from '../platform';
 import { AI_VOICES, aiReady } from '../ai';
 import { getSettings, updateSettings, setBgImage, loadBgImage, activeBookId, bookScoped, setBookScoped, type VisualSettings, type Theme, type Texture, type LatinFont, type ArabicFont, type CjkFont, type TapAction, DEFAULT_TAP_ZONES } from '../settings';
 import { fontsSync } from '../fonts';
@@ -107,7 +107,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
     grid.append(toggle([t('invertColors'), 'pdfInvert'], s.pdfInvert, (v) => updateSettings({ pdfInvert: v })));
     grid.append(head('comfort', t('comfort')));
     grid.append(stepper([t('warmth'), 'warmth'], s.warmth, 0, 0.6, 0.05, (v) => updateSettings({ warmth: round2(v) }), pct));
-    grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['device', t('brightnessDevice')], ['app', t('brightnessApp')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); rerender(); })));
+    grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['device', t('brightnessDevice')], ['app', onPhone() ? t('brightnessApp') : t('brightnessAppPc')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); rerender(); })));
     if (s.brightnessMode === 'app') grid.append(stepper([t('dimScreen'), 'dimOverlay'], s.dimOverlay, 0, 0.7, 0.05, (v) => updateSettings({ dimOverlay: round2(v) }), pct));
     grid.append(buttonsField('pdf'));
     container.append(grid, footer());
@@ -146,7 +146,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   /* ----- Comfort ----- */
   grid.append(head('comfort', t('comfort')));
   grid.append(stepper([t('warmth'), 'warmth'], s.warmth, 0, 0.6, 0.05, (v) => updateSettings({ warmth: round2(v) }), pct));
-  grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['device', t('brightnessDevice')], ['app', t('brightnessApp')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); rerender(); })));
+  grid.append(section([t('brightnessMode'), 'brightnessMode'], segmented([['device', t('brightnessDevice')], ['app', onPhone() ? t('brightnessApp') : t('brightnessAppPc')]], s.brightnessMode, (v) => { updateSettings({ brightnessMode: v, ...(v === 'device' ? { dimOverlay: 0 } : {}) }); rerender(); })));
   if (s.brightnessMode === 'app') {
     grid.append(stepper([t('dimScreen'), 'dimOverlay'], s.dimOverlay, 0, 0.7, 0.05, (v) => updateSettings({ dimOverlay: round2(v) }), pct));
   grid.append(...only('phone', toggle([t('edgeBrightness'), 'edgeBrightness'], s.edgeBrightness, (v) => updateSettings({ edgeBrightness: v }))));

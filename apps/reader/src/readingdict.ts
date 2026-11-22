@@ -7,6 +7,7 @@
 // used: what the readings load from is the cache, and only a dictionary that is complete. Nothing here starts a
 // download by itself.
 import { http, bodyBytes, isWebOnly } from './net';
+import { diagEvent } from './diag';
 
 export type DictKind = 'ja' | 'zh';
 /** Why a download did not finish (the words are in the interface's strings: dictFail_*). */
@@ -19,6 +20,8 @@ export interface DictState {
   /** bytes on the device (ready) */
   bytes: number;
   fail?: DictFail; code?: number;
+  /** a short technical tail of why a load failed (no addresses): shown in small text and put in the diagnostics report */
+  detail?: string;
 }
 
 type DictFile = { path: string; size: number; kind: 'js' | 'gz' };
@@ -90,7 +93,32 @@ export function refreshDictState(kind: DictKind, force = false): Promise<DictSta
 }
 
 const isAbort = (e: unknown): boolean => (e as { name?: string })?.name === 'AbortError';
-class DictError extends Error { constructor(public fail: DictFail, public code?: number) { super(`dict:${fail}${code ? ':' + code : ''}`); } }
+class DictError extends Error { constructor(public fail: DictFail, public code?: number, public detail?: string) { super(`dict:${fail}${code ? ':' + code : ''}`); } }
+
+/** A short technical tail of an error, safe to show and to put in a report (no addresses, no long text). */
+export function shortDetail(cause: unknown): string {
+  const raw = cause instanceof Error ? `${cause.name === 'Error' ? '' : cause.name + ': '}${cause.message}` : String(cause ?? '');
+  const clean = raw.replace(/\b(?:https?|blob|file):\S*/gi, '<addr>').replace(/\s+/g, ' ').trim();
+  return clean.length > 90 ? '…' + clean.slice(-89) : clean;
+}
+
+/* ---- gzip form: kuromoji's own loader unzips every dictionary file, so what it is handed must be gzip ---- */
+export const isGzip = (b: Uint8Array): boolean => b.length > 2 && b[0] === 0x1f && b[1] === 0x8b;
+/** Gzip the bytes (a CDN or WebView may hand a .gz file already un-gzipped). */
+export async function gzipBytes(b: Uint8Array): Promise<Uint8Array> {
+  const CS = (globalThis as unknown as { CompressionStream?: new (f: string) => { writable: WritableStream; readable: ReadableStream } }).CompressionStream;
+  if (CS) {
+    try { const cs = new CS('gzip'); const w = cs.writable.getWriter(); void w.write(b as BufferSource).catch(() => undefined); void w.close().catch(() => undefined); return new Uint8Array(await new Response(cs.readable).arrayBuffer()); }
+    catch { /* pako below */ }
+  }
+  const m = await import('pako'); const pako = (m.default ?? m) as unknown as { gzip(d: Uint8Array): Uint8Array };
+  return pako.gzip(b);
+}
+/** Normalise an address kuromoji built: its path.join leaves «https:/host/…» (one slash), which on an https page is read as
+ *  a path on the page's own host. */
+export const normaliseDictAddress = (a: string): string => a.replace(/^(https?):\/+/i, (_m, sc: string) => sc.toLowerCase() + '://');
+/** Which dictionary file an address asks for: by its name (the folder may be written any way). */
+export const dictFileName = (a: string): string | null => /\/([a-z_]+\.dat\.gz)(?:[?#].*)?$/i.exec(a)?.[1]?.toLowerCase() ?? null;
 
 /** One file's bytes, as they come (progress), complete. Native shells go through their own HTTP when the page's fetch is refused. */
 async function fetchBytes(url: string, signal: AbortSignal, onBytes: (n: number) => void): Promise<{ bytes: Uint8Array; length: number | null }> {
@@ -130,7 +158,7 @@ async function run(kind: DictKind, signal: AbortSignal): Promise<boolean> {
   const spec = SPEC[kind];
   if (!hasCache()) { set(kind, { phase: 'error', fail: 'unsupported', code: undefined }); return false; }
   const total = dictSize(kind); let done = 0; let last = 0;
-  set(kind, { phase: 'downloading', done: 0, total, fail: undefined, code: undefined });
+  set(kind, { phase: 'downloading', done: 0, total, fail: undefined, code: undefined, detail: undefined });
   const tick = (n: number): void => { done += n; const now = Date.now(); if (now - last > 80) { last = now; set(kind, { done: Math.min(done, total) }); } };
   try {
     const c = await caches.open(CACHE); let bytes = 0;
@@ -139,21 +167,36 @@ async function run(kind: DictKind, signal: AbortSignal): Promise<boolean> {
       const have = await c.match(url);
       if (have) { const n = Number(have.headers.get('content-length')) || f.size; bytes += n; tick(n); continue; } // (kept from a try that stopped)
       let got = 0;
-      const { bytes: data, length } = await fetchBytes(url, signal, (n) => { got += n; tick(n); });
+      const { bytes: data0, length } = await fetchBytes(url, signal, (n) => { got += n; tick(n); });
       done -= got; // (counted again below, whole, once it is kept)
-      checkBytes(f, data, length);
+      // (A dictionary file that came already un-gzipped is kept gzipped, the form the analyser unzips; a page is still refused.)
+      let data = data0; let len = length;
+      if (f.kind === 'gz' && data.length && !isGzip(data) && data[0] !== 0x3c) { try { data = await gzipBytes(data); len = null; } catch { /* checked below */ } }
+      checkBytes(f, data, len);
       try { await c.put(url, new Response(data as BlobPart, { headers: { 'content-type': f.kind === 'gz' ? 'application/gzip' : 'application/javascript', 'content-length': String(data.length) } })); }
       catch (e) { throw (e as { name?: string })?.name === 'QuotaExceededError' ? new DictError('space') : new DictError('network'); }
       bytes += data.length; tick(data.length);
     }
+    // Every file is here: before it is called ready, load it for real (the way the readings will) — a copy that will not load is not "downloaded".
+    set(kind, { done: total });
+    try { if (!verifiers[kind]) await (kind === 'ja' ? import('./furigana') : import('./readings')); await verifiers[kind]?.(); }
+    catch (e) {
+      if (isAbort(e) || signal.aborted) throw e;
+      const detail = shortDetail(e);
+      try { for (const f of spec.files) await c.delete(dictUrl(kind, f)); } catch { /* */ }
+      dropManifest(kind); forgetLoaded(kind);
+      throw new DictError('load', undefined, detail);
+    }
     writeManifest(kind, bytes); checking[kind] = Promise.resolve({ ...state[kind], phase: 'ready' });
-    set(kind, { phase: 'ready', bytes, done: total, fail: undefined, code: undefined });
+    set(kind, { phase: 'ready', bytes, done: total, fail: undefined, code: undefined, detail: undefined });
     return true;
   } catch (e) {
     if (isAbort(e) || signal.aborted) { set(kind, { phase: 'none', done: 0 }); delete checking[kind]; return false; }
     const fail = e instanceof DictError ? e.fail : 'network';
     delete checking[kind];
-    set(kind, { phase: 'error', fail, code: e instanceof DictError ? e.code : undefined, done: 0 });
+    const detail = e instanceof DictError ? e.detail : undefined;
+    if (fail === 'load') diagEvent('dict', { kind, fail, detail });
+    set(kind, { phase: 'error', fail, code: e instanceof DictError ? e.code : undefined, detail, done: 0 });
     return false;
   }
 }
@@ -172,7 +215,7 @@ export function cancelDict(kind: DictKind): void { jobs[kind]?.ctl.abort(); }
 export const isDownloading = (kind: DictKind): boolean => !!jobs[kind];
 
 /** Say that what was on the device did not work (it has been removed): the reason is shown where the dictionary is offered. */
-export function markDictFailed(kind: DictKind, fail: DictFail): void { set(kind, { phase: 'error', fail, done: 0 }); }
+export function markDictFailed(kind: DictKind, fail: DictFail, detail?: string): void { set(kind, { phase: 'error', fail, done: 0, detail }); }
 
 /** Take the dictionary off the device. */
 export async function removeDict(kind: DictKind): Promise<void> {
@@ -180,10 +223,13 @@ export async function removeDict(kind: DictKind): Promise<void> {
   dropManifest(kind); delete checking[kind];
   if (hasCache()) { try { const c = await caches.open(CACHE); for (const f of SPEC[kind].files) await c.delete(dictUrl(kind, f)); } catch { /* */ } }
   forgetLoaded(kind);
-  set(kind, { phase: 'none', bytes: 0, done: 0, fail: undefined, code: undefined });
+  set(kind, { phase: 'none', bytes: 0, done: 0, fail: undefined, code: undefined, detail: undefined });
 }
 
 /* ---------------------------------------------------------------- loading from the device */
+const verifiers: Partial<Record<DictKind, () => Promise<void>>> = {};
+/** The code that loads a dictionary registers how to check, after a download, that it really loads (it throws when it does not). */
+export function onDictVerify(kind: DictKind, fn: () => Promise<void>): void { verifiers[kind] = fn; }
 const loadedHooks: Partial<Record<DictKind, () => void>> = {};
 /** The code that built something from the dictionary says how to forget it (removing the dictionary). */
 export function onDictForget(kind: DictKind, fn: () => void): void { loadedHooks[kind] = fn; }
@@ -218,11 +264,14 @@ export async function withLocalKuromoji<T>(fn: () => Promise<T>): Promise<T> {
       if (f.kind !== 'gz') continue;
       const hit = await c.match(dictUrl('ja', f));
       if (!hit) { delete checking.ja; set('ja', { phase: 'none', bytes: 0 }); dropManifest('ja'); throw Object.assign(new Error('dict-missing'), { dictKind: 'ja' as DictKind }); }
-      map.set(dictUrl('ja', f), URL.createObjectURL(await hit.blob()));
+      let b: Uint8Array = new Uint8Array(await hit.arrayBuffer());
+      if (!isGzip(b)) b = await gzipBytes(b); // (kuromoji unzips what it is handed)
+      map.set(f.path.slice(f.path.lastIndexOf('/') + 1).toLowerCase(), URL.createObjectURL(new Blob([b as BlobPart], { type: 'application/gzip' })));
     }
-    // (kuromoji joins the folder and the name itself, which can leave «https:/host/…»: read as an address first.)
+    // (kuromoji joins the folder and the name itself, which leaves «https:/host/…» — one slash —, and on an https page that is
+    //  read as a path on the page's own host: so the address is made whole and the file found by its name.)
     proto.open = function (this: XMLHttpRequest, ...a: unknown[]): void {
-      try { const local = map.get(new URL(String(a[1]), location.href).href); if (local) a[1] = local; } catch { /* as it was */ }
+      try { const addr = normaliseDictAddress(String(a[1])); const name = dictFileName(addr); const local = name ? map.get(name) : undefined; if (local) a[1] = local; } catch { /* as it was */ }
       return (open as (...x: unknown[]) => void).apply(this, a);
     } as typeof proto.open;
     patched = true;
@@ -233,7 +282,7 @@ export async function withLocalKuromoji<T>(fn: () => Promise<T>): Promise<T> {
 /** Say that what was on the device did not work (see markDictFailed) — here as the error the callers see. */
 export function loadFailed(kind: DictKind, cause: unknown): Error {
   console.warn('reading dictionary did not load', kind, cause);
-  markDictFailed(kind, 'load');
+  const detail = shortDetail(cause); markDictFailed(kind, 'load', detail); diagEvent('dict', { kind, fail: 'load', detail });
   return Object.assign(new Error('dict-load'), { dictKind: kind });
 }
 /** A time limit on something that may never answer (a loader that never calls back). */

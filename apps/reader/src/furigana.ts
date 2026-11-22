@@ -3,7 +3,8 @@
 // in the notice over the book and in the options) and keeps on the device; the analyser is built from that copy, so
 // it works offline afterwards. Paragraphs are annotated lazily as they scroll into view; a setting hides or
 // shows the readings instantly (the ruby stays in the DOM).
-import { requireDict, dictScriptUrl, withLocalKuromoji, onDictForget, missingDict, loadFailed, withTimeout, abandonLocalKuromoji, KUROMOJI_DICT, KUROMOJI_CDN_JS } from './readingdict';
+import { diagEvent } from './diag';
+import { onDictVerify, shortDetail, requireDict, dictScriptUrl, withLocalKuromoji, onDictForget, missingDict, loadFailed, withTimeout, abandonLocalKuromoji, KUROMOJI_DICT, KUROMOJI_CDN_JS } from './readingdict';
 
 interface Token { surface_form: string; reading?: string; word_type: string }
 interface Tokenizer { tokenize(text: string): Token[] }
@@ -14,6 +15,16 @@ let tokenizerPromise: Promise<Tokenizer> | null = null;
 let storedBroken = false;
 export function furiganaReady(): boolean { return !!tokenizerPromise; }
 onDictForget('ja', () => { tokenizerPromise = null; storedBroken = false; });
+/** After a download: build the analyser from the copy on the device (no CDN fallback) and read 日本語 → にほんご; anything else throws,
+ *  and the download is not called done. The analyser built is kept for the readings. */
+onDictVerify('ja', async () => {
+  try {
+    const tk = await withTimeout(buildStored(), 'self-check');
+    const got = tk.tokenize('日本語').map((x) => x.reading ?? '').join('');
+    if (kataToHira(got) !== 'にほんご') throw new Error(`self-check: 日本語 read as «${got || 'nothing'}»`);
+    tokenizerPromise ??= Promise.resolve(tk);
+  } catch (e) { abandonLocalKuromoji(); throw e; }
+});
 
 const loadScript = (src: string, revoke = false): Promise<void> => new Promise<void>((res, rej) => {
   const sc = document.createElement('script'); sc.src = src;
@@ -46,7 +57,7 @@ export function ensureTokenizer(onStatus?: (s: string) => void): Promise<Tokeniz
     await requireDict('ja');
     if (!storedBroken) {
       try { return await withTimeout(buildStored(onStatus), 'stored dictionary'); }
-      catch (e) { abandonLocalKuromoji(); if (missingDict(e)) throw e; storedBroken = true; console.warn('kuromoji from the stored copy failed', e); }
+      catch (e) { abandonLocalKuromoji(); if (missingDict(e)) throw e; storedBroken = true; console.warn('kuromoji from the stored copy failed', e); diagEvent('dict', { kind: 'ja', fail: 'stored', detail: shortDetail(e) }); }
     }
     if (navigator.onLine === false) throw loadFailed('ja', new Error('offline'));
     try { return await withTimeout(buildFromCdn(), 'dictionary from the CDN'); }

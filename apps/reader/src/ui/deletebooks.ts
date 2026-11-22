@@ -79,8 +79,9 @@ export async function deleteBooksDialog(books: Book[], remove: (ids: string[]) =
     if (can.length) {
       box = h('input', { type: 'checkbox', class: 'del-box' }) as HTMLInputElement;
       const detail = bin === 'win' ? t('deleteToRecycleBin') : bin === 'mac' || bin === 'linux' ? t('deleteToTrash') : t('deleteForGood');
-      sh.body.append(h('label', { class: 'del-opt' }, box,
-        h('span', { class: 'del-opt-text' }, h('b', null, pc ? t('deleteAlsoComputer') : t('deleteAlsoDevice')), h('small', null, detail))));
+      // (The app's switch row — base.css .switch-row — not a native checkbox; off unless chosen.)
+      sh.body.append(h('label', { class: 'switch-row del-opt' },
+        h('span', { class: 'del-opt-text' }, h('b', null, pc ? t('deleteAlsoComputer') : t('deleteAlsoDevice')), h('small', null, detail)), box));
       if (cannot.length || own.length) sh.body.append(h('p', { class: 'hint del-count', dataset: { count: 'can' } }, icon('check'), t('deleteCanCount', { n: cnt(can.length) })));
     }
     if (readonly) sh.body.append(h('p', { class: 'hint del-count', dataset: { count: 'cannot' } }, icon('info'), can.length ? t('deleteCannotCount', { n: cnt(readonly) }) : t('deleteStayCount', { n: cnt(readonly) })));

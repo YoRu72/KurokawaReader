@@ -7,9 +7,8 @@ import { applyBrandIcon } from './ui/brandIcon';
 // (The icon of the user's choosing on the page's own little icon too, from the start.)
 applyBrandIcon();
 import './styles/base.css';
-import './styles/reader.css';
 import './styles/pins.css';
-import { applyDocumentLang, onLangChange, loadLang, getLang, t } from './i18n';
+import { applyDocumentLang, onLangChange, loadLang, loadFallback, getLang, t } from './i18n';
 import { onRoute, parseRoute, navigate, lastMove, type Route } from './router';
 import { h, closeSheets } from './ui/dom';
 import { libraryView } from './views/library';
@@ -120,8 +119,15 @@ initNativeBridges();
 // (The volume keys are taken only while a book is open — src/readkeys.ts —: let go at the start, whatever an
 // older version left asked for.)
 void setVolumeKeys(false);
+// (What the first screen does not need waits for the browser to be idle — a phone draws the library first.)
+const idle = (fn: () => void, after = 2500, timeout = 3000): void => {
+  // (After a pause, so the first taps have the connection to themselves, then when the browser has nothing to do.)
+  setTimeout(() => { const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o: { timeout: number }) => number }).requestIdleCallback; if (ric) ric(fn, { timeout }); else fn(); }, after);
+};
+// (English, the fallback for a string a table lacks, fetched after an Arabic start: Arabic's table is whole.)
+idle(() => void loadFallback());
 // (The update checks loaded once the first screen is up: nothing on it needs them.)
-void import('./updates').then((m) => m.scheduleAutoCheck()).catch(() => undefined);
+idle(() => void import('./updates').then((m) => m.scheduleAutoCheck()).catch(() => undefined));
 // (Stage R6b + R6a: the Tauri build's first start — ONE screen: the first-run page over the library (language, look,
 // the library from the previous version, opening books with the app), which carries the hand-over's offer when the
 // previous (Electron) version left one; when the first run was done before, that offer alone. ui/firstrun.ts
@@ -139,8 +145,9 @@ setTimeout(() => void import('./backup').then(async (m) => { await m.scrubAutoBa
 setTimeout(() => void import('./library').then((m) => m.cleanOrphansOnce()).catch(() => undefined), 35000);
 // AniList changes made while it could not be reached, sent now (and when the network comes back).
 setTimeout(() => { try { if (localStorage.getItem('kr.al.pending')) void import('./ui/track').then((m) => { m.watchPending(); void m.flushTracking(); }).catch(() => undefined); } catch { /* private mode */ } }, 5000);
-import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined);
-void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined);
+// (An OAuth return is taken up at once; the rest of the sync's start waits for idle.)
+(location.search.includes('code=') ? (fn: () => void) => fn() : idle)(() => void import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined));
+idle(() => void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined), 5000);
 // (Stage R6a, the computer's apps only — the shells that give window.kurokawaHandover: both give the tests and the
 // update their way in — src/handover.ts; the Electron bridge build's switch (desktop/handover.cjs prepare) runs
 // beforeInstall() and installs the Rust build only on true. The Rust build's offer at the start: above, startScreens.)
@@ -174,7 +181,9 @@ else if (getSettings().openLastOnLaunch && startsOnLibrary) {
 
 // Offline support.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !isNative()) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => undefined); });
+  // (The page's load may have come already: the module waits for the language's table before it runs.)
+  const reg = (): void => { navigator.serviceWorker.register('sw.js').catch(() => undefined); };
+  if (document.readyState === 'complete') reg(); else window.addEventListener('load', reg);
 } else if (isNative()) {
   // The installed app ships its files; an offline cache left by an older version would only duplicate them (and books).
   void navigator.serviceWorker?.getRegistrations?.().then((regs) => regs.forEach((r) => void r.unregister())).catch(() => {});
