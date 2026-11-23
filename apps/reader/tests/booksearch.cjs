@@ -58,7 +58,12 @@ async function openHit(p, n = 0) {
     return { text: frag.textContent, inView: rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight, all: CSS.highlights.get('kr-search')?.size ?? 0 };
   });
 }
-const select = (p, inPara, words) => p.evaluate(([inPara, words]) => {
+const select = async (p, inPara, words) => {
+  // (A floating panel left open covers the page: the menu rightly does not show over it, as for a real user — close it first.)
+  if (await p.$('.panel.open:not(.docked)')) { await p.click('.panel.open .panel-head > button[data-icon="close"]'); await p.waitForSelector('.panel.open:not(.docked)', { state: 'detached', timeout: 3000 }).catch(() => {}); await p.waitForTimeout(300); }
+  return select0(p, inPara, words);
+};
+const select0 = (p, inPara, words) => p.evaluate(([inPara, words]) => {
   const blk = [...document.querySelectorAll('.reader-flow p')].find((x) => x.textContent.includes(inPara)); if (!blk) return false;
   const w = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { const i = n.data.indexOf(words); if (i >= 0) { n.parentElement.scrollIntoView({ block: 'center' }); const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + words.length); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return true; } }
   return false;
