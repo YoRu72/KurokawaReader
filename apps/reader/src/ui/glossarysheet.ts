@@ -36,7 +36,7 @@ export function glossarySheet(book?: { id: string; title: string }): void { void
 type BookInfo = BookRef & { title: string };
 let booksCache: Promise<BookInfo[]> | null = null;
 async function allBooks(fresh = false): Promise<BookInfo[]> {
-  if (!booksCache || fresh) booksCache = import('../library').then((m) => m.listBooks()).then((l) => l.filter((b) => b.format !== 'series').map((b) => ({ id: b.id, title: b.title, ...(b.series?.name ? { series: { name: b.series.name, index: b.series.index } } : {}) })), () => []);
+  if (!booksCache || fresh) booksCache = import('../library').then((m) => m.listBooks()).then((l) => l.filter((b) => b.format !== 'series').map((b) => ({ id: b.id, title: b.title, ...(b.titles?.length ? { others: b.titles.filter((x) => x !== b.title) } : {}), ...(b.series?.name ? { series: { name: b.series.name, index: b.series.index } } : {}) })), () => []);
   return booksCache;
 }
 

@@ -44,6 +44,7 @@ import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate, back as goBackView, leaveView, parseRoute, viewBelow } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
+import { snapNames } from '../booktitles';
 import { renderTextCanvas, showSnapshot, pictureNear, pictureOnByDefault, styledBlocks } from '../ui/textcard';
 import { exportNotes, exportNotesAnki } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
@@ -1725,7 +1726,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       // (The words as the book sets them, read now — the selection does not last —: drawn so when «Use book formatting» is on.)
       const blocks = styledBlocks(range, getSettings().fontSize);
       const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '', picture: picture ?? undefined, pictureOn: on, blocks, bookFormat: !!blocks?.length && getSettings().snapBookFormat };
-      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn, bookFormat) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on, bookFormat: bookFormat ?? opts.bookFormat }), { has: !!picture, on }, undefined, { has: !!blocks?.length });
+      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn, bookFormat) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on, bookFormat: bookFormat ?? opts.bookFormat }), { has: !!picture, on }, undefined, { has: !!blocks?.length }, snapNames(book, opts));
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 

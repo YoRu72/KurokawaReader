@@ -90,8 +90,18 @@ export interface Book {
   tagsAt?: number;
   stats?: ReadingStats;
   statsSync?: StatsSync;
+  /** The title shown: the reader's own, or the file's. */
   title: string;
+  /** Every title the reader keeps, the shown one first (unset: only `title`). */
+  titles?: string[];
+  /** The title the file came with, kept once the reader sets another. */
+  origTitle?: string;
+  /** The author shown: the reader's own, or the file's. */
   author?: string;
+  /** The author the file came with (`null`: it had none), kept once the reader sets or changes it. */
+  origAuthor?: string | null;
+  /** When the titles or author were last set (sync: the later wins). */
+  namesAt?: number;
   language?: string;
   format: Format;
   fileName: string;

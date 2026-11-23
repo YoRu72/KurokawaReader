@@ -380,7 +380,17 @@ export const volChoice = (bookId: string): VolChoice | undefined => read<Record<
 export function setVolChoice(bookId: string, c: VolChoice | null): void { const all = read<Record<string, VolChoice>>(VKEY, {}); if (c) all[bookId] = c; else delete all[bookId]; write(VKEY, all); }
 /** Whether a book has a glossary of its own yet: terms of its own, or a folder it uses. */
 export const hasGlossary = (bookId: string): boolean => linkedFolders(bookId).length > 0 || terms().some((x) => !x.folder && x.book === bookId);
-export interface BookRef { id: string; title: string; series?: { name?: string; index?: number } }
+/** `others`: the book's other titles (the reader's; see src/booktitles.ts), told apart by the series matcher too. */
+export interface BookRef { id: string; title: string; others?: string[]; series?: { name?: string; index?: number } }
+/** The best match of two books over the shown title and the other titles of each ('same' before 'similar'). */
+function bestMatch(a: BookRef, b: BookRef): 'same' | 'similar' | null {
+  let best: 'same' | 'similar' | null = null;
+  for (const x of [a.title, ...(a.others ?? [])]) for (const y of [b.title, ...(b.others ?? [])]) {
+    const m = seriesMatch(x, y, x === a.title && y === b.title ? [a.series?.name, b.series?.name] : undefined);
+    if (m === 'same') return 'same'; if (m) best = m;
+  }
+  return best;
+}
 export interface VolCandidate { bookId: string; title: string; vol: number | null; match: 'same' | 'similar'; count: number; folders: string[] }
 /** Other books' glossaries of this book's series: one for each glossary (two volumes sharing one folder are one),
  *  the identical ones first, then by the nearest volume (a former one before a later one as near). */
@@ -390,7 +400,7 @@ export function volCandidates(book: BookRef, books: BookRef[]): VolCandidate[] {
   for (const b of books) {
     if (b.id === book.id) continue;
     const list = bookTerms(b.id); if (!list.length) continue;
-    const match = seriesMatch(book.title, b.title, [book.series?.name, b.series?.name]); if (!match) continue;
+    const match = bestMatch(book, b); if (!match) continue;
     const fs = linkedFolders(b.id).filter((f) => list.some((x) => x.folder === f)); const key = fs.length ? fs.slice().sort().join(',') : `b:${b.id}`;
     const vol = b.series?.index ?? volumeStem(b.title).vol; const c: VolCandidate = { bookId: b.id, title: b.title, vol, match, count: list.length, folders: fs };
     if (seen.has(key)) { const i = out.findIndex((y) => (y.folders.length ? y.folders.slice().sort().join(',') : `b:${y.bookId}`) === key); if (i >= 0 && dist(c.vol, myVol) < dist(out[i].vol, myVol)) out[i] = c; continue; }
@@ -439,3 +449,17 @@ export function stopSharing(bookId: string, folderId: string): void {
 }
 /** The books using a folder. */
 export const folderBooks = (folderId: string): string[] => Object.entries(read<Record<string, string[]>>(LKEY, {})).filter(([, v]) => v.includes(folderId)).map(([k]) => k);
+
+/** A book renamed: a glossary folder named after the series of its former title, and used by no other book, takes the
+ *  name the new title gives (the folder is followed, as the book is). */
+export function followRename(bookId: string, oldTitle: string, newTitle: string): void {
+  if (!oldTitle || !newTitle || oldTitle === newTitle) return;
+  const used = read<Record<string, string[]>>(LKEY, {});
+  for (const f of folders()) {
+    if (!linkedFolders(bookId).includes(f.id)) continue;
+    if (Object.entries(used).some(([k, v]) => k !== bookId && v.includes(f.id))) continue;
+    if (f.name === seriesName(oldTitle)) renameFolder(f.id, seriesName(newTitle));
+    else if (f.name === seriesOf(oldTitle)) renameFolder(f.id, seriesOf(newTitle));
+    else if (f.name === oldTitle) renameFolder(f.id, newTitle);
+  }
+}

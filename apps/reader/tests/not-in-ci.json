@@ -146,6 +146,10 @@
       "reason": "New in 0.65.1; a candidate to add to the release workflow's test chain once confirmed green (orchestrator's decision)."
     },
     {
+      "name": "booktitles.cjs",
+      "reason": "New in 0.65.1 (a book's titles and author the reader sets); the release workflow's chain is the one updater line, so like its sibling textpic.cjs it is run by the preflight; a candidate to add to the chain once confirmed green (orchestrator's decision)."
+    },
+    {
       "name": "smoke.cjs",
       "reason": "The big smoke test of every format; reads tests/fixtures (made by scripts/make-fixtures.py, which needs Python with PIL, docx, openpyxl, pptx, reportlab, so not in the release workflow). The preflight makes the fixtures.",
       "needsFixtures": true

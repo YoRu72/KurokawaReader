@@ -244,7 +244,7 @@ export async function renderTextCanvas(o: TextCardOptions): Promise<HTMLCanvasEl
     ctx.textAlign = titleRtl ? 'right' : 'left';
     const tx = titleRtl ? W - pad : pad;
     ctx.fillStyle = L.fg; ctx.font = `600 30px ${titleRtl ? L.fontRtl : L.font}`;
-    ctx.fillText(o.title, tx, H - pad - 34);
+    if (o.title) ctx.fillText(o.title, tx, H - pad - 34);
     ctx.fillStyle = L.dim; ctx.font = `26px ${titleRtl ? L.fontRtl : L.font}`;
     if (o.author) ctx.fillText(o.author, tx, H - pad + 2);
     ctx.direction = 'ltr'; ctx.textAlign = titleRtl ? 'left' : 'right';
@@ -290,10 +290,13 @@ export async function renderTextCard(o: TextCardOptions): Promise<Blob> {
 /** The ways a passage can be pictured, when there is more than the card (a PDF: the page itself, cut out): the one
  *  shown first, each drawn when it is picked, the options each has under the preview, and the pick remembered. */
 export type SnapKind = 'page' | 'card';
+/** The card's title and author lines, editable under the preview: prefilled from the book; `change` redraws with
+ *  them; `remember` keeps an author with the book; `useTitle` makes the title the book's shown one. */
+export interface SnapNames { title: string; author: string; change(title: string, author: string): void; remember(author: string): Promise<void> | void; useTitle(title: string): Promise<void> | void }
 export interface SnapChoice { kind: SnapKind; kinds: SnapKind[]; draw(kind: SnapKind): Promise<HTMLCanvasElement>; options(kind: SnapKind, redraw: () => void): HTMLElement | null; picked(kind: SnapKind): void }
 
 /** Preview the snapshot with Save / Share / Copy and a style switch (and, with `choice`, the kinds to choose from). */
-export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean, bookFormat?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }, choice?: SnapChoice, format?: { has: boolean }): void {
+export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean, bookFormat?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }, choice?: SnapChoice, format?: { has: boolean }, names?: SnapNames): void {
   const sheet = openSheet(t('textAsImage'), t('close'));
   sheet.body.style.fontFamily = 'var(--font-ui)';
   const holder = h('div', { class: 'snap-holder' });
@@ -309,7 +312,7 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
   if (choice && choice.kinds.length > 1) {
     const seg = h('div', { class: 'segmented snap-kind', role: 'radiogroup', 'aria-label': t('textAsImage') });
     const paint = () => seg.replaceChildren(...choice.kinds.map((k) => h('button', { type: 'button', role: 'radio', 'aria-pressed': String(k === kind), 'aria-checked': String(k === kind), 'data-kind': k, onclick: () => {
-      if (k === kind) return; kind = k; choice.picked(k); paint(); fillOpts(); styleBtn.hidden = kind !== 'card'; void redraw().catch((e) => toast(String((e as Error).message ?? e), 'error'));
+      if (k === kind) return; kind = k; choice.picked(k); paint(); fillOpts(); styleBtn.hidden = kind !== 'card'; showNames(); void redraw().catch((e) => toast(String((e as Error).message ?? e), 'error'));
     } }, t(k === 'page' ? 'snapAsPage' : 'snapAsCard'))));
     paint(); sheet.body.appendChild(seg);
   }
@@ -332,13 +335,29 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
       h('label', { class: 'row snap-fmt-row' }, h('span', { class: 'label' }, t('snapBookFormat')), h('span', { class: 'switch' }, box, h('i'))),
       h('p', { class: 'hint', style: { marginTop: '-16px' } }, t('snapBookFormatHint'))));
   }
+  // The card's title and author lines: two small fields, applied to the picture as they are typed (only where the
+  // card carries them: the card with title and author, not the page cut or the plain look).
+  let namesBox: HTMLElement | null = null; let namesTimer = 0; let saveTimer = 0;
+  const showNames = () => { if (namesBox) namesBox.hidden = !(kind === 'card' && getSettings().snapStyle !== 'plain'); };
+  if (names) {
+    const ti = h('input', { type: 'text', class: 'textpic-title', dir: 'auto', value: names.title, placeholder: t('cardTitleField'), 'aria-label': t('cardTitleField') }) as HTMLInputElement;
+    const au = h('input', { type: 'text', class: 'textpic-author', dir: 'auto', value: names.author, placeholder: t('addAuthor'), 'aria-label': t('cardAuthorField') }) as HTMLInputElement;
+    const rem = h('input', { type: 'checkbox', role: 'switch', class: 'textpic-remember' }) as HTMLInputElement; rem.checked = true;
+    const use = h('button', { type: 'button', class: 'btn small tonal textpic-use', hidden: true }, t('useAsBookTitle'));
+    const keep = () => { if (rem.checked && au.value.trim() && au.value.trim() !== names.author.trim()) { const v = au.value.trim(); void Promise.resolve(names.remember(v)).then(() => { names.author = v; }); } };
+    const apply = () => { use.hidden = !ti.value.trim() || ti.value.trim() === names.title; names.change(ti.value.trim(), au.value.trim()); window.clearTimeout(namesTimer); namesTimer = window.setTimeout(() => void redraw().catch(() => undefined), 120); window.clearTimeout(saveTimer); saveTimer = window.setTimeout(keep, 500); };
+    ti.addEventListener('input', apply); au.addEventListener('input', apply); rem.addEventListener('change', keep);
+    use.addEventListener('click', async () => { const v = ti.value.trim(); if (!v) return; await names.useTitle(v); names.title = v; use.hidden = true; toast(t('saved')); });
+    namesBox = h('div', { class: 'textpic-names' }, ti, au, h('label', { class: 'row textpic-remember-row' }, h('span', { class: 'label' }, t('rememberAuthor'), h('small', { class: 'hint' }, t('rememberAuthorHint'))), h('span', { class: 'switch' }, rem, h('i'))), use);
+    holder.after(namesBox); showNames();
+  }
   const png = async () => blob ?? (blob = await canvasToBlob(canvas, 'image/png'));
   const styleBtn = h('button', { class: 'btn small', type: 'button' }, t(getSettings().snapStyle === 'plain' ? 'snapCard' : 'snapPlain'));
   styleBtn.hidden = kind !== 'card';
   styleBtn.addEventListener('click', async () => {
     const next = getSettings().snapStyle === 'plain' ? 'card' : 'plain';
     updateSettings({ snapStyle: next });
-    styleBtn.textContent = t(next === 'plain' ? 'snapCard' : 'snapPlain');
+    styleBtn.textContent = t(next === 'plain' ? 'snapCard' : 'snapPlain'); showNames();
     mount(await rerender(next, picOn, fmtOn));
   });
   const copy = h('button', { class: 'btn small', type: 'button', onclick: async () => { if (await copyImage(await png())) toast(t('copied')); } }, icon('copy'), t('copyImage'));

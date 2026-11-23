@@ -43,6 +43,8 @@ const VIEWS = [
   ['stats', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view'); await p.click('.library-view [title="Reading statistics"], .library-view [aria-label="Reading statistics"], .library-view button:has(svg) >> nth=0').catch(() => {}); await p.evaluate(() => { [...document.querySelectorAll('.library-view .icon-btn, .library-view button')].find((b) => /chart|stat|إحصاء|إحصائ/i.test((b.title || '') + (b.getAttribute('aria-label') || '')))?.click(); }); await p.waitForSelector('.sheet, .stats-view, .panel.open', { timeout: 8000 }); }],
   ['sources', lib('#/sources')], ['catalog', lib('#/catalog')], ['notes', lib('#/notes')],
   ['book', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-view, .book-page, .view', { timeout: 10000 }); }],
+  // The book's «Edit title and author» sheet (src/ui/booknames.ts): with another title to show the rows and the keep switch.
+  ['book-edit-names', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(300); await p.evaluate(() => [...document.querySelectorAll('.book-tile')].find((x) => x.querySelector('svg') && /^(Edit|تعديل)/.test(x.textContent.trim())).click()); await p.waitForSelector('.names-shown'); await p.fill('.names-add', 'Another title'); await p.keyboard.press('Enter'); await p.fill('.names-shown', 'A new shown title'); await p.waitForTimeout(250); }],
   ['settings', async (p) => { await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('.settings-body .card.collapsed').forEach((c) => c.classList.remove('collapsed'))); }, 'phone'],
   ...Array.from({ length: SETTING_COUNT }, (_, i) => ['settings-' + i, settingsSec(i), 'pc']),
   ['read-epub', openBook(/alice/i, '.reader-flow .kr-content')],
@@ -62,6 +64,7 @@ const VIEWS = [
 const ALLOW = [
   ['colour settings', 'reading-theme previews (sepia, candlelight, manuscript) and the highlight colour palette show the colours they stand for'],
   ['colour read-options', 'the same theme previews and highlight palette, inside the options panel'],
+  ['stick-out book-edit-names div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
   ['stick-out book div.book-hero-bg', 'the blurred cover backdrop is bled past the edge on purpose and clipped by the page (no page overflow)'],
 ];
 const allowedBy = {}; const allowed = (key) => { const a = ALLOW.find(([k]) => key.startsWith(k)); if (a) allowedBy[a[0]] = (allowedBy[a[0]] || 0) + 1; return !!a; };

@@ -1,6 +1,6 @@
 // Provider, key, model, language and instructions for the AI features (shared by
 // the translator pill and Settings). Choice lists open as stacked M3 sheets.
-import { deviceOrder, isTranslateGemma } from '../translategemma';
+import { deviceOrder, isTranslateGemma, recommendedDevice } from '../translategemma';
 import { kittenPanel } from './kittenpanel';
 import { copyText } from './share';
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from './dom';
@@ -140,7 +140,7 @@ function localPanel(): HTMLElement {
       // (Sizes kept left to right inside a right-to-left line: "398 MB", not "MB 398".)
       const iso = (x: string) => `\u2066${x}\u2069`;
       const ordered = deviceOrder(L.CATALOG, L.isPhone());
-      for (const m of ordered) list.append(row(m.id, m.name, `${iso(m.sizeMB >= 1000 ? (m.sizeMB / 1024).toFixed(1) + ' GB' : m.sizeMB + ' MB')} · ${t('localRam', { ram: iso(m.ram) })} · ${t(m.note === 'light' ? 'localLight' : m.note === 'fast' ? 'localFast' : m.note === 'best' ? 'localBest' : m.note === 'balanced' ? 'localBalanced' : 'localMultilingual')}`, inst.some((x) => x.id === m.id), false, m.id === ordered[0].id));
+      for (const m of ordered) list.append(row(m.id, m.name, `${iso(m.sizeMB >= 1000 ? (m.sizeMB / 1024).toFixed(1) + ' GB' : m.sizeMB + ' MB')} · ${t('localRam', { ram: iso(m.ram) })} · ${t(m.note === 'light' ? 'localLight' : m.note === 'fast' ? 'localFast' : m.note === 'best' ? 'localBest' : m.note === 'balanced' ? 'localBalanced' : 'localMultilingual')}`, inst.some((x) => x.id === m.id), false, !!recommendedDevice(L.isPhone()) && m.id === recommendedDevice(L.isPhone())));
       for (const m of inst.filter((x) => x.imported)) list.append(row(m.id, m.name, iso(`${m.sizeMB} MB`), true, true));
       const importBtn = h('button', { class: 'btn small', type: 'button', onclick: () => {
         const input = h('input', { type: 'file', accept: '.gguf', style: { display: 'none' } }) as HTMLInputElement;
@@ -153,7 +153,7 @@ function localPanel(): HTMLElement {
         });
         document.body.append(input); input.click();
       } }, icon('folder'), t('localImport'));
-      body.append(list, h('div', { class: 'tool-bar' }, importBtn), h('p', { class: 'hint' }, t('localDeviceHint')));
+      body.append(list, ...(L.isPhone() ? [h('p', { class: 'hint local-phone-note' }, t('aiPhoneNoRec'))] : []), h('div', { class: 'tool-bar' }, importBtn), h('p', { class: 'hint' }, t('localDeviceHint')));
     } else {
       const url = h('input', { type: 'text', dir: 'ltr', spellcheck: 'false', value: s.localServer, placeholder: 'http://localhost:11434/v1', onchange: () => updateSettings({ localServer: url.value.trim() }) }) as HTMLInputElement;
       const found = h('div', { class: 'local-models' });

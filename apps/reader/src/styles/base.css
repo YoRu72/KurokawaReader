@@ -2511,3 +2511,27 @@ html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
 .gloss-places { display: flex; flex-wrap: wrap; gap: 6px; }
 .gloss-empty .row-btns { display: flex; flex-direction: column; align-items: stretch; gap: 8px; } .gloss-empty .row-btns .btn { justify-content: center; }
 .tr-ahead .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* A book's other titles (details page) and the edit-names sheet. */
+.book-other-titles { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0 0 6px; }
+.book-other-titles .other-title { display: block; width: 100%; font-size: 13px; color: rgba(255,255,255,.78); line-height: 1.35; }
+.book-orig { font-size: 12px; opacity: .8; }
+.names-field input[type="text"], .names-row input { width: 100%; min-height: 44px; box-sizing: border-box; }
+.names-others { display: flex; flex-direction: column; gap: 8px; }
+.names-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+.names-row .btn, .names-addrow .btn { min-height: 44px; }
+.names-addrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-top: 8px; }
+html.pc .names-row .btn, html.pc .names-addrow .btn, html.pc .names-field input[type="text"], html.pc .names-row input { min-height: 36px; }
+.names-keep { margin: 8px 0; }
+.lib-also { display: block; font-size: 11px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.textpic-names { display: grid; gap: 8px; margin: 8px 0; }
+.textpic-names input[type="text"] { width: 100%; min-height: 44px; box-sizing: border-box; }
+html.pc .textpic-names input[type="text"] { min-height: 36px; }
+.names-field, .names-keep { margin-bottom: 14px; }
+.names-keep { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.names-keep .label { text-transform: none; letter-spacing: 0; font: inherit; font-family: var(--font-ui); font-size: 14px; font-weight: 500; }
+.names-field > .label { display: block; margin-bottom: 4px; }
+.textpic-remember-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.textpic-remember-row .label { text-transform: none; letter-spacing: 0; font-family: var(--font-ui); font-size: 14px; }
+.textpic-remember-row .hint { display: block; font-size: 12px; opacity: .7; }
+.names-row .btn, .names-addrow .btn { white-space: nowrap; }

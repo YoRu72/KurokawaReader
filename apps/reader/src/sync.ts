@@ -11,12 +11,15 @@ import { getSettings, updateSettings } from './settings';
 import { nativePlatform } from './native';
 import { whenStill } from './still';
 import { t } from './i18n';
+import { takeNames } from './booktitles';
 import { toast } from './ui/dom';
 
 export type SyncProvider = 'none' | 'dropbox' | 'webdav' | 'folder';
 const FILE = 'kurokawa-sync.json';
 
 interface BookState {
+  /** The reader's own titles and author (src/booktitles.ts), the later change winning. */
+  titles?: string[]; origTitle?: string; author?: string; origAuthor?: string | null; namesAt?: number;
   title: string; progress?: Locator; progressAt: number; lastOpenedAt?: number; bookmarks: Bookmark[]; highlights: Highlight[]; pins: PdfNote[]; ink?: InkStroke[]; pdfHighlights?: Book['pdfHighlights']; folderName?: string; tags?: string[]; tagsAt?: number; stats?: Book['stats']; done?: boolean; doneAt?: number; rating?: number; ratingAt?: number; review?: string; reviewAt?: number; track?: Book['track']; readToc?: number; readTocAt?: number; chapters?: number; chaptersAt?: number; chapterMarks?: Book['chapterMarks']; chapterMarksAt?: number;
   // (version 2; an earlier version passes them by)
   /** When the book was put in its folder or taken out (none: before this was kept). */
@@ -136,7 +139,7 @@ async function localState(remote: SyncState | null): Promise<{ state: SyncState;
   for (const b of books) {
     const k = L.keys.get(b.id)!;
     links.set(k.key, { legacy: k.legacy, read: entryKeys(remote, b, L) });
-    out.books[k.key] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], ink: b.ink ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, folderAt: b.folderAt, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats, statsBase: b.statsSync?.base, statsBy: b.statsSync ? { ...b.statsSync.by, [b.statsSync.dev]: b.statsSync.own } : undefined, done: b.done, doneAt: b.doneAt, rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt, track: b.track, readToc: b.readToc, readTocAt: b.readTocAt, chapters: b.chapters, chaptersAt: b.chaptersAt, chapterMarks: b.chapterMarks, chapterMarksAt: b.chapterMarksAt };
+    out.books[k.key] = { title: b.title, progress: b.progress, progressAt: b.progressAt ?? b.lastOpenedAt ?? 0, lastOpenedAt: b.lastOpenedAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins ?? [], ink: b.ink ?? [], pdfHighlights: b.pdfHighlights ?? [], folderName: folders.find((f) => f.id === b.folderId)?.name, folderAt: b.folderAt, tags: b.tags ?? [], tagsAt: b.tagsAt, stats: b.stats, statsBase: b.statsSync?.base, statsBy: b.statsSync ? { ...b.statsSync.by, [b.statsSync.dev]: b.statsSync.own } : undefined, done: b.done, doneAt: b.doneAt, rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt, track: b.track, readToc: b.readToc, readTocAt: b.readTocAt, chapters: b.chapters, chaptersAt: b.chaptersAt, chapterMarks: b.chapterMarks, chapterMarksAt: b.chapterMarksAt, ...(b.namesAt ? { titles: b.titles, origTitle: b.origTitle, author: b.author, origAuthor: b.origAuthor, namesAt: b.namesAt } : {}) };
   }
   return { state: out, links };
 }
@@ -202,6 +205,7 @@ async function applyRemote(remote: SyncState): Promise<number> {
         } else if (!rAt && !xAt && r.folderName && !x.folderId) { const f = folders.find((y) => y.name === r.folderName); if (f) { x.folderId = f.id; dirty = true; } }
         if (r.track && (r.track.updatedAt ?? 0) > (x.track?.updatedAt ?? 0)) { x.track = r.track; dirty = true; }
         if ((r.readTocAt ?? 0) > (x.readTocAt ?? 0)) { x.readToc = r.readToc; x.readTocAt = r.readTocAt; dirty = true; }
+        if (takeNames(x, { title: r.title, titles: r.titles, origTitle: r.origTitle, author: r.author, origAuthor: r.origAuthor, namesAt: r.namesAt })) dirty = true;
         if ((r.chaptersAt ?? 0) > (x.chaptersAt ?? 0)) { x.chapters = r.chapters; x.chaptersAt = r.chaptersAt; dirty = true; }
         if ((r.chapterMarksAt ?? 0) > (x.chapterMarksAt ?? 0)) { x.chapterMarks = r.chapterMarks; x.chapterMarksAt = r.chapterMarksAt; dirty = true; }
         if ((r.reviewAt ?? 0) > (x.reviewAt ?? 0)) { if (r.review) x.review = r.review; else delete x.review; x.reviewAt = r.reviewAt; dirty = true; }
@@ -230,7 +234,8 @@ function mergeEntry(l: BookState, r: BookState, deleted: Record<string, number>)
   for (const src of [l.statsBy, r.statsBy]) for (const [d, p] of Object.entries(src ?? {})) if (p) (statsBy ??= {})[d] = combineStats(statsBy[d], p, 'max');
   return {
     ...((l.progressAt ?? 0) >= (r.progressAt ?? 0) ? l : r),
-    title: l.title,
+    title: (l.namesAt ?? 0) >= (r.namesAt ?? 0) ? l.title : r.title,
+    ...((l.namesAt ?? 0) >= (r.namesAt ?? 0) ? (l.namesAt ? { titles: l.titles, origTitle: l.origTitle, author: l.author, origAuthor: l.origAuthor, namesAt: l.namesAt } : {}) : { titles: r.titles, origTitle: r.origTitle, author: r.author, origAuthor: r.origAuthor, namesAt: r.namesAt }),
     lastOpenedAt: Math.max(l.lastOpenedAt ?? 0, r.lastOpenedAt ?? 0) || undefined,
     bookmarks: uniq(l.bookmarks ?? [], r.bookmarks ?? []), highlights: uniq(l.highlights ?? [], r.highlights ?? []), pins: uniq(l.pins ?? [], r.pins ?? []), ink: uniq(l.ink ?? [], r.ink ?? []),
     pdfHighlights: uniq(l.pdfHighlights ?? [], r.pdfHighlights ?? []),

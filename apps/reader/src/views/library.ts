@@ -8,6 +8,7 @@ import { onHoldOrContext } from '../ui/hold';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
 import { searchFormOf } from '../formats/types';
+import { namesSearchForm, matchedOther } from '../booktitles';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks, moveToFolder, deleteFolder, renameFolder } from '../library';
 import { db, uid, stampAfter, FAV_TAG, TOREAD_TAG, type Book, type Folder, type TagDef } from '../db';
 import { SUPPORTED_ACCEPT } from '../formats/detect';
@@ -36,7 +37,7 @@ export function libraryView(): HTMLElement {
   // each word must be found, in any order, in a book's title, author, file name, tags or series.)
   let queryWords: string[] = [];
   const searchKeys = new WeakMap<Book, { at: number; k: string }>();
-  const keyOf = (b: Book) => { const had = searchKeys.get(b); if (had && had.at === (b.tagsAt ?? 0)) return had.k; const k = searchFormOf(`${b.title} ${b.author ?? ''} ${b.fileName} ${(b.tags ?? []).join(' ')} ${b.series?.name ?? ''} ${partOf(b)?.name ?? ''}`); searchKeys.set(b, { at: b.tagsAt ?? 0, k }); return k; };
+  const keyOf = (b: Book) => { const had = searchKeys.get(b); if (had && had.at === (b.tagsAt ?? 0) + (b.namesAt ?? 0)) return had.k; const k = searchFormOf(`${namesSearchForm(b)} ${b.fileName} ${(b.tags ?? []).join(' ')} ${b.series?.name ?? ''} ${partOf(b)?.name ?? ''}`); searchKeys.set(b, { at: (b.tagsAt ?? 0) + (b.namesAt ?? 0), k }); return k; };
   let sort: Sort = (localStorage.getItem('kr.sort') as Sort) || 'title';
   let sortDesc = localStorage.getItem('kr.sortDesc') === '1';
   let folders: Folder[] = [];
@@ -555,7 +556,7 @@ export function libraryView(): HTMLElement {
     (cover.querySelector('.gen') as HTMLElement | null)?.style.setProperty('--c2', c2);
     const el = h('button', { class: 'book-card', role: 'listitem', type: 'button', dataset: { book: book.id, ...(pinnedHere(P.pinBook(book.id)) ? { pinned: '1' } : {}) }, 'aria-selected': String(selecting && selected.has(book.id)), title: `${book.title}${book.author ? ' — ' + book.author : ''}` },
       cover,
-      h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size))), book.rating ? h('div', { class: 'stars-badge', 'aria-label': `${book.rating}/5` }, '★'.repeat(book.rating) + '☆'.repeat(5 - book.rating)) : null),
+      h('div', { class: 'book-meta' }, h('div', { class: 'bt', dir: 'auto' }, book.title), (() => { const o = queryWords.length ? matchedOther(book, queryWords) : null; return o ? h('small', { class: 'lib-also', dir: 'auto' }, t('alsoTitle', { x: `\u2068${o}\u2069` })) : null; })(), h('div', { class: 'ba', dir: 'auto' }, book.author ?? (book.pageCount ? `${book.pageCount} ${t('pages').toLowerCase()}` : formatBytes(book.size))), book.rating ? h('div', { class: 'stars-badge', 'aria-label': `${book.rating}/5` }, '★'.repeat(book.rating) + '☆'.repeat(5 - book.rating)) : null),
     );
     // Mouse-only: on touch screens a long press is the folder menu, and a WebView
     // drag that never ends used to leave every chip with a dashed drop outline.
@@ -753,7 +754,7 @@ export function libraryView(): HTMLElement {
     const sync = () => { count.textContent = t('selectedCount', { n: localDigits(sel.size) }); onChange?.(sel.size); };
     const draw = () => {
       const q = search.value.trim().toLocaleLowerCase();
-      visible = q ? all.filter((b) => `${b.title} ${b.author ?? ''} ${b.fileName}`.toLocaleLowerCase().includes(q)) : all;
+      const qw = q ? searchFormOf(q).split(/\s+/).filter(Boolean) : []; visible = qw.length ? all.filter((b) => { const k = searchFormOf(`${namesSearchForm(b)} ${b.fileName}`); return qw.every((w) => k.includes(w)); }) : all;
       clear(list);
       if (!visible.length) { list.append(h('p', { class: 'hint', style: { margin: '8px 2px' } }, t('noResults'))); return; }
       for (const b of visible.slice(0, 400)) {

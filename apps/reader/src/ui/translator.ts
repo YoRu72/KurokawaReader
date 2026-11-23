@@ -510,7 +510,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const id = firstBook(); if (!id || hasGlossary(id) || volChoice(id)) return;
     const k = 'kr.glossaryVolSeen'; let seen: string[] = []; try { seen = JSON.parse(localStorage.getItem(k) ?? '[]') as string[]; } catch { /* none */ }
     if (seen.includes(id)) return; try { localStorage.setItem(k, JSON.stringify([...seen, id].slice(-500))); } catch { /* full */ }
-    const { listBooks } = await import('../library'); const all = (await listBooks()).filter((b) => b.format !== 'series').map((b) => ({ id: b.id, title: b.title, ...(b.series?.name ? { series: { name: b.series.name, index: b.series.index } } : {}) }));
+    const { listBooks } = await import('../library'); const all = (await listBooks()).filter((b) => b.format !== 'series').map((b) => ({ id: b.id, title: b.title, ...(b.titles?.length ? { others: b.titles.filter((x) => x !== b.title) } : {}), ...(b.series?.name ? { series: { name: b.series.name, index: b.series.index } } : {}) }));
     const me = all.find((b) => b.id === id); if (!me || disposed) return;
     const d = volDecision(me, all, getSettings().aiVolGlossary ?? 'auto');
     if (d.kind === 'auto') { const und = shareGlossary(id, d.cand, true); const { offerUndo } = await import('./undo'); offerUndo(t('glossVolUsing', { title: `\u2068${d.cand.title}\u2069` }), () => und(), () => { shareGlossary(id, d.cand, true); }); if (on) void run(); }

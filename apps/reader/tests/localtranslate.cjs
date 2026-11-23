@@ -28,7 +28,8 @@ const row = /\{ id: 'gemma-3-1b'[^}]*\}/.exec(src)?.[0] || '';
 ok('catalogue: Gemma 3 1B, 806 MB, chat gemma', /sizeMB: 806/.test(row) && /chat: 'gemma'/.test(row) && /ggml-org\/gemma-3-1b-it-GGUF/.test(row) && /gemma-3-1b-it-Q4_K_M\.gguf/.test(row) && /ram: '2 GB'/.test(row), row);
 ok('catalogue: no TranslateGemma on the device', !/id: 'translategemma/.test(src));
 const ids = [{ id: 'qwen2.5-0.5b' }, { id: 'qwen2.5-3b' }, { id: 'gemma-3-1b' }, { id: 'gemma-2-2b' }];
-ok('order on a phone: Gemma 3 1B first', TG.deviceOrder(ids, true).map((x) => x.id).join() === 'gemma-3-1b,qwen2.5-0.5b,qwen2.5-3b,gemma-2-2b', TG.deviceOrder(ids, true));
+ok('order on a phone: no Gemma 3 1B, the list as it is, nothing recommended', TG.deviceOrder(ids, true).map((x) => x.id).join() === 'qwen2.5-0.5b,qwen2.5-3b,gemma-2-2b' && TG.recommendedDevice(true) === '', TG.deviceOrder(ids, true));
+ok('recommended on a computer: Gemma 2 2B', TG.recommendedDevice(false) === 'gemma-2-2b');
 ok('order on a computer: Gemma 2 2B, Gemma 3 1B', TG.deviceOrder(ids, false).map((x) => x.id).join() === 'gemma-2-2b,gemma-3-1b,qwen2.5-0.5b,qwen2.5-3b');
 
 // The server's tasks (localai.ts run here with a stand-in settings store and server).
@@ -91,11 +92,23 @@ const L = run('localai.ts', { './settings': { getSettings: () => S, updateSettin
   ok('no TranslateGemma: the hint names translategemma:4b (and :12b)', /translategemma:4b/.test(hint) && /translategemma:12b/.test(hint), hint);
   ok('no TranslateGemma: not recommended', !/Recommended for translation/.test(await p.textContent('[data-translate-model] button')));
   await p.screenshot({ path: path.join(shots, 'R7-ai-settings.png') });
-  // On-device list: a phone (this context) shows Gemma 3 1B first, recommended.
+  // On-device list: a phone (this context): no Gemma 3 1B, nothing recommended, the quiet line shown; then a computer.
   await setVisual({ localEngine: 'device' }); await p.evaluate(() => { location.hash = '#/'; }); await p.reload(); await p.waitForSelector('.library-view'); await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => { [...document.querySelectorAll('.settings-body button')].find((x) => /Provider, key, model, instructions/.test(x.textContent)).click(); }); await p.waitForSelector('.local-models .local-row', { state: 'attached', timeout: 15000 });
   const names = await p.$$eval('.local-models .local-row .local-name b', (e) => e.map((x) => x.textContent));
-  ok('on-device list (phone): Gemma 3 1B first; no TranslateGemma', names[0] === 'Gemma 3 1B Instruct' && !names.some((n) => /TranslateGemma/i.test(n)), names);
-  ok('on-device: one Recommended for translation', (await p.$$eval('.local-models .chip', (e) => e.filter((x) => /Recommended for translation/.test(x.textContent)).length)) === 1);
+  ok('on-device list (phone): no Gemma 3 1B, no TranslateGemma', !names.some((n) => /Gemma 3 1B|TranslateGemma/i.test(n)) && names.length > 0, names);
+  ok('on-device (phone): no Recommended for translation mark', (await p.$$eval('.local-models .chip', (e) => e.filter((x) => /Recommended for translation/.test(x.textContent)).length)) === 0 && !/Recommended for translation/.test(await p.$eval('.local-models', (e) => e.textContent)));
+  ok('on-device (phone): the quiet line is shown', /computer or an online provider/.test(await p.textContent('.local-phone-note').catch(() => '')));
+  await p.screenshot({ path: path.join(shots, 'R9-phone-device-models.png') });
+  // A computer: Gemma 2 2B recommended, Gemma 3 1B present, no phone line.
+  const pc = await (await b.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en', colorScheme: 'dark' })).newPage();
+  pc.on('pageerror', (e) => errors.push(e.message));
+  await pc.goto(`http://localhost:${port}/`); await pc.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, { aiProvider: 'local', localEngine: 'device' }); localStorage.setItem('kr.visual', JSON.stringify(v)); });
+  await pc.reload(); await pc.waitForSelector('.library-view'); await pc.evaluate(() => { location.hash = '#/settings'; }); await pc.waitForSelector('.settings-body .card', { state: 'attached' });
+  await pc.evaluate(() => { [...document.querySelectorAll('.settings-body button')].find((x) => /Provider, key, model, instructions/.test(x.textContent)).click(); }); await pc.waitForSelector('.local-models .local-row', { state: 'attached', timeout: 15000 });
+  const pcNames = await pc.$$eval('.local-models .local-row .local-name b', (e) => e.map((x) => x.textContent));
+  const pcRec = await pc.$$eval('.local-models .local-row', (e) => e.filter((x) => /Recommended for translation/.test(x.textContent)).map((x) => x.querySelector('b').textContent));
+  ok('on-device (computer): Gemma 2 2B first and recommended, Gemma 3 1B present', pcNames[0] === 'Gemma 2 2B Instruct' && pcNames.includes('Gemma 3 1B Instruct') && pcRec.join() === 'Gemma 2 2B Instruct', { pcNames, pcRec });
+  ok('on-device (computer): no phone line', !(await pc.$('.local-phone-note')));
   ok('no page errors', !errors.length, errors);
   await b.close(); server.close(); console.log(fails ? `${fails} FAILED` : 'all ok'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

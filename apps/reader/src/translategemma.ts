@@ -37,10 +37,14 @@ export function translateGemmaBody(model: string, text: string, source: string, 
   return { model, temperature: 0.2, stream: false, messages: [{ role: 'user', content: translateGemmaPrompt(text, source, target) }] };
 }
 
-/** On-device models, in the order offered for translation. A phone: the light Gemma 3 1B first. A computer:
- *  Gemma 2 2B (a step up), then Gemma 3 1B, then the rest. The first is the one recommended for translation. */
+/** On-device models, in the order offered. A computer: Gemma 2 2B (a step up), then Gemma 3 1B, then the rest; the
+ *  first is the one recommended for translation. A phone: no Gemma is put forward and Gemma 3 1B is not offered
+ *  (the list as it is, nothing recommended). */
 export function deviceOrder<T extends { id: string }>(list: T[], phone: boolean): T[] {
-  const first = phone ? ['gemma-3-1b'] : ['gemma-2-2b', 'gemma-3-1b'];
+  if (phone) return list.filter((m) => m.id !== 'gemma-3-1b');
+  const first = ['gemma-2-2b', 'gemma-3-1b'];
   const at = (id: string) => { const i = first.indexOf(id); return i < 0 ? first.length : i; };
   return list.map((m, i) => ({ m, i })).sort((a, b) => at(a.m.id) - at(b.m.id) || a.i - b.i).map((x) => x.m);
 }
+/** The on-device model recommended for translation: on a computer only. */
+export const recommendedDevice = (phone: boolean): string => (phone ? '' : 'gemma-2-2b');
