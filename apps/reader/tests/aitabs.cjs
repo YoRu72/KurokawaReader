@@ -173,6 +173,7 @@ const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: 
   // The pill's settings: the Translation tab.
   await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Customise' }).click();
   await p.waitForSelector('.ai-sheet .ai-tab[aria-selected="true"][data-tab="translation"]', { timeout: 6000 }).catch(() => undefined);
+  await p.waitForSelector('.ai-panel[data-tab="translation"] .tr-options', { timeout: 6000 }).catch(() => undefined);
   ok('the pill\'s settings: the Translation tab, the translator\'s options in it', !!(await p.$('.ai-tab[aria-selected="true"][data-tab="translation"]')) && !!(await p.$('.ai-panel[data-tab="translation"] .tr-options')));
   ok('no old sheets left: one sheet open', (await p.$$('.sheet')).length === 1);
   await closeAll();
