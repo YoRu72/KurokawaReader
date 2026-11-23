@@ -1093,7 +1093,7 @@ export function libraryView(): HTMLElement {
     renderTagChips();
     renderFormatChips();
     const list = sorted();
-    heroSub.textContent = books.length ? `${countBooks(books.length)} · ${t('tagline')}` : t('tagline');
+    heroSub.textContent = countBooks(books.length);
     applyImportPlace();
     if (!books.length) {
       grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, h('div', { class: 'glyph' }, icon('empty')), h('h2', null, t('emptyLibraryTitle')), h('p', null, t('emptyLibraryBody')),

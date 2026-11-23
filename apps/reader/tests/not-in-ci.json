@@ -126,6 +126,10 @@
       "run": false
     },
     {
+      "name": "selmenu.cjs",
+      "reason": "New (R6): not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
+    },
+    {
       "name": "textpic.cjs",
       "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
     },

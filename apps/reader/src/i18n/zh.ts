@@ -3,7 +3,6 @@ import type { Strings } from './en';
 
 export const zh: Partial<Strings> = {
   appName: '黑川阅读器',
-  tagline: '能读的都能读。',
 
   library: '书库', importBooks: '添加图书', images: '图片', settings: '设置', back: '返回', close: '关闭', cancel: '取消', done: '完成', delete: '删除', open: '打开', openTogether: '一起阅读', select: '选择', selectAll: '全选', selectNone: '取消全选', shareFile: '分享文件', selectedCount: '已选 {n} 项', more: '更多', cropMargins: '裁掉页边', cropMarginsOff: '显示整页（取消裁剪）', cropMarginsHint: '从页面图像中找出印刷区域，只显示这一部分，让文字填满屏幕；整本书使用同一宽度，不会晃动。', hideQuotes: '隐藏每日一句', showQuote: '在书库页显示我高亮中的一句', readInOrder: '按顺序阅读', readInOrderHint: '这些书将依次阅读：一本读完后，继续滚动即打开下一本。排好顺序后开始。随时可在阅读器菜单中更改或停止。', startReading: '开始阅读', orderKept: '已保存阅读顺序', orderCleared: '已取消阅读顺序', stopOrder: '停止按顺序阅读', nextInOrder: '下一本', remove: '移除', itemsPerRow: '每行数量', autoFit: '自动', speedReading: '速读', speedWpm: '每分钟词数', wpm: '词/分', pause: '暂停', nextVolume: '下一卷', volumeOf: '共 {total} 卷，第 {n} 卷', readingRuler: '阅读标尺', readingRulerHint: '几行高的清晰条带跟随鼠标或最后一次点按，其余部分略微变暗。', customCss: '自定义 CSS', customCssHint: '像 Moon+ 一样为书籍正文添加自己的样式（p、h1、blockquote、img…）。规则只作用于正文。', backToPlace: '回到原来的位置', updateReady: '更新已下载 — 退出时安装', restartNow: '立即重启', updateChannel: '更新', channelStable: '稳定版', channelBeta: '测试版（含预发布）', updateEvery: '检查', everyLaunch: '每次启动', everyDay: '每天', everyWeek: '每周', updateAutoDownload: '在后台下载更新并在退出时安装', updateAutoDownloadHint: '只获取变化的部分（几 MB）。准备好后会提示重启，否则在下次关闭应用时安装。', noteOnPage: '在此页添加备注…', tapWhereNote: '点按页面上要放置备注的位置',
 

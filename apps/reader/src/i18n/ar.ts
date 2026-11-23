@@ -6,7 +6,6 @@ import type { Strings } from './en';
 
 export const ar: Strings = {
   appName: 'قارئ كروكاوا',
-  tagline: 'قارئٌ لكلِّ ما يُقرأ.',
 
   // التنقّل
   library: 'المكتبة',

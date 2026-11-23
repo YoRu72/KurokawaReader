@@ -2414,3 +2414,34 @@ html:not(.pc) .update-toast .icon-btn, html:not(.pc) .row-actions .icon-btn { wi
 /* No native spinner on any number box (the app's own steppers / typing do it). */
 input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 input[type='number']::-webkit-inner-spin-button, input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Narrow library cards (3+ columns on a phone): the cover's marks fit inside it and never overlap, the title keeps two
+   whole lines at a smaller size, the stars stay inside the card. The thresholds are the card's own width (container
+   query), so they hold for any column count, phone width or writing direction. */
+.book-card { container-type: inline-size; container-name: card; }
+.cover .badges { max-width: calc(100% - 20px); flex-wrap: wrap; justify-content: flex-end; }
+.cover .badges .badge { max-width: 100%; white-space: nowrap; overflow: hidden; }
+html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
+@container card (max-width: 150px) {
+  .cover .badges { top: 7px; right: 7px; gap: 3px; max-width: calc(100% - 14px); }
+  .cover .badge { font-size: 9px; padding: 3px 6px; letter-spacing: .02em; }
+  .cover .badge.done svg { width: 10px; height: 10px; }
+  .cover .badge.done:not(.pct) { font-size: 0; gap: 0; padding: 3px 5px; }
+  .cover .badge.done.at-topLeft { left: 7px; top: 7px; }
+  .cover .badge.done.at-below { top: 30px; }
+  .cover .gen { padding: 62px 10px 12px; }
+  .cover .gen .t { font-size: 13px; }
+  .book-meta .bt { font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+  .book-meta .ba { font-size: 11px; }
+  .book-meta .stars-badge { font-size: 10px; letter-spacing: 0; white-space: nowrap; overflow: hidden; max-width: 100%; }
+}
+@container card (max-width: 84px) {
+  .cover .badges { top: 4px; right: 4px; max-width: calc(100% - 8px); }
+  .cover .badge { font-size: 8px; padding: 2px 4px; letter-spacing: 0; }
+  .cover .badge.done:not(.pct) { padding: 2px 3px; }
+  .cover .gen { padding: 58px 6px 8px; }
+  .cover .gen .t { font-size: 11px; }
+  .book-meta .bt { font-size: 11px; }
+  .book-meta .ba { font-size: 10px; }
+  .book-meta .stars-badge { font-size: 9px; }
+}

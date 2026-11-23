@@ -17,6 +17,7 @@ import { loadFonts } from './fonts';
 import { initNativeBridges, isNative, setVolumeKeys } from './native';
 import { registerNativePlugins } from './capacitor';
 import { initPcShell } from './ui/pcshell';
+import { startRangeFill } from './ui/rangefill';
 import { takeResume } from './resume';
 // (Undo / redo — src/ui/undo.ts, loaded with the first thing that can be undone; its look here, with the rest.)
 import './styles/undo.css';
@@ -106,6 +107,7 @@ registerNativePlugins();
 applyDocumentLang();
 applyChrome();
 initPcShell();
+startRangeFill();
 // (The window's own title bar on a computer: drawn whole by the page in the Tauri shell, which marks itself —
 // ui/winbar.ts —; Electron's draws the system's buttons over the page's strip — ui/titlebar.ts.)
 if ((window as unknown as { __KR_SHELL__?: string }).__KR_SHELL__ === 'tauri') void import('./ui/winbar').then((m) => m.startWinBar((window as unknown as { kurokawaDesktop?: never }).kurokawaDesktop));

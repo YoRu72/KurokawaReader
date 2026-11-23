@@ -164,6 +164,29 @@ function hunt({ phone, rtl, lang }) {
         if (SHOTS) await p.screenshot({ path: path.join(SHOTS, `hunt-${name}-${dev}-${lang}.png`) });
       } catch (e) { if (e.message === 'SKIP') continue; console.log(`ERR   ${lang} ${dev} ${name}: ${String(e.message).split('\n')[0]}`); fails++; }
     }
+    if (phone && (!ONLY || ONLY === 'narrowcards')) { // narrow cards: 2-5 columns at 360 / 390 / 412 px: the marks sit inside the cover and never overlap, the stars stay in the card, nothing is clipped
+      try {
+        await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { for (const b of e.target.result) { b.done = true; b.rating = 5; b.title = 'Mushoku Tensei: Jobless Reincarnation ' + b.title; b.author = 'Rifujin na Magonote'; st.put(b); } }; tx.oncomplete = () => res(); }; }));
+        await p.evaluate(() => { location.hash = '#/'; }); await p.reload(); await p.waitForSelector('.library-view .book-card', { timeout: 15000 }); await p.waitForTimeout(500);
+        for (const w of [360, 390, 412]) for (const cols of [2, 3, 4, 5]) {
+          await p.setViewportSize({ width: w, height: 915 }); await p.evaluate((c) => { document.documentElement.style.setProperty('--lib-cols', String(c)); }, cols); await p.waitForTimeout(250);
+          const bad = await p.evaluate(() => {
+            const out = []; const r = (e) => e.getBoundingClientRect();
+            for (const card of document.querySelectorAll('.book-card')) {
+              const cv = card.querySelector('.cover'); if (!cv) continue; const cr = r(cv), kr = r(card); const bs = [...cv.querySelectorAll('.badge')].filter((b) => getComputedStyle(b).display !== 'none');
+              for (const b of bs) { const x = r(b); if (x.left < cr.left + 2 || x.right > cr.right - 2 || x.top < cr.top + 2) out.push(`badge outside the cover «${b.textContent || b.className}»`); if (b.scrollWidth > b.clientWidth + 1) out.push(`badge clipped «${b.textContent}»`); }
+              for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) { const a = r(bs[i]), c = r(bs[j]); if (a.left < c.right - 0.5 && c.left < a.right - 0.5 && a.top < c.bottom - 0.5 && c.top < a.bottom - 0.5) out.push(`badges overlap «${bs[i].textContent}» «${bs[j].textContent}»`); }
+              const st = card.querySelector('.stars-badge'); if (st && (r(st).right > kr.right + 0.5 || st.scrollWidth > st.clientWidth + 1)) out.push('stars outside the card');
+              const bt = card.querySelector('.book-meta .bt'); if (bt && r(bt).right > kr.right + 0.5) out.push('title outside the card');
+            }
+            return [...new Set(out)];
+          });
+          for (const m of bad) { console.log(`FAULT ${lang} phone narrowcards ${w}px x ${cols} columns: ${m}`); fails++; summary.narrowcards = (summary.narrowcards || 0) + 1; }
+          if (SHOTS && w === 412 && (cols === 3 || cols === 4)) await p.screenshot({ path: path.join(SHOTS, `R6-library-${cols}col${lang === 'ar' ? '-ar' : ''}.png`) });
+        }
+        await p.evaluate(() => document.documentElement.style.removeProperty('--lib-cols')); await p.setViewportSize({ width: 412, height: 915 });
+      } catch (e) { console.log(`ERR   ${lang} phone narrowcards: ${String(e.message).split('\n')[0]} | ${await p.evaluate(() => location.hash + ' ' + document.body.className + ' ' + document.body.innerText.slice(0, 120).replace(/\s+/g, ' ')).catch(() => '')}`); fails++; }
+    }
     if (errors.length) { console.log(`ERR   ${lang} ${dev}: page errors ${errors.slice(0, 3).join(' | ')}`); fails++; }
     await ctx.close(); // (one page closed before the next opens: the machine is short of memory)
   }

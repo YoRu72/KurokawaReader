@@ -1,7 +1,6 @@
 // English UI strings. Keys are shared with ar.ts — keep both in sync.
 export const en = {
   appName: 'KurokawaReader',
-  tagline: 'A reader for anything that can be read.',
 
   // Navigation
   library: 'Library',
