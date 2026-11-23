@@ -146,7 +146,7 @@ const shellState = { icon: null };
 rust.kt_app_icon = ({ o }) => { if (o && 'set' in o) { shellState.icon = o.set; return true; } return shellState.icon; };
 async function rustCall(cmd, a) { if (!rust[cmd]) throw new Error('unknown ' + cmd); return rust[cmd](a); }
 const TAURI_SHIM = () => {
-  try { localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.update.lastCheck', String(Date.now())); if (!localStorage.getItem('kr.lang')) localStorage.setItem('kr.lang', 'en'); } catch { /* first load */ }
+  try { localStorage.setItem('kt.pc.starter', '1'); localStorage.setItem('kt.update.lastCheck', String(Date.now())); if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', '{"liveUpdates":false}'); if (!localStorage.getItem('kr.lang')) localStorage.setItem('kr.lang', 'en'); } catch { /* first load */ }
   const fromB64 = (b) => { const s = atob(b); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
   const replies = { kt_state: () => ({ available: false, reason: '', os: 'linux', arch: 'x64' }), kt_list: () => [], kt_open_take: () => [], kt_roots: () => ({ roots: ['/home/u'] }), kt_default_dir: () => '/home/u/Downloads/Kurokawa', kt_files_roots: () => ({ roots: [] }) };
   window.__TAURI__ = {
@@ -157,7 +157,7 @@ const TAURI_SHIM = () => {
 
 // ---------- what the person keeps in the Electron build ----------
 const FILL = async ({ ICON, FONT, NOW }) => {
-  const L = { 'kt.settings': JSON.stringify({ addons: ['anime', 'tv', 'player'], doh: 'off', uiMode: 'dark' }), 'kt.anime.listStatus': JSON.stringify({ 21: 'watching', 1535: 'completed' }), 'kt.tv.watchlist': JSON.stringify([{ id: 1399, name: 'A show' }]),
+  const L = { 'kt.settings': JSON.stringify({ addons: ['anime', 'tv', 'player'], doh: 'off', uiMode: 'dark', liveUpdates: false }), 'kt.anime.listStatus': JSON.stringify({ 21: 'watching', 1535: 'completed' }), 'kt.tv.watchlist': JSON.stringify([{ id: 1399, name: 'A show' }]),
     'kt.player.memory': JSON.stringify({ 'file:/home/u/Downloads/Kurokawa/ep01.mkv': { pos: 1234.5, dur: 1440, sub: 'ara', audio: 'jpn' } }), 'kt.anilist.token': 'made-up-token-for-a-test', 'kt.follows': JSON.stringify(['ani:21']), 'kt.notes': JSON.stringify([{ id: 'n1', text: 'ملاحظة' }]),
     'kt.screen': JSON.stringify({ fonts: [{ name: 'My Font', path: FONT }], on: false }), 'app.icon': ICON, 'kt.update.file': JSON.stringify({ name: 'x.exe', path: '/tmp/x.exe', size: 1 }), 'kt.handover.progress': 'old' };
   for (const [k, v] of Object.entries(L)) localStorage.setItem(k, v);
@@ -177,16 +177,16 @@ const FILL = async ({ ICON, FONT, NOW }) => {
   await new Promise((r) => server.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${server.address().port}/`;
   const br = await chromium.launch(); const errors = [];
   const electronPage = async () => {
-    const ctx = await br.newContext({ viewport: { width: 1100, height: 800 } }); const p = await ctx.newPage(); p.setDefaultTimeout(30000);
+    const ctx = await br.newContext({ viewport: { width: 1100, height: 800 } }); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()); /* never the real network: the live-update checker (liveUpdates.ts) is also off in the seeded settings, so the data compared is data at rest */ const p = await ctx.newPage(); p.setDefaultTimeout(30000);
     p.on('pageerror', (e) => errors.push('E: ' + e.message));
     await p.exposeFunction('__kthE', (c, a) => electronCall(c, a));
     await p.addInitScript(ELECTRON_SHIM);
-    await p.addInitScript(() => { try { localStorage.setItem('kt.pc.starter', '1'); if (!localStorage.getItem('kr.lang')) localStorage.setItem('kr.lang', 'en'); } catch { /* first */ } });
+    await p.addInitScript(() => { try { localStorage.setItem('kt.pc.starter', '1'); if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', '{"liveUpdates":false}'); if (!localStorage.getItem('kr.lang')) localStorage.setItem('kr.lang', 'en'); } catch { /* first */ } });
     await p.goto(base); await p.waitForSelector('.downloads-view'); return p;
   };
   const rustPage = async () => {
     enginePrestart();   // (main.rs: before the engine and the page)
-    const ctx = await br.newContext({ viewport: { width: 1100, height: 800 } }); const p = await ctx.newPage(); p.setDefaultTimeout(30000);
+    const ctx = await br.newContext({ viewport: { width: 1100, height: 800 } }); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()); /* never the real network: the live-update checker (liveUpdates.ts) is also off in the seeded settings, so the data compared is data at rest */ const p = await ctx.newPage(); p.setDefaultTimeout(30000);
     p.on('pageerror', (e) => errors.push('R: ' + e.message));
     await p.exposeFunction('__kthT', (c, a) => rustCall(c, a));
     await p.addInitScript(TAURI_SHIM);
