@@ -1,5 +1,6 @@
 // Provider, key, model, language and instructions for the AI features (shared by
 // the translator pill and Settings). Choice lists open as stacked M3 sheets.
+import { deviceOrder, isTranslateGemma } from '../translategemma';
 import { kittenPanel } from './kittenpanel';
 import { copyText } from './share';
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from './dom';
@@ -115,7 +116,7 @@ function localPanel(): HTMLElement {
       if (!L.deviceSupported()) body.append(h('p', { class: 'hint' }, t('localNoDevice')));
       const list = h('div', { class: 'local-models' });
       const inst = L.installed();
-      const row = (id: string, name: string, meta: string, isIn: boolean, imported = false) => {
+      const row = (id: string, name: string, meta: string, isIn: boolean, imported = false, rec = false) => {
         const bar = h('div', { class: 'progress-bar', hidden: true }, h('span'));
         const status = h('small', { class: 'local-status' });
         const use = h('input', { type: 'radio', name: 'kr-local-model', checked: getSettings().localModel === id, disabled: !isIn, onchange: () => updateSettings({ localModel: id }) }) as HTMLInputElement;
@@ -131,11 +132,12 @@ function localPanel(): HTMLElement {
               void draw();
             } catch (err) { status.textContent = String((err as Error).message ?? err); b.disabled = false; bar.hidden = true; }
           } }, icon('download'), t('download'));
-        return h('label', { class: 'local-row' + (isIn ? ' in' : '') }, use, h('span', { class: 'local-name' }, h('b', { dir: 'ltr' }, name), h('small', null, meta), status, bar), imported ? h('span', { class: 'chip small' }, t('localImported')) : null, act);
+        return h('label', { class: 'local-row' + (isIn ? ' in' : '') }, use, h('span', { class: 'local-name' }, h('b', { dir: 'ltr' }, name), h('small', null, meta), status, bar), imported ? h('span', { class: 'chip small' }, t('localImported')) : null, rec ? h('span', { class: 'chip small' }, t('localRecTranslate')) : null, act);
       };
       // (Sizes kept left to right inside a right-to-left line: "398 MB", not "MB 398".)
       const iso = (x: string) => `\u2066${x}\u2069`;
-      for (const m of L.CATALOG) list.append(row(m.id, m.name, `${iso(m.sizeMB >= 1000 ? (m.sizeMB / 1024).toFixed(1) + ' GB' : m.sizeMB + ' MB')} · ${t('localRam', { ram: iso(m.ram) })} · ${t(m.note === 'fast' ? 'localFast' : m.note === 'best' ? 'localBest' : m.note === 'balanced' ? 'localBalanced' : 'localMultilingual')}`, inst.some((x) => x.id === m.id)));
+      const ordered = deviceOrder(L.CATALOG, L.isPhone());
+      for (const m of ordered) list.append(row(m.id, m.name, `${iso(m.sizeMB >= 1000 ? (m.sizeMB / 1024).toFixed(1) + ' GB' : m.sizeMB + ' MB')} · ${t('localRam', { ram: iso(m.ram) })} · ${t(m.note === 'light' ? 'localLight' : m.note === 'fast' ? 'localFast' : m.note === 'best' ? 'localBest' : m.note === 'balanced' ? 'localBalanced' : 'localMultilingual')}`, inst.some((x) => x.id === m.id), false, m.id === ordered[0].id));
       for (const m of inst.filter((x) => x.imported)) list.append(row(m.id, m.name, iso(`${m.sizeMB} MB`), true, true));
       const importBtn = h('button', { class: 'btn small', type: 'button', onclick: () => {
         const input = h('input', { type: 'file', accept: '.gguf', style: { display: 'none' } }) as HTMLInputElement;
@@ -162,11 +164,11 @@ function localPanel(): HTMLElement {
       } }, icon('search'), t('localFind'));
       const modelBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
         try { const names = await L.serverModels(getSettings().localServer || url.value.trim()); if (!names.length) { toast(t('noModelsFound'), 'error'); return; }
-          pickSheet(t('browseModels'), names.map((n): [string, string] => [n, n]), getSettings().localServerModel, (v) => { updateSettings({ localServerModel: v }); void draw(); }, t('close')); }
+          pickSheet(t('browseModels'), names.map((n): [string, string] => [n, isTranslateGemma(n) ? `${n} · ${t('localTranslateOnlyTag')}` : n]), getSettings().localServerModel, (v) => { updateSettings({ localServerModel: v }); void draw(); }, t('close')); }
         catch (err) { toast(String((err as Error).message ?? err), 'error', 5000); }
       } }, icon('search'), getSettings().localServerModel || t('browseModels'));
       body.append(h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiBaseUrl')), h('div', { style: { display: 'flex', gap: '8px' } }, url, findBtn)), found,
-        h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiModel')), modelBtn), h('p', { class: 'hint' }, t('localServerHint')));
+        h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiModel')), modelBtn), translateField(L, url), h('p', { class: 'hint' }, t('localServerHint')));
     }
     const tryBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
       tryBtn.disabled = true; const label = tryBtn.textContent; tryBtn.textContent = t('working');
@@ -178,6 +180,27 @@ function localPanel(): HTMLElement {
   };
   void draw();
   return wrap;
+}
+
+/** «Model for translation»: the server's models with TranslateGemma first, marked as recommended; when none is
+ *  installed, the name to pull in Ollama (text to copy: the app runs nothing on the computer). */
+function translateField(L: typeof import('../localai'), url: HTMLInputElement): HTMLElement {
+  const box = h('div', { class: 'field', 'data-translate-model': '' });
+  const draw = (names: string[] | null) => {
+    const cur = getSettings().localTranslateModel;
+    const auto = names ? L.pickTranslationModel(names) : '';
+    const shown = cur || (auto ? `${auto} · ${t('localRecTranslate')}` : t('localTranslateAuto'));
+    const btn = h('button', { class: 'btn small', type: 'button', onclick: () => {
+      const ordered = [...(names ?? [])].sort((a, b) => Number(isTranslateGemma(b)) - Number(isTranslateGemma(a)));
+      pickSheet(t('localTranslateModel'), [['', t('localTranslateAuto')] as [string, string], ...ordered.map((n): [string, string] => [n, isTranslateGemma(n) ? `${n} · ${t('localRecTranslate')}` : n])], cur,
+        (v) => { updateSettings({ localTranslateModel: v }); draw(names); }, t('close'));
+    } }, icon('translate'), shown);
+    box.replaceChildren(h('span', { class: 'label' }, t('localTranslateModel')), btn, h('p', { class: 'hint' }, t('localTranslateHint')),
+      ...(names && !auto ? [h('p', { class: 'hint', 'data-pull-hint': '' }, t('localPullHint'), ' ', h('code', { dir: 'ltr', style: { userSelect: 'all' } }, 'translategemma:4b'), ' · ', h('code', { dir: 'ltr', style: { userSelect: 'all' } }, 'translategemma:12b'))] : []));
+  };
+  draw(null);
+  void L.serverModels(getSettings().localServer || url.value.trim() || 'http://localhost:11434/v1').then(draw, () => undefined);
+  return box;
 }
 
 /* ---------- custom APIs: any service, told apart from its key, its models listed with what it says of them ---------- */

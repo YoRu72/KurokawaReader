@@ -6,6 +6,9 @@
 //    or another one on the network, found by looking at their usual ports. Requests go through the app's
 //    native side where a web page could not reach them (Android's secure origin, a desktop's CORS).
 import { getSettings, updateSettings } from './settings';
+import { t } from './i18n';
+import { isTranslateGemma, pickTranslationModel, translateGemmaBody } from './translategemma';
+export { isTranslateGemma, pickTranslationModel };
 
 /* ---------------------------------------------------------------- catalogue */
 
@@ -15,8 +18,15 @@ export const CATALOG: LocalModel[] = [
   { id: 'qwen2.5-0.5b', name: 'Qwen2.5 0.5B Instruct', repo: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', file: 'qwen2.5-0.5b-instruct-q4_k_m.gguf', sizeMB: 398, ram: '1 GB', note: 'fast', chat: 'chatml' },
   { id: 'qwen2.5-1.5b', name: 'Qwen2.5 1.5B Instruct', repo: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF', file: 'qwen2.5-1.5b-instruct-q4_k_m.gguf', sizeMB: 1120, ram: '2 GB', note: 'balanced', chat: 'chatml' },
   { id: 'qwen2.5-3b', name: 'Qwen2.5 3B Instruct', repo: 'Qwen/Qwen2.5-3B-Instruct-GGUF', file: 'qwen2.5-3b-instruct-q4_k_m.gguf', sizeMB: 1930, ram: '4 GB', note: 'best', chat: 'chatml' },
+  { id: 'gemma-3-1b', name: 'Gemma 3 1B Instruct', repo: 'ggml-org/gemma-3-1b-it-GGUF', file: 'gemma-3-1b-it-Q4_K_M.gguf', sizeMB: 806, ram: '2 GB', note: 'light', chat: 'gemma' },
   { id: 'gemma-2-2b', name: 'Gemma 2 2B Instruct', repo: 'bartowski/gemma-2-2b-it-GGUF', file: 'gemma-2-2b-it-Q4_K_M.gguf', sizeMB: 1710, ram: '3 GB', note: 'multilingual', chat: 'gemma' },
 ];
+// (Not here: TranslateGemma 4B, a 2.49 GB single file. The engine runs in 32-bit WebAssembly, which keeps one file
+// under 2 GB — the largest above is 1.9 GB and there is no split-file loading — so it is a local-server model:
+// Ollama's translategemma:4b, see translategemma.ts.)
+/** Whether the app is in its phone layout (not the computer one the app itself shows, see ui/pcshell.ts): the
+ *  on-device list is ordered for it. */
+export function isPhone(): boolean { return !document.documentElement.classList.contains('pc'); }
 const hfUrl = (m: { repo: string; file: string }) => `https://huggingface.co/${m.repo}/resolve/main/${m.file}`;
 
 /** Models on this device: the catalogue's downloaded ones and files imported by the reader. */
@@ -227,20 +237,46 @@ export async function serverModels(url: string): Promise<string[]> {
   return (j.data ?? []).map((m) => m.id);
 }
 
-/** One answer from the local server's chosen model. */
-export async function serverChat(system: string, user: string, json: boolean): Promise<string> {
+let lastNames: string[] = [];
+/** The model a request of this task goes to. Translation: the reader's own choice, else TranslateGemma when the
+ *  server has it, else the main model. Everything else: the main model — never a translation-only model. */
+async function modelFor(base: string, task: 'translate' | 'other'): Promise<string> {
   const s = getSettings();
-  const base = (s.localServer || 'http://localhost:11434/v1').replace(/\/+$/, '');
-  let model = s.localServerModel;
-  if (!model) { model = (await serverModels(base))[0] ?? ''; if (model) updateSettings({ localServerModel: model }); }
-  const r = await localHttp(`${base}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, timeoutMs: 300000,
-    body: JSON.stringify({ model, temperature: 0.2, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }) });
-  void json;
-  if (r.status !== 200) {
-    throw new Error(`Local server ${r.status}: ${r.body.slice(0, 200)}`);
+  if (task === 'translate') {
+    if (s.localTranslateModel) return s.localTranslateModel;
+    try { lastNames = await serverModels(base); } catch { /* the main model */ }
+    return pickTranslationModel(lastNames) || s.localServerModel || lastNames[0] || '';
   }
+  let model = s.localServerModel;
+  if (!model || isTranslateGemma(model)) {
+    try { lastNames = await serverModels(base); } catch { /* none */ }
+    const other = lastNames.find((n) => !isTranslateGemma(n));
+    if (!other) throw new Error(t('localTranslateOnly'));
+    if (!model) updateSettings({ localServerModel: other });
+    model = other;
+  }
+  return model;
+}
+/** The model that translates (for the settings line and the translation call). */
+export const translationModel = (task: 'translate' = 'translate'): Promise<string> => modelFor((getSettings().localServer || 'http://localhost:11434/v1').replace(/\/+$/, ''), task);
+
+async function post(base: string, body: unknown): Promise<string> {
+  const r = await localHttp(`${base}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, timeoutMs: 300000, body: JSON.stringify(body) });
+  if (r.status !== 200) throw new Error(`Local server ${r.status}: ${r.body.slice(0, 200)}`);
   const j = JSON.parse(r.body) as { choices?: { message?: { content?: string } }[] };
   return j.choices?.[0]?.message?.content ?? '';
+}
+/** One answer from the local server (the task picks the model). */
+export async function serverChat(system: string, user: string, json: boolean, task: 'translate' | 'other' = 'other'): Promise<string> {
+  const base = (getSettings().localServer || 'http://localhost:11434/v1').replace(/\/+$/, '');
+  const model = await modelFor(base, task);
+  void json;
+  return post(base, { model, temperature: 0.2, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] });
+}
+/** One text translated by a TranslateGemma on the server: its own prompt, one user message, the reply as it is. */
+export async function serverTranslateGemma(model: string, text: string, target: string, source = 'auto'): Promise<string> {
+  const base = (getSettings().localServer || 'http://localhost:11434/v1').replace(/\/+$/, '');
+  return (await post(base, translateGemmaBody(model, text, source, target))).trim();
 }
 
 /** Speech from a local server that offers OpenAI's /audio/speech (Kokoro-FastAPI, LocalAI, openedai-speech…). */

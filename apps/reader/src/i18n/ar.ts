@@ -2472,4 +2472,12 @@ export const ar: Strings = {
   dictFail_unsupported: "لا يستطيع هذا المتصفّح حفظ المعجم؛ استعمل التطبيق أو متصفّحًا أحدث.",
   dictFail_load: "المعجم موجودٌ على الجهاز لكنّ تحميله تعذّر. أعد المحاولة، أو أزله ونزّله من جديد.",
   dictRedownload: "إزالة وإعادة التنزيل",
+  localLight: "خفيف، يصلح للترجمة",
+  localRecTranslate: "موصى به للترجمة",
+  localTranslateModel: "نموذج الترجمة",
+  localTranslateAuto: "تلقائي",
+  localTranslateOnlyTag: "للترجمة فقط",
+  localTranslateOnly: "هذا النموذج للترجمة وحدها؛ فاختر نموذجًا آخر على الخادم لسائر المهامّ.",
+  localTranslateHint: "تُجرى الترجمة بهذا النموذج، وتُجرى سائر المهامّ بالنموذج الرئيس أعلاه. ويختار «تلقائي» نموذج TranslateGemma إن وُجد على الخادم.",
+  localPullHint: "لم يوجد نموذج للترجمة. نزِّل أحدها في Ollama (الأكبر لحاسوبٍ قويّ):",
 };

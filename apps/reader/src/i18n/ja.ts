@@ -645,4 +645,12 @@ export const ja: Partial<Strings> = {
   dictFail_unsupported: "このブラウザーでは辞書を保存できません。アプリか新しいブラウザーをお使いください。",
   dictFail_load: "辞書は端末にありますが、読み込めませんでした。もう一度試すか、削除して再ダウンロードしてください。",
   dictRedownload: "削除して再ダウンロード",
+  localLight: "軽量、翻訳向き",
+  localRecTranslate: "翻訳におすすめ",
+  localTranslateModel: "翻訳用モデル",
+  localTranslateAuto: "自動",
+  localTranslateOnlyTag: "翻訳専用",
+  localTranslateOnly: "このモデルは翻訳専用です。ほかの作業にはサーバー上の別のモデルを選んでください。",
+  localTranslateHint: "翻訳にはこのモデルを使い、ほかの作業は上のメインモデルを使います。自動ではサーバーにあれば TranslateGemma を選びます。",
+  localPullHint: "翻訳用モデルが見つかりません。Ollama で取得してください（高性能なパソコンなら大きいほう）:",
 };

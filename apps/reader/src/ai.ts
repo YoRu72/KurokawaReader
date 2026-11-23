@@ -166,10 +166,10 @@ function readLimit(body: string, header?: string | null): { wait?: number; perMi
 /** A busy or limited provider (429, 5xx) is waited for and asked again — as long as it says to wait, up to six
  *  times — and from then on requests are spaced to its per-minute limit; the day's quota used up stops at once;
  *  anything else fails at once. */
-async function chat(system: string, user: string, json = true): Promise<string> {
+async function chat(system: string, user: string, json = true, task: 'translate' | 'other' = 'other'): Promise<string> {
   for (let attempt = 0; ; attempt++) {
     await paced();
-    try { return await chatOnce(system, user, json); }
+    try { return await chatOnce(system, user, json, task); }
     catch (e) {
       const st = (e as { status?: number }).status ?? Number(/\b(429|500|502|503|504|529)\b/.exec(String((e as Error)?.message ?? ''))?.[1] ?? 0);
       if (!st || ![429, 500, 502, 503, 504, 529].includes(st)) throw e;
@@ -183,11 +183,11 @@ async function chat(system: string, user: string, json = true): Promise<string> 
   }
 }
 const failure = (who: string, r: Sent) => Object.assign(new Error(`${who} ${r.status}: ${r.text.slice(0, 200)}`), { status: r.status, limit: readLimit(r.text, r.retryAfter) });
-async function chatOnce(system: string, user: string, json = true): Promise<string> {
+async function chatOnce(system: string, user: string, json = true, task: 'translate' | 'other' = 'other'): Promise<string> {
   const s = getSettings();
   if (s.aiProvider === 'local' && !trying) {
     const L = await import('./localai');
-    return s.localEngine === 'server' ? L.serverChat(system, user, json) : L.deviceChat(system, user);
+    return s.localEngine === 'server' ? L.serverChat(system, user, json, task) : L.deviceChat(system, user);
   }
   const c = conn(); const { key, model, base } = c;
   const ctl = new AbortController();
@@ -262,15 +262,20 @@ export async function translateBatch(texts: string[], bookId?: string, ctx?: TrC
   const styled = s.aiTask !== 'furigana' && texts.some((x) => /<(i|b|em|strong|u|sup|sub)>/.test(x));
   const prompt = [effectivePrompt(), glossaryPrompt(gl, langName(s.aiTarget)), s.aiTask !== 'furigana' ? namesRule(s.aiTarget) : '', styled ? STYLE : '', s.aiContext !== false && s.aiTask !== 'furigana' ? contextLines(ctx) : ''].filter(Boolean).join('\n\n');
   const fix = (out: string[]) => (gl.length ? out.map((x) => applyGlossary(x, gl)) : out);
+  // TranslateGemma on a local server: its own prompt (one user message), one paragraph at a time, the reply as it is.
+  if (s.aiProvider === 'local' && s.localEngine === 'server' && s.aiTask !== 'furigana') {
+    const L = await import('./localai'); const tm = await L.translationModel().catch(() => '');
+    if (tm && L.isTranslateGemma(tm)) { const out: string[] = []; for (const t of texts) out.push(t.trim() ? await L.serverTranslateGemma(tm, t, s.aiTarget) : t); return fix(out); }
+  }
   // A small model on the device does better with one paragraph at a time and plain text back.
   if (s.aiProvider === 'local' && s.localEngine === 'device') {
     const out: string[] = [];
-    for (const t of texts) out.push(t.trim() ? (await chat(prompt, t, false)).replace(/^["“«]|["”»]$/g, '').trim() : t);
+    for (const t of texts) out.push(t.trim() ? (await chat(prompt, t, false, 'translate')).replace(/^["“«]|["”»]$/g, '').trim() : t);
     return fix(out);
   }
   const system = `${prompt}\n\n${FORMAT}`;
   const ask = async (part: string[]): Promise<string[]> => {
-    const raw = await chat(system, JSON.stringify(part));
+    const raw = await chat(system, JSON.stringify(part), true, 'translate');
     try { return parseArray(raw, part.length); }
     catch (e) {
       if (part.length === 1) throw e;

@@ -2469,6 +2469,14 @@ export const en = {
   dictFail_unsupported: "This browser cannot keep the dictionary. Use the app, or a newer browser.",
   dictFail_load: "The dictionary is on the device but could not be loaded. Try again, or remove it and download it again.",
   dictRedownload: "Remove and download again",
+  localLight: "light, good for translation",
+  localRecTranslate: "Recommended for translation",
+  localTranslateModel: "Model for translation",
+  localTranslateAuto: "Automatic",
+  localTranslateOnlyTag: "translation only",
+  localTranslateOnly: "This model only translates. Choose another model on the server for the other tasks.",
+  localTranslateHint: "Translation uses this model; the other tasks use the main model above. Automatic picks TranslateGemma when the server has it.",
+  localPullHint: "No translation model found. In Ollama, pull one (the larger for a strong computer):",
 };
 
 export type Strings = typeof en;

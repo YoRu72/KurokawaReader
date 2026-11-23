@@ -216,6 +216,7 @@ export interface VisualSettings {
   localModel: string;
   localServer: string;
   localServerModel: string;
+  localTranslateModel: string; // the server model that translates ('' = TranslateGemma when it is there, else the main model)
   aiKey: string;
   aiModel: string;
   aiBaseUrl: string;
@@ -410,6 +411,7 @@ export const DEFAULTS: VisualSettings = {
   localModel: '',
   localServer: '',
   localServerModel: '',
+  localTranslateModel: '',
   aiKey: '',
   aiModel: '',
   aiBaseUrl: '',
@@ -507,7 +509,7 @@ let bookOverrides: Record<string, Partial<VisualSettings>> | null = null;
  *  about how that book is read (its face, size, theme, layout…); these are never kept with one. */
 const GLOBAL_ONLY = new Set<string>([
   // AI services and voices downloaded
-  'aiProvider', 'aiGlossPrompt', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
+  'aiProvider', 'aiGlossPrompt', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'localTranslateModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
   // sync, accounts, tracking
   'syncProvider', 'syncAuto', 'syncDropboxKey', 'syncDropboxRefresh', 'syncWebdavUrl', 'syncWebdavUser', 'syncWebdavPass', 'syncFolder', 'syncLastAt',
   'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',

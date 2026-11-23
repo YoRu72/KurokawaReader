@@ -645,4 +645,12 @@ export const ko: Partial<Strings> = {
   dictFail_unsupported: "이 브라우저는 사전을 저장할 수 없습니다. 앱이나 최신 브라우저를 사용하세요.",
   dictFail_load: "사전이 기기에 있지만 불러오지 못했습니다. 다시 시도하거나 제거한 뒤 다시 다운로드하세요.",
   dictRedownload: "제거 후 다시 다운로드",
+  localLight: "가벼움, 번역에 적합",
+  localRecTranslate: "번역 추천",
+  localTranslateModel: "번역용 모델",
+  localTranslateAuto: "자동",
+  localTranslateOnlyTag: "번역 전용",
+  localTranslateOnly: "이 모델은 번역 전용입니다. 다른 작업에는 서버의 다른 모델을 고르세요.",
+  localTranslateHint: "번역에는 이 모델을, 다른 작업에는 위의 기본 모델을 씁니다. 자동은 서버에 있으면 TranslateGemma를 고릅니다.",
+  localPullHint: "번역 모델이 없습니다. Ollama에서 받으세요(성능 좋은 컴퓨터라면 큰 쪽):",
 };

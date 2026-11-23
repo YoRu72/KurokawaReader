@@ -645,4 +645,12 @@ export const zh: Partial<Strings> = {
   dictFail_unsupported: "此浏览器无法保存词典。请使用应用或更新的浏览器。",
   dictFail_load: "词典已在设备上，但无法加载。请重试，或将其移除后重新下载。",
   dictRedownload: "移除并重新下载",
+  localLight: "轻量，适合翻译",
+  localRecTranslate: "推荐用于翻译",
+  localTranslateModel: "翻译模型",
+  localTranslateAuto: "自动",
+  localTranslateOnlyTag: "仅用于翻译",
+  localTranslateOnly: "此模型只用于翻译。其他任务请在服务器上选择别的模型。",
+  localTranslateHint: "翻译使用此模型，其他任务使用上方的主模型。自动会在服务器有 TranslateGemma 时选用它。",
+  localPullHint: "未找到翻译模型。请在 Ollama 中下载（电脑性能强可选较大的）：",
 };
