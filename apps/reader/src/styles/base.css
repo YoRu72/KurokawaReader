@@ -2525,6 +2525,11 @@ html.pc .names-row .btn, html.pc .names-addrow .btn, html.pc .names-field input[
 .names-keep { margin: 8px 0; }
 .lib-also { display: block; font-size: 11px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .textpic-names { display: grid; gap: 8px; margin: 8px 0; }
+.textpic-names .field { gap: 4px; }
+/* (The action row — up to two lines of buttons — no longer covers the last field when the body is scrolled to its end.) */
+.snap-sheet .sheet-body { padding-bottom: 112px; scroll-padding-bottom: 112px; }
+.snap-sheet .sheet-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.snap-sheet .sheet-actions .btn { min-width: 0; justify-content: center; white-space: normal; text-align: center; line-height: 1.2; }
 .textpic-names input[type="text"] { width: 100%; min-height: 44px; box-sizing: border-box; }
 html.pc .textpic-names input[type="text"] { min-height: 36px; }
 .names-field, .names-keep { margin-bottom: 14px; }

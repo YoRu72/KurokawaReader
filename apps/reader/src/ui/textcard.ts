@@ -298,6 +298,7 @@ export interface SnapChoice { kind: SnapKind; kinds: SnapKind[]; draw(kind: Snap
 /** Preview the snapshot with Save / Share / Copy and a style switch (and, with `choice`, the kinds to choose from). */
 export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title: string, rerender: (style: 'plain' | 'card', pictureOn?: boolean, bookFormat?: boolean) => Promise<HTMLCanvasElement>, picture?: { has: boolean; on: boolean }, choice?: SnapChoice, format?: { has: boolean }, names?: SnapNames): void {
   const sheet = openSheet(t('textAsImage'), t('close'));
+  sheet.el.classList.add('snap-sheet');
   sheet.body.style.fontFamily = 'var(--font-ui)';
   const holder = h('div', { class: 'snap-holder' });
   let blob: Blob | null = null;
@@ -325,7 +326,7 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
   if (picture?.has) {
     const box = h('input', { type: 'checkbox', checked: picOn }) as HTMLInputElement;
     box.addEventListener('change', async () => { picOn = box.checked; mount(await rerender(getSettings().snapStyle, picOn, fmtOn)); });
-    sheet.body.appendChild(h('label', { class: 'check-row snap-pic-row' }, box, h('span', null, t('snapIncludePicture'))));
+    sheet.body.appendChild(h('div', { class: 'options-grid snap-pic' }, h('label', { class: 'row snap-pic-row' }, h('span', { class: 'label' }, t('snapIncludePicture')), h('span', { class: 'switch' }, box, h('i')))));
   }
   if (format?.has) {
     // (The app's own switch row — its name and a line under it, the switch at the end — as in the Visual Options.)
@@ -340,15 +341,15 @@ export function showSnapshot(canvas: HTMLCanvasElement, filename: string, title:
   let namesBox: HTMLElement | null = null; let namesTimer = 0; let saveTimer = 0;
   const showNames = () => { if (namesBox) namesBox.hidden = !(kind === 'card' && getSettings().snapStyle !== 'plain'); };
   if (names) {
-    const ti = h('input', { type: 'text', class: 'textpic-title', dir: 'auto', value: names.title, placeholder: t('cardTitleField'), 'aria-label': t('cardTitleField') }) as HTMLInputElement;
-    const au = h('input', { type: 'text', class: 'textpic-author', dir: 'auto', value: names.author, placeholder: t('addAuthor'), 'aria-label': t('cardAuthorField') }) as HTMLInputElement;
+    const ti = h('input', { type: 'text', class: 'textpic-title', id: 'textpic-title', dir: 'auto', value: names.title, placeholder: t('cardTitleField'), 'aria-label': t('cardTitleField') }) as HTMLInputElement;
+    const au = h('input', { type: 'text', class: 'textpic-author', id: 'textpic-author', dir: 'auto', value: names.author, placeholder: t('addAuthor'), 'aria-label': t('cardAuthorField') }) as HTMLInputElement;
     const rem = h('input', { type: 'checkbox', role: 'switch', class: 'textpic-remember' }) as HTMLInputElement; rem.checked = true;
     const use = h('button', { type: 'button', class: 'btn small tonal textpic-use', hidden: true }, t('useAsBookTitle'));
     const keep = () => { if (rem.checked && au.value.trim() && au.value.trim() !== names.author.trim()) { const v = au.value.trim(); void Promise.resolve(names.remember(v)).then(() => { names.author = v; }); } };
     const apply = () => { use.hidden = !ti.value.trim() || ti.value.trim() === names.title; names.change(ti.value.trim(), au.value.trim()); window.clearTimeout(namesTimer); namesTimer = window.setTimeout(() => void redraw().catch(() => undefined), 120); window.clearTimeout(saveTimer); saveTimer = window.setTimeout(keep, 500); };
     ti.addEventListener('input', apply); au.addEventListener('input', apply); rem.addEventListener('change', keep);
     use.addEventListener('click', async () => { const v = ti.value.trim(); if (!v) return; await names.useTitle(v); names.title = v; use.hidden = true; toast(t('saved')); });
-    namesBox = h('div', { class: 'textpic-names' }, ti, au, h('label', { class: 'row textpic-remember-row' }, h('span', { class: 'label' }, t('rememberAuthor'), h('small', { class: 'hint' }, t('rememberAuthorHint'))), h('span', { class: 'switch' }, rem, h('i'))), use);
+    namesBox = h('div', { class: 'textpic-names' }, h('div', { class: 'field' }, h('label', { for: 'textpic-title' }, t('cardTitleField')), ti), h('div', { class: 'field' }, h('label', { for: 'textpic-author' }, t('cardAuthorField')), au), h('label', { class: 'row textpic-remember-row' }, h('span', { class: 'label' }, t('rememberAuthor'), h('small', { class: 'hint' }, t('rememberAuthorHint'))), h('span', { class: 'switch' }, rem, h('i'))), use);
     holder.after(namesBox); showNames();
   }
   const png = async () => blob ?? (blob = await canvasToBlob(canvas, 'image/png'));

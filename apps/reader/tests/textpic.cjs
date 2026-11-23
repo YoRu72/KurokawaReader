@@ -32,7 +32,7 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
     const r = { has: !!box, on: box ? await box.isChecked() : null, h, colours, names: await p.$$eval('.textpic-title, .textpic-author', (e) => e.map((x) => x.hidden || x.closest('[hidden]') ? 'hidden' : 'shown')).catch(() => []) };
     if (which === 'before') { const u0 = await p.$eval('.snap-preview', (c) => c.toDataURL()); await p.fill('.textpic-author', 'Some Author'); await p.waitForTimeout(600); r.authorChangesPicture = u0 !== await p.$eval('.snap-preview', (c) => c.toDataURL()); await p.fill('.textpic-author', ''); await p.waitForTimeout(500); }
     if (process.env.OUT) await p.screenshot({ path: path.join(process.env.OUT, `textpic-${which}-first.png`) });
-    if (box) { await box.click(); await p.waitForTimeout(500); r.h2 = await p.$eval('.snap-preview', (c) => c.height); }
+    if (box) { await p.click('.snap-pic-row .switch'); await p.waitForTimeout(500); r.h2 = await p.$eval('.snap-preview', (c) => c.height); }
     if (process.env.OUT) await p.screenshot({ path: path.join(process.env.OUT, `textpic-${which}.png`) });
     await p.click('.sheet .sheet-head button[aria-label="Close"]').catch(() => p.keyboard.press('Escape')); await p.waitForTimeout(400); await p.evaluate(() => getSelection().removeAllRanges()); await p.waitForTimeout(300);
     return r;
