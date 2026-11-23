@@ -126,6 +126,12 @@ export function bookView(id: string): HTMLElement {
     // Held, or right-clicked: the book's tags, not just the one heart.
     void import('../ui/tags').then((m) => m.onHoldOrContext(favTile, () => m.tagsSheetFor(book, () => render(book))));
     if (others.length) favTile.querySelector('span')!.textContent = `${isFav ? t('inLibraryFav') + ' · ' : ''}${others.slice(0, 2).join('، ')}${others.length > 2 ? '…' : ''}`;
+    // (The review entry's label is right the first time: a stale or unknown review state is asked once, in the background.)
+    const alTile = (el: HTMLElement, bk: Book): HTMLElement => {
+      el.dataset.alReview = '1';
+      if (!bk.track?.reviewCheckedAt || Date.now() - bk.track.reviewCheckedAt >= 864e5) void import('../ui/alreview').then((m) => m.syncReviewLabel(bk, (label, on) => { const s = el.querySelector('span'); if (s) s.textContent = label; el.classList.toggle('on', on); }));
+      return el;
+    };
     const tiles = h('div', { class: 'book-tiles' },
       favTile,
       tile('clock', stats?.ms ? formatDuration(stats.ms) : t('notStarted'), !!stats?.ms, async () => { const { showBookInfo } = await import('../ui/bookinfo'); showBookInfo({ book, stats: stats ?? { ms: 0, words: 0, days: {} }, speed: null, pages: book.pageCount, pct: book.progress?.pct ?? 0 }); }),
@@ -133,7 +139,7 @@ export function bookView(id: string): HTMLElement {
       // entries; a book of one's own files gets it once an AniList account is linked.)
       anilistOn() && (fromSource(book) || book.track || linked()) ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { await (await import('../ui/anilistlink')).anilistSignIn(() => render(book)); if (!linked()) return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
       // (A review on AniList: only with an account linked and the book matched there.)
-      anilistOn() && linked() && book.track ? tile('note', book.track.reviewId ? t('alrEdit') : t('alrAction'), !!book.track.reviewId, async () => { const m = await import('../ui/alreview'); m.reviewSheet((await db.getBook(book.id)) ?? book, () => void db.getBook(book.id).then((b) => { if (b) render(b); })); }) : null,
+      anilistOn() && linked() && book.track ? alTile(tile('note', book.track.reviewId ? t('alrEdit') : t('alrEntry'), !!book.track.reviewId, async () => { const m = await import('../ui/alreview'); m.reviewSheet((await db.getBook(book.id)) ?? book, () => void db.getBook(book.id).then((b) => { if (b) render(b); })); }), book) : null,
       tile('pen', t('edit'), false, () => void import('../ui/booknames').then((m) => m.editNamesSheet(book, (b) => { top.querySelector('.title')!.textContent = b.title; render(book); }))),
       tile('star', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }),
       tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }),

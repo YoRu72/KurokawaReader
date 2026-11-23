@@ -7,7 +7,7 @@ const LANG = process.argv.includes('ar') ? 'ar' : 'en';
 const DIST = path.resolve(__dirname, '../dist'); const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 let fails = 0; const ok = (n, c, extra) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(extra ?? ''))); if (!c) fails++; };
-const S = LANG === 'ar' ? { action: 'مراجعة في AniList', edit: 'تحرير مراجعتك', publish: 'نشر', pubd: 'المنشورة', draft: 'مسودتك', open: 'فتح في AniList' } : { action: 'Review on AniList', edit: 'Edit your review', publish: 'Publish', pubd: 'The published one', draft: 'Your draft', open: 'Open on AniList' };
+const S = LANG === 'ar' ? { entry: 'مراجعة', action: 'مراجعة في AniList', edit: 'تحرير مراجعتك', publish: 'نشر', pubd: 'المنشورة', draft: 'مسودتك', open: 'فتح في AniList' } : { entry: 'Review', action: 'Review on AniList', edit: 'Edit your review', publish: 'Publish', pubd: 'The published one', draft: 'Your draft', open: 'Open on AniList' };
 const JSON_H = { 'content-type': 'application/json', 'access-control-allow-origin': '*' };
 const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 1) + 'x';
 (async () => {
@@ -15,7 +15,7 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
   const b = await chromium.launch(); const errors = [];
   // A page with a fake AniList (srv: what it holds and answers), a linked account (or not) and a book (with a match or not).
   const open = async (o = {}) => {
-    const srv = { review: o.review ?? null, saves: [], deletes: [], reviewQueries: 0, refuse: null, rate: false };
+    const srv = { review: o.review ?? null, saves: [], deletes: [], reviewQueries: 0, fail: false, refuse: null, rate: false };
     const ctx = await b.newContext({ viewport: { width: 412, height: 915 }, locale: LANG }); const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
     await ctx.route('https://graphql.anilist.co/**', async (route) => {
       const q = route.request().postData() || ''; const v = JSON.parse(q).variables || {};
@@ -29,7 +29,7 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
         return send(200, { data: { SaveReview: { id: 55, siteUrl: 'https://anilist.co/review/55' } } });
       }
       if (/DeleteReview/.test(q)) { srv.deletes.push(v); srv.review = null; return send(200, { data: { DeleteReview: { deleted: true } } }); }
-      if (/Review\(/.test(q)) { srv.reviewQueries++; return srv.review ? send(200, { data: { Review: srv.review } }) : send(404, { errors: [{ message: 'Not Found.', status: 404 }], data: { Review: null } }); }
+      if (/Review\(/.test(q)) { srv.reviewQueries++; if (srv.fail) return route.abort(); return srv.review ? send(200, { data: { Review: srv.review } }) : send(404, { errors: [{ message: 'Not Found.', status: 404 }], data: { Review: null } }); }
       return send(200, { data: {} });
     });
     await p.goto('http://localhost:5471/');
@@ -50,21 +50,24 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
   };
   const book = (p) => p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').get('b1'); q.onsuccess = () => res(q.result); }; }));
   const goBook = async (p) => { await p.evaluate(() => { location.hash = '#/book/b1'; }); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(400); };
+  const rt = (p) => p.locator('.book-tile[data-al-review]');
   const tile = (p, label) => p.locator('.book-tile', { hasText: label });
-  const sheet = async (p) => { await tile(p, S.action).or(tile(p, S.edit)).first().click(); await p.waitForSelector('.alr-sheet .alr-body'); await p.waitForTimeout(500); };
+  const sheet = async (p) => { await rt(p).click(); await p.waitForSelector('.alr-sheet .alr-body'); await p.waitForTimeout(500); };
   const fillValid = async (p) => { await p.fill('.alr-summary', 'A calm and careful novel'); await p.fill('.alr-body', BODY(2300)); };
 
   // 1. Hidden: no account linked, and no match.
-  { const { p, ctx } = await open({ linked: false }); await goBook(p);
-    ok('1: no AniList account linked: no review entry, no hint of it', (await tile(p, S.action).count()) === 0 && !/AniList/.test(await p.locator('.book-tiles').innerText().then((x) => x.replace(/Tracking|تتبع/g, ''))) || (await tile(p, S.action).count()) === 0);
+  { const { p, ctx, srv } = await open({ linked: false }); await goBook(p);
+    ok('1: not linked: no lookup at all', srv.reviewQueries === 0);
+    ok('1: no AniList account linked: no review entry, no hint of it', (await rt(p).count()) === 0 && !/AniList/.test(await p.locator('.book-tiles').innerText().then((x) => x.replace(/Tracking|تتبع/g, ''))) || (await rt(p).count()) === 0);
     await ctx.close(); }
-  { const { p, ctx } = await open({ track: false }); await goBook(p);
-    ok('1: linked but the book has no AniList match: no review entry', (await tile(p, S.action).count()) === 0 && (await tile(p, S.edit).count()) === 0);
+  { const { p, ctx, srv } = await open({ track: false }); await goBook(p); await p.waitForTimeout(500);
+    ok('1: not matched: no lookup at all', srv.reviewQueries === 0);
+    ok('1: linked but the book has no AniList match: no review entry', (await rt(p).count()) === 0);
     await ctx.close(); }
 
   // 2. A matched book, no online review: counts, validation, publish with the right variables, the Private switch.
   { const { p, ctx, srv } = await open({}); await goBook(p);
-    ok('2: linked and matched: «' + S.action + '» on the details page', (await tile(p, S.action).count()) === 1);
+    ok('2: linked and matched, no review: the entry reads exactly «' + S.entry + '»', (await rt(p).count()) === 1 && (await rt(p).innerText()).trim() === S.entry);
     await sheet(p);
     ok('2: the score starts from the book\'s AniList score (8/10 → 80)', (await p.inputValue('.alr-score-n')) === '80' && (await p.inputValue('.alr-sheet input[type=range]')) === '80');
     ok('2: Publish is disabled while the review is empty', await p.locator('.alr-publish').isDisabled());
@@ -125,7 +128,7 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
     await p.fill('.alr-body', BODY(2500, 'edited ')); await p.locator('.alr-publish').click(); await p.waitForSelector('.alr-open:not([hidden])');
     ok('6: publishing an edit sends the review id', srv.saves[0].id === 31, srv.saves[0]);
     await p.waitForTimeout(300); await p.keyboard.press('Escape'); await p.reload(); await p.waitForTimeout(600); await goBook(p);
-    ok('6: the page now says «' + S.edit + '»', (await tile(p, S.edit).count()) === 1);
+    ok('6: the page now says «' + S.edit + '»', (await rt(p).innerText()).trim() === S.edit);
     await ctx.close(); }
 
   // 7. A draft and a different published one: the choice appears; picking the published one shows it.
@@ -163,6 +166,26 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
     await p.locator('.book-tile').filter({ has: p.locator('svg') }).nth(0).waitFor();
     await p.evaluate(() => [...document.querySelectorAll('.book-tile')].find((x) => /Tracked|Tracking|مُتابَع|المتابعة/.test(x.textContent))?.click()); await p.waitForSelector('.track-review', { timeout: 5000 }).catch(() => {});
     ok('9: the tracking sheet has the review entry (a media is matched)', (await p.locator('.track-review').count()) === 1);
+    await ctx.close(); }
+
+  // 10. The label is right the first time, from one background lookup per visit (no sheet opened).
+  const until = async (fn, ms = 6000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 100)); } return false; };
+  const label = async (p) => (await rt(p).innerText()).trim();
+  { const { p, ctx, srv } = await open({}); await goBook(p); await until(() => srv.reviewQueries >= 1); await p.waitForTimeout(500);
+    ok('10: no review: «' + S.entry + '» after the lookup', (await label(p)) === S.entry);
+    const bk = await book(p); ok('10: «none» is stored (checked, no id) so it is not asked again', !bk.track.reviewId && bk.track.reviewCheckedAt > 0, bk.track);
+    await p.evaluate(() => { location.hash = '#/'; }); await p.waitForTimeout(400); await goBook(p); await p.waitForTimeout(500);
+    ok('10: one lookup request for the visit, none on a revisit', srv.reviewQueries === 1, srv.reviewQueries);
+    await ctx.close(); }
+  { const { p, ctx, srv } = await open({ review: ONLINE }); await goBook(p);
+    ok('10: an existing review: the label becomes «' + S.edit + '» without opening the sheet', await until(async () => (await label(p)) === S.edit));
+    ok('10: still one lookup request, id stored', srv.reviewQueries === 1 && (await book(p)).track.reviewId === 31, srv.reviewQueries);
+    await sheet(p); await p.locator('.alr-delete').click(); await p.locator('.alr-confirm-yes').click(); await p.waitForSelector('.alr-sheet', { state: 'detached', timeout: 5000 });
+    ok('10: after Delete the label is back to «' + S.entry + '»', await until(async () => (await label(p)) === S.entry));
+    const bk = await book(p); ok('10: … and stored as none, checked', !bk.track.reviewId && bk.track.reviewCheckedAt > 0);
+    await ctx.close(); }
+  { const { p, ctx, srv } = await open({ review: ONLINE }); srv.fail = true; await goBook(p); await until(() => srv.reviewQueries >= 1); await p.waitForTimeout(600);
+    ok('10: lookup fails (offline): «' + S.entry + '», no error toast, nothing stored', (await label(p)) === S.entry && (await p.locator('.toast').count()) === 0 && !(await book(p)).track.reviewCheckedAt);
     await ctx.close(); }
   console.log(fails ? `${fails} FAILED` : 'all passed', 'errors', errors);
   await b.close(); server.close(); process.exit(fails ? 1 : 0);

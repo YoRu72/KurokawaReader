@@ -732,6 +732,7 @@ export const ja: Partial<Strings> = {
   useAsBookTitle: "本のタイトルにする",
   aiPhoneNoRec: "翻訳には、パソコンのモデルかオンラインのプロバイダーのほうが向いています。",
   alrAction: "AniList でレビュー",
+  alrEntry: "レビュー",
   alrEdit: "レビューを編集",
   alrSummary: "要約",
   alrSummaryPh: "レビューを一行でまとめる",

@@ -16,7 +16,7 @@ export interface AlDate { year?: number | null; month?: number | null; day?: num
 export interface AlMedia { id: number; title: string; titleNative?: string; cover?: string; format?: string; status?: string; year?: number; score?: number; chapters?: number | null; volumes?: number | null; description?: string; url: string }
 export interface AlEntry { id?: number; status: AlStatus; progress: number; score: number; startedAt?: AlDate; completedAt?: AlDate }
 /** What a book keeps about its AniList entry. */
-export interface Track { service: 'anilist'; media: AlMedia; entry: AlEntry; updatedAt: number; /** The reader's published review of this media, once known. */ reviewId?: number }
+export interface Track { service: 'anilist'; media: AlMedia; entry: AlEntry; updatedAt: number; /** The reader's published review of this media, once known. */ reviewId?: number; /** When the site was last asked about it (absent reviewId then means: none). */ reviewCheckedAt?: number }
 
 export const anilistOn = (): boolean => getSettings().anilistEnabled;
 export function token(): string { try { return localStorage.getItem(TOKEN_KEY) ?? ''; } catch { return ''; } }

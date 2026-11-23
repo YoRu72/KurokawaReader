@@ -2559,6 +2559,7 @@ export const ar: Strings = {
   useAsBookTitle: "اجعله عنوان الكتاب",
   aiPhoneNoRec: "الترجمة أجود بنموذجٍ على حاسوب أو بمزوِّدٍ على الإنترنت.",
   alrAction: "مراجعة في AniList",
+  alrEntry: "مراجعة",
   alrEdit: "تحرير مراجعتك",
   alrSummary: "الخلاصة",
   alrSummaryPh: "سطرٌ واحد يلخّص مراجعتك",

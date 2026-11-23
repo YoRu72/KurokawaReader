@@ -732,6 +732,7 @@ export const ko: Partial<Strings> = {
   useAsBookTitle: "책 제목으로 사용",
   aiPhoneNoRec: "번역에는 컴퓨터의 모델이나 온라인 제공업체가 더 낫습니다.",
   alrAction: "AniList에 리뷰 쓰기",
+  alrEntry: "리뷰",
   alrEdit: "내 리뷰 수정",
   alrSummary: "요약",
   alrSummaryPh: "리뷰를 한 줄로 요약하세요",

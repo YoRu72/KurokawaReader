@@ -11,8 +11,25 @@ import CSS from './alreview.lazy.css' with { type: 'text' };
 
 /** Whether the review entry may be offered for this book at all. */
 export const reviewAllowed = (book: Book): boolean => al.anilistOn() && al.linked() && !!book.track;
-/** Its label: «Edit your review» when one is known to exist. */
+/** The sheet's title: «Edit your review» when one is known to exist. */
 export const reviewLabel = (book: Book): string => t(book.track?.reviewId ? 'alrEdit' : 'alrAction');
+/** The entry's label: just «Review» until the reader has published one. */
+export const reviewEntryLabel = (book: Book): string => t(book.track?.reviewId ? 'alrEdit' : 'alrEntry');
+type Tr = NonNullable<Book['track']>;
+/** The track with the review state set (an id, or null: none) and the time it was asked. */
+const withReview = (tr: Tr, id: number | null): Tr => { const { reviewId: _r, ...rest } = tr; return { ...rest, reviewCheckedAt: Date.now(), ...(id ? { reviewId: id } : {}) } as Tr; };
+const asked = new Set<string>();
+/** Once per visit and at most once a day: ask AniList whether the reader has a review here, store the answer on the
+ *  book's track (an id, or «none» by the check time alone) and tell `set` the label. Offline: nothing happens. */
+export function syncReviewLabel(book: Book, set: (label: string, on: boolean) => void): void {
+  const tr = book.track; if (!reviewAllowed(book) || !tr || asked.has(book.id)) return;
+  if (tr.reviewCheckedAt && Date.now() - tr.reviewCheckedAt < 864e5) return;
+  asked.add(book.id);
+  void al.myReview(tr.media.id).then(async (r) => {
+    await remember(book, (b) => { if (b.track) b.track = withReview(b.track, r?.id ?? null); });
+    set(reviewEntryLabel(book), !!book.track?.reviewId);
+  }).catch(() => {});
+}
 
 /** The score to start from, 0–100: AniList's own for the book, else the app's stars. */
 export function startScore(book: Book): number {
@@ -144,7 +161,7 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
       existing = { id: r.id, ...v, siteUrl: r.siteUrl };
       siteUrl = r.siteUrl || `https://anilist.co/review/${r.id}`;
       dirty = false;
-      await remember(book, (b) => { delete b.alDraft; if (b.track) b.track = { ...b.track, reviewId: r.id }; });
+      await remember(book, (b) => { delete b.alDraft; if (b.track) b.track = withReview(b.track, r.id); });
       onChange();
       open.href = siteUrl; open.hidden = false; del.hidden = false;
       sh.el.querySelector('.sheet-head h3')!.textContent = t('alrEdit');
@@ -167,7 +184,7 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
     setBusy(true);
     try {
       await al.deleteReview(id); existing = null;
-      await remember(book, (b) => { if (b.track) { const { reviewId: _r, ...rest } = b.track; b.track = rest as typeof b.track; } });
+      await remember(book, (b) => { if (b.track) b.track = withReview(b.track, null); });
       onChange(); toast(t('alrDeleted')); sh.close();
     } catch (e) { fail(e); } finally { setBusy(false); }
   }
@@ -190,10 +207,10 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
   void (async () => {
     if (!al.linked()) return;
     try { existing = await al.myReview(media.id); checked = true; } catch { return; }
-    if (!existing) { if (book.track?.reviewId) await remember(book, (b) => { if (b.track) { const { reviewId: _r, ...rest } = b.track; b.track = rest as typeof b.track; } }); return; }
+    if (!existing) { await remember(book, (b) => { if (b.track) b.track = withReview(b.track, null); }); return; }
     const ex = existing;
     del.hidden = false; sh.el.querySelector('.sheet-head h3')!.textContent = t('alrEdit');
-    if (book.track && book.track.reviewId !== ex.id) await remember(book, (b) => { if (b.track) b.track = { ...b.track, reviewId: ex.id }; });
+    await remember(book, (b) => { if (b.track) b.track = withReview(b.track, ex.id); });
     if (ex.siteUrl) { siteUrl = ex.siteUrl; open.href = siteUrl; open.hidden = false; }
     const pub = { summary: ex.summary, body: ex.body, score: ex.score, private: ex.private };
     const cur = values(); const same = (a: typeof pub, b: typeof pub) => a.summary.trim() === b.summary.trim() && a.body.trim() === b.body.trim() && a.score === b.score && a.private === b.private;

@@ -7,6 +7,13 @@ import { db, type Book } from '../db';
 import * as al from '../anilist';
 import { getSettings } from '../settings';
 
+/** The review button's label: «Review», or «Edit your review» once one is known; an unknown state is asked once, in the background. */
+const reviewSpan = (bk: Book): HTMLElement => {
+  const sp = h('span', null, bk.track?.reviewId ? t('alrEdit') : t('alrEntry'));
+  if (!bk.track?.reviewCheckedAt || Date.now() - bk.track.reviewCheckedAt >= 864e5) void import('./alreview').then((m) => m.syncReviewLabel(bk, (label) => { sp.textContent = label; }));
+  return sp;
+};
+
 /** Stars (1–5) from an AniList score in the account's format, and back. */
 export const starsOf = (score: number, f: al.ScoreFormat): number => (score > 0 ? Math.max(1, Math.min(5, Math.round((score / al.scoreMax(f)) * 5))) : 0);
 export const scoreOf = (stars: number, f: al.ScoreFormat): number => (stars > 0 ? Math.round(((stars / 5) * al.scoreMax(f)) * 10) / 10 : 0);
@@ -151,7 +158,7 @@ export function trackSheet(book: Book, onChange: () => void): void {
         field(t('alFinished'), finished)),
       h('p', { class: 'hint' }, t('trackStarsHint')),
       // (The review entry: only with an account linked and a media matched — which is this view.)
-      ...(al.anilistOn() && al.linked() ? [h('button', { type: 'button', class: 'btn tonal track-review', style: { width: '100%', minHeight: '44px', marginTop: '8px' }, onclick: () => void import('./alreview').then(async (m) => { const fresh = (await db.getBook(book.id)) ?? book; m.reviewSheet(fresh, () => { void db.getBook(book.id).then((b) => { if (b) book.track = b.track; onChange(); }); }); }) }, icon('note'), book.track?.reviewId ? t('alrEdit') : t('alrAction'))] : []));
+      ...(al.anilistOn() && al.linked() ? [h('button', { type: 'button', class: 'btn tonal track-review', style: { width: '100%', minHeight: '44px', marginTop: '8px' }, onclick: () => void import('./alreview').then(async (m) => { const fresh = (await db.getBook(book.id)) ?? book; m.reviewSheet(fresh, () => { void db.getBook(book.id).then((b) => { if (b) book.track = b.track; onChange(); }); }); }) }, icon('note'), reviewSpan(book))] : []));
     const saveBtn = h('button', { type: 'button', class: 'btn small primary', onclick: async () => {
       const next: al.AlEntry = { ...e, status: status.value as al.AlStatus, progress: Number(progress.value) || 0, score: Number(score.value) || 0, startedAt: al.toAlDate(started.value), completedAt: al.toAlDate(finished.value) };
       if (next.status === 'COMPLETED' && !next.completedAt) next.completedAt = al.today();

@@ -2556,6 +2556,7 @@ export const en = {
   useAsBookTitle: "Use as the book's title",
   aiPhoneNoRec: "For translation, a model on a computer or an online provider does better.",
   alrAction: "Review on AniList",
+  alrEntry: "Review",
   alrEdit: "Edit your review",
   alrSummary: "Summary",
   alrSummaryPh: "One line that sums up your review",

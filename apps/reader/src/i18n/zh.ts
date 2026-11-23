@@ -732,6 +732,7 @@ export const zh: Partial<Strings> = {
   useAsBookTitle: "用作书名",
   aiPhoneNoRec: "翻译用电脑上的模型或在线服务商效果更好。",
   alrAction: "在 AniList 写书评",
+  alrEntry: "评论",
   alrEdit: "编辑你的书评",
   alrSummary: "摘要",
   alrSummaryPh: "用一句话概括你的书评",
