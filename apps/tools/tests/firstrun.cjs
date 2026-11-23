@@ -37,7 +37,7 @@ const TAURI_SHIM = (o) => {
   await new Promise((r) => server.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${server.address().port}/`;
   const br = await chromium.launch(); const errors = [];
   const tauriPage = async (o) => {
-    const ctx = await br.newContext({ viewport: { width: 1100, height: 760 }, colorScheme: o.mode === 'light' ? 'light' : 'dark' }); const p = await ctx.newPage(); p.setDefaultTimeout(20000);
+    const ctx = await br.newContext({ viewport: { width: 1100, height: 760 }, colorScheme: o.mode === 'light' ? 'light' : 'dark' }); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()); const p = await ctx.newPage(); p.setDefaultTimeout(20000);
     p.on('pageerror', (e) => errors.push(`${o.lang}/${o.mode}: ${e.message}`));
     await p.addInitScript(TAURI_SHIM, o);
     await p.addInitScript({ content: `window.__KT_BOOT__ = ${JSON.stringify({ os: 'win32', arch: 'x64' })};\n${BRIDGE}\n${HBRIDGE}` + (o.selftest ? '\nwindow.__KT_SELFTEST__ = {};' : '') });
@@ -90,7 +90,7 @@ const TAURI_SHIM = (o) => {
   // ---------- the Electron build's offer of the move ----------
   // (Offered 20 s after the start: the page's clock run forward — Playwright's clock —, never a real wait.)
   const electronPage = async (info, fail, later) => {
-    const ctx = await br.newContext({ viewport: { width: 1100, height: 760 } }); const p = await ctx.newPage(); p.setDefaultTimeout(20000);
+    const ctx = await br.newContext({ viewport: { width: 1100, height: 760 } }); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()); const p = await ctx.newPage(); p.setDefaultTimeout(20000);
     p.on('pageerror', (e) => errors.push('E: ' + e.message));
     await p.clock.install();
     await p.addInitScript(({ info, fail, later }) => {

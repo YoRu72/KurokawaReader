@@ -94,6 +94,10 @@ export interface Settings {
   autoUpdateCheck: boolean;
   /** How often updates are looked for, and (Android) whether a new version is fetched by itself, then offered. */
   updateEvery?: 'launch' | 'daily' | 'weekly'; updateAutoDownload?: boolean;
+  /** Add-ons, themes and wallpapers brought up to date from the repository by themselves (liveUpdates.ts); unset: on. */
+  liveUpdates?: boolean;
+  /** Catalogue themes and scenes already shown to the reader (the rest carry «New»), by id. */
+  seenThemes?: string[]; seenScenes?: string[];
   updateChannel: 'stable' | 'beta';
   notifyDone: boolean;
   notifyFailed: boolean;

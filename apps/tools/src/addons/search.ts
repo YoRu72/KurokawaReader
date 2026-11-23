@@ -19,6 +19,8 @@ export async function searchSources(): Promise<AddonEntry[]> {
   return ix.addons.filter((a) => a.kind === 'torrent-search' && !!a.module && installed(a.id));
 }
 const mods = new Map<string, Promise<SearchModule>>();
+// (An add-on updated while the app runs: its module is loaded afresh next time — addons.ts says which.)
+addEventListener('kt:addon-updated', (e) => { mods.delete(String((e as CustomEvent<string>).detail)); });
 async function load(id: string): Promise<SearchModule> {
   let m = mods.get(id);
   if (!m) { m = (async () => { const u = await moduleUrl(id); if (!u) throw new Error('not installed'); try { const mod = (await import(/* @vite-ignore */ u)) as SearchModule & { default?: SearchModule }; return mod.default ?? mod; } finally { URL.revokeObjectURL(u); } })(); mods.set(id, m); m.catch(() => mods.delete(id)); }

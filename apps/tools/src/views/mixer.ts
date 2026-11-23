@@ -5,7 +5,7 @@
 import { h, icon, toast, openSheet, pickButton } from '../ui/dom';
 import { t, localDigits } from '../i18n';
 import { getSettings, updateSettings } from '../settings';
-import { SCENES_ALL } from '../theme/sceneList';
+import { baseScenes } from '../theme/sceneList';
 import { GROUNDS, OVERLAY_KINDS, RANGE, MAX_SAVED, MAX_OVERLAYS, MIX_BUDGET, PRESETS, cleanMix, cleanName, savedMixes, newMixId, setDraft, mixById, type Mix, type OverlayKind, type GroundId } from '../theme/sceneMix';
 import { composeMix } from '../theme/sceneHost';
 
@@ -16,7 +16,7 @@ const tk = (k: string): string => t(k as 'mixNew');
 function startFrom(): Mix {
   const pref = getSettings().animBg ?? ''; const cur = pref.startsWith('scene:mix:') ? mixById(pref.slice(10)) : null;
   if (cur) return { ...cur, overlays: cur.overlays.map((o) => ({ ...o })), name: '' };
-  const base = pref.startsWith('scene:') && SCENES_ALL.some((s) => s.id === pref.slice(6)) ? pref.slice(6) : 'snowflakes';
+  const base = pref.startsWith('scene:') && baseScenes().some((s) => s.id === pref.slice(6)) ? pref.slice(6) : 'snowflakes';
   return { id: 'draft', name: '', ground: 'scene', base, overlays: [{ kind: 'snow', amount: 0.5, size: 1 }], wind: 0 };
 }
 
@@ -46,7 +46,7 @@ export function openMixer(rerender: () => void, edit?: Mix): void {
     const c = composeMix(work); budget.textContent = t('mixParticles', { n: localDigits(c.total), max: localDigits(MIX_BUDGET) });
     clearTimeout(timer); timer = window.setTimeout(() => { timer = 0; if (gone) return; void import('../theme/animbg').then((m) => { if (gone) return; stop?.(); stop = m.previewAnimBg(box, 'scene:mix:~draft', { art: true }); }); }, stop ? 220 : 0);
   };
-  const scenes: [string, string][] = [['none', t('mixBaseNone')], ...SCENES_ALL.map((s): [string, string] => [s.id, tk(s.name)])];
+  const scenes: [string, string][] = [['none', t('mixBaseNone')], ...baseScenes().map((s): [string, string] => [s.id, s.label ?? tk(s.name)])];
   const build = (): void => {
     controls.replaceChildren();
     const row = (label: string, control: Node) => h('div', { class: 'mix-row' }, h('span', { class: 'mix-label' }, label), control);

@@ -32,10 +32,12 @@ import starfield from './scenes/starfield.json';
 import meteors from './scenes/meteors.json';
 import petals from './scenes/petals.json';
 import neonNight from './scenes/neon-night.json';
+import hydro from './scenes/hydro.json';
 import { compose, mixById, type Mix, type Composed } from './sceneMix';
+import { REPO_DOCS, repoListed } from './sceneList';
 
 /** The scenes this build has, by id. */
-const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake, 'snowflakes': snowflakes, 'blizzard': blizzard, 'first-snow': firstSnow, 'rain': rain, 'waves': waves, 'underwater': underwater, 'fireflies': fireflies, 'starfield': starfield, 'meteors': meteors, 'petals': petals, 'neon-night': neonNight };
+const SCENES: Record<string, unknown> = { motes, 'night-snowfall': nightSnowfall, 'aurora-lake': auroraLake, 'snowflakes': snowflakes, 'blizzard': blizzard, 'first-snow': firstSnow, 'rain': rain, 'waves': waves, 'underwater': underwater, 'fireflies': fireflies, 'starfield': starfield, 'meteors': meteors, 'petals': petals, 'neon-night': neonNight, 'hydro': hydro };
 export const SCENE_IDS = Object.keys(SCENES);
 const ABI = 2;
 const PARAM_SPEED = 0;
@@ -706,7 +708,11 @@ export class SceneRun {
 
 /** A built-in scene started in the engine (throws UnknownScene, or when the engine or the scene cannot be loaded). */
 export async function openScene(id: string, seed: number, slot: EngineSlot = 'main'): Promise<SceneRun> {
-  const one = defOf(id); if (!one) throw new UnknownScene(`no scene «${id}» in this build`);
+  // (A scene from the repository — or a mix made on one —: its document fetched, checked and kept on first use, by
+  //  the dynamic path beside the built-in imports; only a checked document reaches the engine.)
+  let one = defOf(id);
+  if (!one || (id.startsWith('mix:') && (!repoListed() || needsRepoBase(id)))) { await import('./sceneRepo').then((m) => m.prepareScene(id)).catch(() => undefined); one = defOf(id); }
+  if (!one) throw new UnknownScene(`no scene «${id}» in this build`);
   const eng = await loadEngine(slot);
   let h: number;
   try { h = loadInto(eng.ex, JSON.stringify(one.def), seed); } catch (e) { poison(eng); throw e; }
@@ -717,14 +723,17 @@ export async function openScene(id: string, seed: number, slot: EngineSlot = 'ma
   return run;
 }
 /** A mix composed from this build's scenes (the mixer's particle count, the tests). */
-export const composeMix = (m: Mix): Composed => compose(m, SCENES);
+export const composeMix = (m: Mix): Composed => compose(m, allScenes());
+/** The built-in scenes and the repository's checked ones (built-in ids win). */
+const allScenes = (): Record<string, unknown> => ({ ...REPO_DOCS, ...SCENES });
+const needsRepoBase = (id: string): boolean => { const b = mixById(id.slice(4))?.base; return !!b && b !== 'none' && !SCENES[b] && !REPO_DOCS[b]; };
 /** A scene's document by id: a built-in one, or a mix («mix:<id>»: a preset, a saved mix, the mixer's draft) composed
  *  now from the built-in ones (theme/sceneMix.ts); its wind (units/s). */
 export function defOf(id: string): { def: unknown; wind: number } | null {
-  const d = SCENES[id]; if (d) return { def: d, wind: 0 };
+  const d = SCENES[id] ?? REPO_DOCS[id]; if (d) return { def: d, wind: 0 };
   if (!id.startsWith('mix:')) return null;
   const m = mixById(id.slice(4)); if (!m) return null;
-  const c = compose(m, SCENES); return { def: c.def, wind: c.wind };
+  const c = compose(m, allScenes()); return { def: c.def, wind: c.wind };
 }
 
 /** The wasm step for a scene of 4,096 particles (the perf gate's number): ms a step, averaged over `n` steps of 1/60 s. */
