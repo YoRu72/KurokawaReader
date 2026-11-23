@@ -58,7 +58,7 @@ const VIEWS = [
     }, id);
     await p.reload(); await p.waitForTimeout(800);
     await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(400);
-    await p.evaluate(() => [...document.querySelectorAll('.book-tile')].find((x) => /Review on AniList|مراجعة في AniList/.test(x.textContent)).click());
+    await p.waitForSelector('.book-tile[data-al-review]', { timeout: 10000 }); await p.click('.book-tile[data-al-review]');
     await p.waitForSelector('.alr-sheet .alr-body'); await p.fill('.alr-summary', 'A made-up summary line'); await p.fill('.alr-body', 'A made-up review text. '.repeat(30)); await p.waitForTimeout(400);
   }],
   ['settings', async (p) => { await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('.settings-body .card.collapsed').forEach((c) => c.classList.remove('collapsed'))); }, 'phone'],
