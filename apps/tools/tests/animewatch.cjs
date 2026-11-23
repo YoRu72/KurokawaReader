@@ -41,8 +41,11 @@ const MEDIA_AL = () => ({ id: ID, idMal: IDMAL, title: { romaji: 'Hoshizora Kiss
   // (The add-ons' index: the Subtitles add-on with one stand-in source written here, for a real download to start.)
   const ix = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'index.json'), 'utf8'));
   ix.addons = ix.addons.filter((a) => a.kind !== 'subtitle-source'); ix.addons.find((a) => a.id === 'subtitles').children = ['subs-standin'];
-  ix.addons.push({ id: 'subs-standin', kind: 'subtitle-source', parent: 'subtitles', name: 'Stand-in', description: 'A test source.', version: '1.0.0', module: 'subs/standin.mjs', icon: 'subtitles' });
   const MOD = `export async function search(q) { return [1, 2].map((n) => ({ title: 'Starlit Cafe subs ' + n, language: 'en', site: 'Stand-in', url: 'https://subs.invalid/' + n + '.srt', downloads: 3 - n })); }`;
+  // (Honest like the real index: the entry carries the module's sha256 and size — the app refuses a module without one
+  // once any module in the index has one, so the live checker keeps running in this test.)
+  const entryFor = (id, parent, name, file, body) => ({ id, kind: 'subtitle-source', parent, name, description: 'A test source.', version: '1.0.0', module: file, sha256: require('node:crypto').createHash('sha256').update(body).digest('hex'), size: Buffer.byteLength(body), icon: 'subtitles' });
+  ix.addons.push(entryFor('subs-standin', 'subtitles', 'Stand-in', 'subs/standin.mjs', MOD));
   const br = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const mk = async (viewport, phone) => {
     const ctx = await br.newContext({ viewport, ...(phone ? { hasTouch: true, isMobile: true } : {}) }); const p = await ctx.newPage(); p.errors = []; p.on('pageerror', (e) => p.errors.push(e.message));
@@ -199,9 +202,9 @@ const MEDIA_AL = () => ({ id: ID, idMal: IDMAL, title: { romaji: 'Hoshizora Kiss
 
   // ---- the floating download bar, from a real download (the Subtitles page) ----
   await p.goto(`${BASE}/#/settings/addons`); await p.waitForSelector('.addon-row');
-  await p.click('.addon-row:has-text("Subtitles") .btn, .addon-row:has-text("الترجمات") .btn'); await settle(() => JSON.parse(localStorage.getItem('kt.settings')).addons.includes('subtitles'), 15000);
+  await p.click('.addon-row:has-text("Subtitles") .btn, .addon-row:has-text("الترجمات") .btn'); ok('the Subtitles add-on installed (its stand-in source too)', await settle(() => JSON.parse(localStorage.getItem('kt.settings')).addons.includes('subtitles'), 15000), await p.evaluate(() => document.querySelector('.addon-row:has(.btn)')?.textContent ?? ''));
   await p.goto(`${BASE}/#/subs?q=${encodeURIComponent('Starlit Cafe')}`); await p.waitForSelector('.title-card', { timeout: 15000 }); await p.click('.title-card');
-  await p.waitForSelector('.sub-row', { timeout: 15000 }); await clear(); await p.click('.sub-row >> nth=0'); await p.waitForSelector('.dl-float');
+  await p.waitForSelector('.sub-row', { timeout: 15000 }).catch(async (e) => { throw new Error('no subtitle rows from the stand-in source: ' + JSON.stringify(await p.evaluate(() => ({ hash: location.hash, addons: JSON.parse(localStorage.getItem('kt.settings')).addons, text: document.body.innerText.slice(0, 200) }))) + ' / ' + e.message.split('\n')[0]); }); await clear(); await p.click('.sub-row >> nth=0'); await p.waitForSelector('.dl-float');
   ok('a download started: the floating bar, the page stays', /#\/subs/.test(await p.evaluate(() => location.hash)) && /Starlit|subtitle|srt/i.test(await p.$eval('.dl-float .dlf-name', (e) => e.textContent)));
   const added = () => p.evaluate(() => window.__tasks.filter((x) => /^n/.test(x.id)));
   const emitAdded = (f) => p.evaluate((src) => { const fn = new Function('t', 'i', src); window.__emit(window.__tasks.map((t) => (/^n/.test(t.id) ? { ...t, ...fn(t, window.__tasks.filter((x) => /^n/.test(x.id)).indexOf(t)) } : t))); }, f);
@@ -229,7 +232,7 @@ const MEDIA_AL = () => ({ id: ID, idMal: IDMAL, title: { romaji: 'Hoshizora Kiss
   ok('both removed from the list: the bar leaves', await settle(() => !document.querySelector('.dl-float:not(.leaving)')));
   await p.click('.sub-row >> nth=0'); await p.waitForSelector('.dl-float'); await p.click('.dl-float .dlf-main');
   ok('tapped: the Downloads, the bar gone', (await hashIs('#/')) && !(await p.$('.dl-float:not(.leaving)')));
-  await setting('openDownloadsOnStart', true); await p.goto('about:blank'); await p.goto(`${BASE}/#/subs?q=${encodeURIComponent('Starlit Cafe')}`); await p.waitForSelector('.title-card', { timeout: 15000 }); await p.click('.title-card'); await p.waitForSelector('.sub-row', { timeout: 15000 });
+  await setting('openDownloadsOnStart', true); await p.goto('about:blank'); await p.goto(`${BASE}/#/subs?q=${encodeURIComponent('Starlit Cafe')}`); await p.waitForSelector('.title-card', { timeout: 15000 }); await p.click('.title-card'); await p.waitForSelector('.sub-row', { timeout: 15000 }).catch(async (e) => { throw new Error('no subtitle rows from the stand-in source: ' + JSON.stringify(await p.evaluate(() => ({ hash: location.hash, addons: JSON.parse(localStorage.getItem('kt.settings')).addons, text: document.body.innerText.slice(0, 200) }))) + ' / ' + e.message.split('\n')[0]); });
   await clear(); await p.click('.sub-row >> nth=0');
   ok('«Open Downloads when a download starts» on: straight to the Downloads, no bar', (await hashIs('#/')) && !(await p.$('.dl-float')));
   await setting('openDownloadsOnStart', false);

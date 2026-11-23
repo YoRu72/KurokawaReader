@@ -39,10 +39,11 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
   // The index the app reads: the Subtitles add-on with one stand-in source (its module written here).
   const ix = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'index.json'), 'utf8'));
   ix.addons = ix.addons.filter((a) => a.kind !== 'subtitle-source'); ix.addons.find((a) => a.id === 'subtitles').children = ['subs-standin'];
-  ix.addons.push({ id: 'subs-standin', kind: 'subtitle-source', parent: 'subtitles', name: 'Stand-in', description: 'A test source.', version: '1.0.0', module: 'subs/standin.mjs', icon: 'subtitles' });
   const MOD = `export async function search(q) { (globalThis.__subQ ??= []).push(q); return [
     { title: 'Starlit Cafe — the whole season', language: 'en', site: 'Stand-in', url: '${BASE}/media/served/pack.zip', archive: 'zip', downloads: 9 },
     { title: 'Starlit Cafe - 03', language: 'en', site: 'Stand-in', url: '${BASE}/media/served/Starlit%20Cafe%20-%2003.ass', episode: 3, downloads: 5 } ]; }`;
+  ix.addons.push({ id: 'subs-standin', kind: 'subtitle-source', parent: 'subtitles', name: 'Stand-in', description: 'A test source.', version: '1.0.0', module: 'subs/standin.mjs', sha256: require('node:crypto').createHash('sha256').update(MOD).digest('hex'), size: Buffer.byteLength(MOD), icon: 'subtitles' });
+  // (hashed like the real index: the app refuses an unhashed module in a hashed index)
   const br = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const p = await br.newPage({ viewport: { width: 360, height: 760 }, hasTouch: true, isMobile: true }); const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   await p.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => {
