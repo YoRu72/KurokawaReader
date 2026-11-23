@@ -114,10 +114,13 @@ function modelTranslate(system, text) {
 
   // ---- 5: Retranslate one entry (the mis-picked one), the instructions edited ----
   await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translation glossary' }).click();
-  await p.waitForSelector('.gloss-sheet .gloss-row[data-id="tk-ar"]');
+  // (The book's glossary is a folder of files by kind: its Characters opened.)
+  await p.click('.gloss-file[data-kind="person"]'); await p.waitForSelector('.gloss-sheet .gloss-row[data-id="tk-ar"]');
   await p.waitForTimeout(700); await p.locator('.gloss-row[data-id="tk-ar"]').scrollIntoViewIfNeeded(); await p.screenshot({ path: path.join(shots, 'glossary-en.png') });
   ok('the mis-picked term shown as not written in Arabic', /Not written in Arabic/.test(await p.textContent('.gloss-row[data-id="tk-ar"]')));
+  await p.fill('.gloss-search', 'Old Gate'); await p.waitForSelector('.gloss-row[data-id="old1"]');   // (the search: the whole folder)
   ok('the old term shown with its language not set', /Language not set/.test(await p.$eval('.gloss-row[data-id="old1"] .gloss-lang', (e) => e.selectedOptions[0]?.textContent)));
+  await p.fill('.gloss-search', ''); await p.waitForSelector('.gloss-row[data-id="tk-ar"]');
   await p.click('.gloss-row[data-id="tk-ar"] button[aria-label="Retranslate this entry"]');
   await p.waitForSelector('.gloss-retr-sheet .gloss-retr-prompt');
   const def = await p.inputValue('.gloss-retr-prompt');
@@ -159,7 +162,7 @@ function modelTranslate(system, text) {
 
   // ---- All shown (every book's forty), in batches; reset to the default; Stop; Undo ----
   st.latin = new Set(); st.second = false;
-  await p.locator('.gloss-places .chip', { hasText: 'Every book' }).click(); await p.waitForSelector('.gloss-row[data-id="n0"]');
+  await p.locator('.gloss-places .chip', { hasText: 'Every book' }).click(); await p.click('.gloss-file[data-kind="person"]'); await p.waitForSelector('.gloss-row[data-id="n0"]');
   const shown = await p.$$eval('.gloss-list .gloss-row', (e) => e.length);
   await p.click('.gloss-retr-all'); await p.waitForSelector('.gloss-retr-sheet .gloss-retr-prompt');
   ok('all shown: every entry of the place shown', (await p.textContent('.gloss-retr-info')).includes(`Entries: ${shown}`) && shown === 40, shown);
@@ -225,7 +228,7 @@ function modelTranslate(system, text) {
   await p.reload(); await p.evaluate((i) => { location.hash = `#/read/${i}`; }, id); await p.waitForSelector('.kr-chapter', { timeout: 30000 }); await p.waitForTimeout(1500);
   if (!(await p.$('.tr-pill'))) await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'translate' })));
   await p.waitForSelector('.tr-pill'); await p.click('.tr-pill button:nth-last-child(2)');   // (More)
-  await p.locator('.sheet .dest-list .dest-row').nth(2).click(); await p.waitForSelector('.gloss-sheet .gloss-row[data-id="tk-ar"]');
+  await p.locator('.sheet .dest-list .dest-row').nth(1).click(); await p.click('.gloss-file[data-kind="person"]'); await p.waitForSelector('.gloss-sheet .gloss-row[data-id="tk-ar"]');
   await p.click('.gloss-row[data-id="tk-ar"] button[aria-label="أعِد ترجمة هذا المدخل"]');
   await p.waitForSelector('.gloss-retr-sheet .gloss-retr-prompt');
   const arUi = await p.evaluate(() => ({ dir: document.documentElement.dir, title: document.querySelector('.gloss-retr-sheet h3')?.textContent, info: document.querySelector('.gloss-retr-info')?.textContent, box: document.querySelector('.gloss-retr-prompt')?.value, go: document.querySelector('.gloss-retr-go')?.textContent, over: [...document.querySelectorAll('.gloss-retr-sheet *')].some((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > innerWidth + 1 || r.left < -1); }) }));

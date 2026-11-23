@@ -2414,3 +2414,129 @@ html:not(.pc) .update-toast .icon-btn, html:not(.pc) .row-actions .icon-btn { wi
 /* No native spinner on any number box (the app's own steppers / typing do it). */
 input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 input[type='number']::-webkit-inner-spin-button, input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Narrow library cards (3+ columns on a phone): the cover's marks fit inside it and never overlap, the title keeps two
+   whole lines at a smaller size, the stars stay inside the card. The thresholds are the card's own width (container
+   query), so they hold for any column count, phone width or writing direction. */
+.book-card { container-type: inline-size; container-name: card; }
+.cover .badges { max-width: calc(100% - 20px); flex-wrap: wrap; justify-content: flex-end; }
+.cover .badges .badge { max-width: 100%; white-space: nowrap; overflow: hidden; }
+html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
+@container card (max-width: 150px) {
+  .cover .badges { top: 7px; right: 7px; gap: 3px; max-width: calc(100% - 14px); }
+  .cover .badge { font-size: 9px; padding: 3px 6px; letter-spacing: .02em; }
+  .cover .badge.done svg { width: 10px; height: 10px; }
+  .cover .badge.done:not(.pct) { font-size: 0; gap: 0; padding: 3px 5px; }
+  .cover .badge.done.at-topLeft { left: 7px; top: 7px; }
+  .cover .badge.done.at-below { top: 30px; }
+  .cover .gen { padding: 62px 10px 12px; }
+  .cover .gen .t { font-size: 13px; }
+  .book-meta .bt { font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+  .book-meta .ba { font-size: 11px; }
+  .book-meta .stars-badge { font-size: 10px; letter-spacing: 0; white-space: nowrap; overflow: hidden; max-width: 100%; }
+}
+@container card (max-width: 84px) {
+  .cover .badges { top: 4px; right: 4px; max-width: calc(100% - 8px); }
+  .cover .badge { font-size: 8px; padding: 2px 4px; letter-spacing: 0; }
+  .cover .badge.done:not(.pct) { padding: 2px 3px; }
+  .cover .gen { padding: 58px 6px 8px; }
+  .cover .gen .t { font-size: 11px; }
+  .book-meta .bt { font-size: 11px; }
+  .book-meta .ba { font-size: 10px; }
+  .book-meta .stars-badge { font-size: 9px; }
+}
+/* The AI sheet: one sheet, tabs on top — a row that scrolls sideways on a narrow phone and never scrolls away with
+   the panels; «Done» and the close button where they always are. */
+.ai-sheet { max-height: 86vh; }
+.ai-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 4px 16px 8px; flex: none; border-bottom: 1px solid var(--md-outline-variant); overscroll-behavior-x: contain; }
+.ai-tabs::-webkit-scrollbar { display: none; }
+.ai-tab { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: var(--sh-full); border: 0; background: transparent; color: var(--md-on-surface-variant); font: 500 14px var(--font-ui); white-space: nowrap; cursor: pointer; }
+.ai-tab svg { width: 18px; height: 18px; flex: none; }
+.ai-tab:hover { background: var(--md-surface-container-high); }
+.ai-tab[aria-selected='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 600; }
+.ai-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.ai-panel { display: flex; flex-direction: column; gap: 10px; } .ai-panel[hidden] { display: none; }
+.ai-tr-panel { display: flex; flex-direction: column; gap: 14px; }
+.ai-sheet .sheet-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.ai-tab-acts { display: contents; }
+.ai-sheet .sheet-actions .btn { min-width: 0; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-input-row { display: flex; gap: 8px; align-items: center; } .ai-input-row > input { flex: 1 1 auto; min-width: 0; width: auto; } .ai-input-row > .btn { flex: none; white-space: nowrap; }
+.ai-prompt-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .ai-prompt-tools > .icon-btn { margin-inline-start: auto; }
+.ai-empty { padding: 18px 4px; text-align: center; }
+.ai-saved { display: flex; align-items: center; gap: 10px; font: 500 15px var(--font-ui); } .ai-saved p { margin: 0; }
+.ai-clear { align-self: flex-start; }
+/* The glossary as a folder named after the book: its files (kinds), each with how many it holds. */
+.gloss-panel { display: flex; flex-direction: column; gap: 10px; }
+.gloss-head-row { display: flex; align-items: center; gap: 10px; } .gloss-head-row > svg { width: 28px; height: 28px; color: var(--md-primary); flex: none; }
+.gloss-title { margin: 0; font: 600 17px var(--font-ui); overflow-wrap: anywhere; } .gloss-head-row .hint { display: block; }
+.gloss-shared { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 13px var(--font-ui); color: var(--md-on-surface-variant); margin-top: 4px; }
+.gloss-files { display: flex; flex-direction: column; gap: 6px; }
+.gloss-file { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 14px; border: 0; border-radius: 14px; background: var(--md-surface-container); color: var(--md-on-surface); font: 15px var(--font-ui); text-align: start; cursor: pointer; }
+.gloss-file:hover { background: var(--md-surface-container-high); }
+.gloss-file-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); flex: none; }
+.gloss-file-icon svg { width: 20px; height: 20px; }
+.gloss-file-name { overflow-wrap: anywhere; }
+.gloss-file-count { color: var(--md-on-surface-variant); font-size: 12.5px; white-space: nowrap; }
+.gloss-file > svg:last-child { opacity: .6; flex: none; } [dir='rtl'] .gloss-file > svg:last-child { transform: scaleX(-1); }
+.gloss-new-file .gloss-file-icon { background: transparent; border: 1px dashed var(--md-outline); }
+.gloss-file-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .gloss-file-bar:empty { display: none; }
+.gloss-file-now { display: inline-flex; align-items: center; gap: 6px; } .gloss-file-now small { color: var(--md-on-surface-variant); }
+.gloss-empty { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; }
+.gloss-opts summary { cursor: pointer; display: flex; align-items: center; gap: 8px; font: 500 14px var(--font-ui); min-height: 40px; color: var(--md-on-surface-variant); }
+.gloss-opts[open] { display: flex; flex-direction: column; gap: 8px; }
+.gloss-vol { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 16px; background: var(--md-surface-container-high); }
+.gloss-vol p { margin: 0; }
+.gloss-vol.notice { flex-direction: row; flex-wrap: wrap; align-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.gloss-vol.notice p { flex: 1; min-width: 160px; }
+.gloss-vol-title { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.gloss-vol-btns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; width: 100%; }
+.gloss-vol-btns .btn { justify-content: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gloss-vol-box:empty, .gloss-folder-bar:empty, .gloss-books:empty { display: none; }
+.gloss-row.quote .gloss-pair { flex-direction: column; align-items: stretch; } .gloss-row.quote .gloss-arrow { transform: rotate(90deg); align-self: center; }
+/* «Names found»: by the file each goes to; each accepted (its rendering changed first) or rejected. */
+.names-panel { display: flex; flex-direction: column; gap: 10px; }
+.names-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.names-list { display: flex; flex-direction: column; gap: 6px; }
+.names-group { display: flex; flex-direction: column; gap: 6px; }
+.names-head { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font: 600 14px var(--font-ui); } .names-head small { color: var(--md-on-surface-variant); font-weight: 400; }
+.names-row { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1.2fr); }
+.names-row-acts { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
+.names-dest { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* (Icons inside the AI sheet's panels at the size of the text beside them.) */
+.ai-panel svg { width: 20px; height: 20px; flex: none; }
+.ai-panel .gloss-head-row > svg { width: 28px; height: 28px; }
+.ai-panel .gloss-file-icon svg { width: 20px; height: 20px; }
+.gloss-file-name { flex: 1 1 auto; min-width: 0; }
+.ai-panel .row { column-gap: 8px; row-gap: 8px; }
+.gloss-places { display: flex; flex-wrap: wrap; gap: 6px; }
+.gloss-empty .row-btns { display: flex; flex-direction: column; align-items: stretch; gap: 8px; } .gloss-empty .row-btns .btn { justify-content: center; }
+.tr-ahead .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* A book's other titles (details page) and the edit-names sheet. */
+.book-other-titles { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0 0 6px; }
+.book-other-titles .other-title { display: block; width: 100%; font-size: 13px; color: rgba(255,255,255,.78); line-height: 1.35; }
+.book-orig { font-size: 12px; opacity: .8; }
+.names-field input[type="text"], .names-row input { width: 100%; min-height: 44px; box-sizing: border-box; }
+.names-others { display: flex; flex-direction: column; gap: 8px; }
+.names-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+.names-row .btn, .names-addrow .btn { min-height: 44px; }
+.names-addrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-top: 8px; }
+html.pc .names-row .btn, html.pc .names-addrow .btn, html.pc .names-field input[type="text"], html.pc .names-row input { min-height: 36px; }
+.names-keep { margin: 8px 0; }
+.lib-also { display: block; font-size: 11px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.textpic-names { display: grid; gap: 8px; margin: 8px 0; }
+.textpic-names .field { gap: 4px; }
+/* (The action row — up to two lines of buttons — no longer covers the last field when the body is scrolled to its end.) */
+.snap-sheet .sheet-body { padding-bottom: 112px; scroll-padding-bottom: 112px; }
+.snap-sheet .sheet-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.snap-sheet .sheet-actions .btn { min-width: 0; justify-content: center; white-space: normal; text-align: center; line-height: 1.2; }
+.textpic-names input[type="text"] { width: 100%; min-height: 44px; box-sizing: border-box; }
+html.pc .textpic-names input[type="text"] { min-height: 36px; }
+.names-field, .names-keep { margin-bottom: 14px; }
+.names-keep { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.names-keep .label { text-transform: none; letter-spacing: 0; font: inherit; font-family: var(--font-ui); font-size: 14px; font-weight: 500; }
+.names-field > .label { display: block; margin-bottom: 4px; }
+.textpic-remember-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.textpic-remember-row .label { text-transform: none; letter-spacing: 0; font-family: var(--font-ui); font-size: 14px; }
+.textpic-remember-row .hint { display: block; font-size: 12px; opacity: .7; }
+.names-row .btn, .names-addrow .btn { white-space: nowrap; }

@@ -44,6 +44,7 @@ import { touchBook, coverUrl, shareBooks } from '../library';
 import { navigate, back as goBackView, leaveView, parseRoute, viewBelow } from '../router';
 import { ReadingTracker, countWords, countWordsAndChars } from '../stats';
 import { showBookInfo } from '../ui/bookinfo';
+import { snapNames } from '../booktitles';
 import { renderTextCanvas, showSnapshot, pictureNear, pictureOnByDefault, styledBlocks } from '../ui/textcard';
 import { exportNotes, exportNotesAnki } from '../ui/exportnotes';
 import { attachEdgeBrightness, attachPinchText } from '../ui/brightness';
@@ -400,7 +401,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     highlights: { run: () => openContents('highlights') },
     type: { run: () => openOptions() },
     translate: { run: () => translator.toggleUi() },
-    glossary: { run: () => { const b = bookNow(); void import('../ui/glossarysheet').then((m) => m.glossarySheet({ id: b.id, title: b.title })); } },
+    glossary: { run: () => { const b = bookNow(); void import('../ui/aisheet').then((m) => m.aiSheet({ tab: 'glossary', book: { id: b.id, title: b.title } })); } },
     speak: { run: speakToggle, label: () => (speaking ? t('stopReading') : t('readAloud')), icon: () => (speaking ? 'stop' : 'speak') },
     scroll: { run: () => toggleAutoScroll() },
     speedReading: { run: () => void startSpeedReading() },
@@ -1694,6 +1695,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     else if (c === 'dayNight') { const st = getSettings(); const night = st.nightTheme && st.theme === st.nightTheme; updateSettings(night ? { theme: (st.dayTheme as typeof st.theme) || 'light', nightSchedule: false } : { dayTheme: st.theme, theme: st.nightTheme || 'dark', nightSchedule: false }); }
     else if (c === 'nextChapter' || c === 'prevChapter') { if (chapterMode()) { const k = currentUnitIndex(); readerTurn(c === 'nextChapter' ? k + 1 : k - 1); } }
     else if (c === 'statusLine') updateSettings({ showStatusLine: !getSettings().showStatusLine });
+    else if (c === 'glossary') { const bk = bookNow(); void import('../ui/aisheet').then((m) => m.aiSheet({ tab: 'glossary', book: { id: bk.id, title: bk.title } })); }
     else if (c === 'fontUp') updateSettings({ fontSize: Math.min(40, getSettings().fontSize + 1) }); else if (c === 'fontDown') updateSettings({ fontSize: Math.max(12, getSettings().fontSize - 1) });
   };
   document.addEventListener('kr:command', onCommand);
@@ -1712,7 +1714,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     speak: (text) => speak([text]),
     textImage: (text, range) => void textImage(text, range),
     // (A rule made from the words: applied at once to the books open — see textrules.)
-    glossary: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/glossarysheet').then((m) => m.termSheet({ from: text, book: { id: b.id, title: b.title } })); },
+    glossary: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/aisheet').then((m) => m.aiSheet({ tab: 'glossary', book: { id: b.id, title: b.title }, addFrom: text })); },
     textRule: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/textrulesheet').then((m) => m.ruleSheet({ find: text, book: { id: b.id, title: b.title }, made: (r) => { for (const d of docs) if (d.render && (!r.book || r.book === d.book.id)) applyTextRules(d.render.element, d.book.id, [r]); } })); },
   }));
 
@@ -1724,7 +1726,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       // (The words as the book sets them, read now — the selection does not last —: drawn so when «Use book formatting» is on.)
       const blocks = styledBlocks(range, getSettings().fontSize);
       const opts = { text, title: book.title, author: book.author, appName: getSettings().snapWatermark ? t('appName') : '', picture: picture ?? undefined, pictureOn: on, blocks, bookFormat: !!blocks?.length && getSettings().snapBookFormat };
-      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn, bookFormat) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on, bookFormat: bookFormat ?? opts.bookFormat }), { has: !!picture, on }, undefined, { has: !!blocks?.length });
+      showSnapshot(await renderTextCanvas(opts), snapName(book.title), book.title, (style, pictureOn, bookFormat) => renderTextCanvas({ ...opts, style, pictureOn: pictureOn ?? on, bookFormat: bookFormat ?? opts.bookFormat }), { has: !!picture, on }, undefined, { has: !!blocks?.length }, snapNames(book, opts));
     } catch (err) { toast(String((err as Error).message ?? err), 'error'); }
   }
 

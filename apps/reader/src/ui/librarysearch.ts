@@ -7,6 +7,8 @@ import { t, localDigits, getLang, arCount } from '../i18n';
 import { navigate } from '../router';
 import type { Book, Folder } from '../db';
 import { coverUrl } from '../library';
+import { searchFormOf } from '../formats/types';
+import { namesSearchForm } from '../booktitles';
 import { searchable, unitsOf, searchUnits, setJump, setReturn, type Mode, type Options, type BookResult, type Return } from '../booksearch';
 
 type Scope = { kind: 'all' } | { kind: 'folder'; id: string } | { kind: 'picked'; ids: Set<string>; leaveOut: boolean };
@@ -98,8 +100,8 @@ export function librarySearchSheet(books: Book[], folders: Folder[], activeFolde
     const filter = h('input', { type: 'search', placeholder: t('searchPlaceholder'), dir: 'auto' }) as HTMLInputElement;
     const list = h('div', { class: 'dest-list' });
     const draw = () => {
-      const q = filter.value.trim().toLowerCase();
-      list.replaceChildren(...pool.filter((b) => !q || b.title.toLowerCase().includes(q) || (b.author ?? '').toLowerCase().includes(q)).map((b) => h('label', { class: 'dest-row' },
+      const qw = searchFormOf(filter.value.trim()).split(/\s+/).filter(Boolean);
+      list.replaceChildren(...pool.filter((b) => { if (!qw.length) return true; const k = namesSearchForm(b); return qw.every((w) => k.includes(w)); }).map((b) => h('label', { class: 'dest-row' },
         h('input', { type: 'checkbox', checked: chosen.has(b.id), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(b.id); else chosen.delete(b.id); } }),
         h('span', { class: 'name' }, h('bdi', null, b.title), h('small', null, ` · ${FORMAT_LABEL[b.format] ?? b.format}`)))));
     };

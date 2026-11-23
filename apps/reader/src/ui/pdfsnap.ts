@@ -7,6 +7,8 @@ import { PdfViewer } from '../formats/pdf';
 import { getSettings, updateSettings } from '../settings';
 import { t } from '../i18n';
 import { h, icon, toast } from './dom';
+import { snapNames } from '../booktitles';
+import type { Book } from '../db';
 import { renderTextCanvas, showSnapshot, type SnapKind } from './textcard';
 import { pdfRangeText } from './selection';
 
@@ -230,15 +232,17 @@ function pageOptions(redraw: () => void, o: { text: boolean; colours: { v: 'orig
   return box;
 }
 
-export interface SnapBook { title: string; author?: string }
+export interface SnapBook { id?: string; title: string; author?: string }
 
 /** «Text as image» on a PDF selection: the page cut and the card, to choose between. Everything is read from the
  *  selection at once (the text layer of a page scrolled away is let go of). */
 export async function pdfSnapshot(viewer: PdfViewer, range: Range, book: SnapBook, filename: string, appName: string, fallback: string): Promise<void> {
   const read = readSelection(range, viewer);
   const text = (pdfRangeText(range, true) || fallback).trim();
-  const card = (style?: 'plain' | 'card') => renderTextCanvas({ text, title: book.title, author: book.author, appName, style });
-  if (!read.length) { showSnapshot(await card(), filename, book.title, (style) => card(style)); return; }
+  const cardOpts = { text, title: book.title, author: book.author, appName };
+  const card = (style?: 'plain' | 'card') => renderTextCanvas({ ...cardOpts, style });
+  const names = book.id ? snapNames(book as Book, cardOpts) : undefined;
+  if (!read.length) { showSnapshot(await card(), filename, book.title, (style) => card(style), undefined, undefined, undefined, names); return; }
   const plans = { column: read.map((r) => planPart(r, false)), words: read.map((r) => planPart(r, true)) };
   const colours = getSettings().pdfInvert ? { v: 'original' as 'original' | 'shown' } : null;
   const caption = (pages: string) => t('snapPageCaption', { title: book.title, n: pages });
@@ -249,7 +253,7 @@ export async function pdfSnapshot(viewer: PdfViewer, range: Range, book: SnapBoo
     draw: (k) => (k === 'page' ? page() : card()),
     options: (k, redraw) => (k === 'page' ? pageOptions(redraw, { text: true, colours }) : null),
     picked: (k) => updateSettings({ pdfSnapKind: k }),
-  });
+  }, undefined, names);
 }
 
 /** «Cut a part of the page»: a frame dragged over the page (finger or mouse), its corners to adjust and the whole to

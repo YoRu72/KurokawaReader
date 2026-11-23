@@ -35,9 +35,11 @@ const LONG = 'Alice was beginning to get very tired of sitting by her sister on 
     // ---- the glossary (opened from the AI settings; every book)
     await p.evaluate(() => localStorage.setItem('kr.glossary', JSON.stringify([{ id: 'a1', from: 'Lin Feng', to: 'لين فنغ', kind: 'person', lang: 'ar' }, { id: 'a2', from: 'Azure Sect', to: 'الطائفة اللازوردية', kind: 'group', lang: 'ar' }, { id: 'a3', from: 'Qi', to: 'التشي', lang: 'ar' }])));
     await p.evaluate(() => { [...document.querySelectorAll('.sheet button')].find((x) => x.querySelector('svg') && /Glossary|المسرد|مسرد/i.test(x.textContent)).click(); });
-    await p.waitForSelector('.gloss-sheet .gloss-row', { timeout: 8000 });
+    await p.waitForSelector('.gloss-sheet .gloss-file[data-kind]', { timeout: 8000 });
     ok(tag + 'the glossary sheet renders ' + (en ? 'LTR' : 'RTL'), (await p.evaluate(() => getComputedStyle(document.querySelector('.gloss-sheet')).direction)) === (en ? 'ltr' : 'rtl'));
-    const all = p.locator('.gloss-sheet .sheet-actions button[data-icon=copy]'); ok(tag + 'a "copy all" button in the glossary', (await all.count()) === 1);
+    // (The glossary is a folder of files by kind now: «copy all» sits in the Files menu, the row buttons inside a file.)
+    const filesMenu = async () => { await p.click('.gloss-sheet .gloss-files-btn'); await p.waitForSelector('.gloss-copy-all'); };
+    await filesMenu(); const all = p.locator('.gloss-copy-all'); ok(tag + 'a "copy all" button in the glossary\'s Files menu', (await all.count()) === 1);
     await all.click(); await p.waitForTimeout(100); const g = await clip();
     const want = ['Azure Sect = الطائفة اللازوردية\tgroup\tar', 'Lin Feng = لين فنغ\tperson\tar', 'Qi = التشي\t\tar'];
     ok(tag + 'every term copied, one line each, name = rendering', g.split('\n').length === 3 && want.every((w) => g.split('\n').includes(w)), g);
@@ -47,10 +49,12 @@ const LONG = 'Alice was beginning to get very tired of sitting by her sister on 
     await p.evaluate(() => { const h = [...document.querySelectorAll('h3')].find((x) => /AI|الذكاء/.test(x.textContent)); if (h && h.closest('.card')?.classList.contains('collapsed')) h.click(); }); await p.waitForTimeout(200);
     await p.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /instructions|التعليمات/.test(x.textContent) && /AI|key|model|المزود|المفتاح/i.test(x.textContent)); b.click(); }); await p.waitForSelector('.sheet textarea');
     await p.evaluate(() => { [...document.querySelectorAll('.sheet button')].find((x) => x.querySelector('svg') && /Glossary|المسرد|مسرد/i.test(x.textContent)).click(); }); await p.waitForSelector('.gloss-sheet');
-    ok(tag + 'the glossary is empty after wiping', (await p.$$('.gloss-sheet .gloss-row')).length === 0);
-    await p.locator('.gloss-sheet .sheet-actions button[data-icon=import]').click(); await p.waitForTimeout(300);
-    await p.locator('.gloss-sheet .sheet-actions button[data-icon=copy]').click(); await p.waitForTimeout(100);
-    ok(tag + 'pasted back: the same entries (copy again gives the same text)', (await clip()) === g && (await p.$$('.gloss-sheet .gloss-row')).length === 3, await clip());
+    ok(tag + 'the glossary is empty after wiping', (await p.$$('.gloss-sheet .gloss-file[data-kind]')).length === 0);
+    await filesMenu(); await p.click('.gloss-paste'); await p.waitForSelector('.gloss-sheet .gloss-file[data-kind]', { timeout: 8000 });
+    await filesMenu(); await p.click('.gloss-copy-all'); await p.waitForTimeout(100);
+    const kinds = await p.$$eval('.gloss-sheet .gloss-file[data-kind]', (e) => e.map((x) => x.dataset.kind).sort().join());
+    ok(tag + 'pasted back: the same entries (copy again gives the same text), filed by kind', (await clip()) === g && kinds === 'group,person,term', [await clip(), kinds]);
+    await p.click('.gloss-sheet .gloss-file[data-kind="group"]'); await p.waitForSelector('.gloss-row');
     await p.locator('.gloss-row').first().locator('button[data-icon=copy]').click(); await p.waitForTimeout(100);
     ok(tag + 'one term copied (name = rendering)', (await clip()) === 'Azure Sect = الطائفة اللازوردية', await clip());
     ok(tag + 'the row copy button is a 40px target', (await p.locator('.gloss-row button[data-icon=copy]').first().boundingBox()).width >= 40);

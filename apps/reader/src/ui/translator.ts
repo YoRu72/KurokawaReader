@@ -12,9 +12,9 @@ import { h, icon, toast, openSheet, pickButton } from './dom';
 import { t, isRtlText, localDigits, getLang } from '../i18n';
 import { db } from '../db';
 import { translateBatch, translationKey, legacyTranslationKey, aiReady, suggestTerms, langName, hash, onAiWait, type TrContext } from '../ai';
-import { termsFor, addTerms, folders, linkedFolders, setLinked, namesTarget, terms as glossTerms, termLang, legacyLang, type TermKind } from '../glossary';
+import { termsFor, addTerms, namesTarget, linkedFolders, terms as glossTerms, termLang, legacyLang, kindOf, kindOrder, hasGlossary, volDecision, volChoice, shareGlossary } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
-import { aiSettingsSheet } from './aisettings';
+import { aiSheet, setAiHooks, type AiHooks } from './aisheet';
 
 export interface TranslatorHost {
   root: HTMLElement;                                   // reader root (the pill is appended here)
@@ -223,10 +223,14 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const known = termsFor(bookId, target).map((x) => x.from);
     const found = await suggestTerms(texts, known, target);
     if (found.refused) console.warn('[kurokawa] names not in the target script left out:', found.refused);
-    const kind = (x?: string): TermKind => (x === 'person' || x === 'place' || x === 'group' ? x : 'term');
+    for (const f of found) { const k = kindOf(f.kind); byKind.set(k, (byKind.get(k) ?? 0) + 1); }
+    // (Nothing enters the glossary unasked: with «Add names on their own» off, they wait in «Names found».)
+    if (!getSettings().aiAutoGlossary) { const { addWaiting } = await import('./namespanel'); addWaiting(bookId, found); return found.length; }
     const place = folder ? { folder } : namesTarget(bookId, host.bookTitle?.(bookId) ?? '');
-    return addTerms(found.map((f) => ({ from: f.from, to: f.to, ...place, kind: kind(f.kind), auto: true, lang: target })));
+    return addTerms(found.map((f) => ({ from: f.from, to: f.to, ...place, kind: kindOf(f.kind), auto: true, lang: target })));
   }
+  // (What the whole book's reading found, by file — «Characters: 12 · Places: 4».)
+  const byKind = new Map<string, number>();
   /** The chapters already read for names, for the language translated into now (a chapter read for its Arabic
    *  names is read again for its Japanese ones). The marks kept before languages were (one list for the book) count
    *  for the language the book's names were found in then. */
@@ -250,7 +254,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     chapters.forEach((ch, i) => { if (done.has(i)) return; const tx = ch.blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1); const n = tx.reduce((a, x) => a + x.length, 0); if (!n) return; if (cur.idx.length && size + n > 20000) { groups.push(cur); cur = { idx: [], texts: [] }; size = 0; } cur.idx.push(i); cur.texts.push(...tx); size += n; });
     if (cur.idx.length) groups.push(cur);
     if (!groups.length) { toast(t('glossScanDone', { n: localDigits(0) })); return; }
-    const title = host.bookTitle?.(bookId) ?? ''; let stop = false; let added = 0;
+    const title = host.bookTitle?.(bookId) ?? ''; let stop = false; let added = 0; byKind.clear();
     const { runJob } = await import('../jobs');
     void runJob(t('glossScanJob', { book: title }), async (rep) => {
       for (let g = 0; g < groups.length && !stop; g++) {
@@ -259,8 +263,10 @@ export function attachTranslator(host: TranslatorHost): Translator {
         catch (e) { if ((e as Error).name === 'QuotaError') throw e; console.warn('[kurokawa] scan', e); }
       }
       return stop ? null : { blob: new Blob([]), name: title };
-    }, () => false, { quiet: true, cancel: () => { stop = true; }, doneText: () => t('glossScanDone', { n: localDigits(added) }) }).catch((e) => toast(String((e as Error).message ?? e), 'error', 6000));
+    }, () => false, { quiet: true, cancel: () => { stop = true; }, doneText: () => t('glossScanDone', { n: localDigits(added) }) + perFile() }).catch((e) => toast(String((e as Error).message ?? e), 'error', 6000));
   }
+  const perFile = (): string => (byKind.size ? ' — ' + kindOrder([...byKind.keys()].map(kindOf)).map((k) => `${kindLabels?.(k) ?? k}: ${localDigits(byKind.get(k) ?? 0)}`).join(' · ') : '');
+  let kindLabels: ((k: string) => string) | null = null; void import('./glossarysheet').then((m) => { kindLabels = m.kindLabel; });
   /** The names of a chapter put in its book's glossary before it is translated (when chosen): the model lists the
    *  characters, places and terms it holds, those not there yet are added — once for each chapter. */
   async function autoGlossary(bookId: string, chapterIdx: number, blocks: HTMLElement[], quiet: boolean): Promise<void> {
@@ -456,34 +462,17 @@ export function attachTranslator(host: TranslatorHost): Translator {
       sw(t('trSkipSame'), s.aiSkipSame !== false, (v) => updateSettings({ aiSkipSame: v }), t('trSkipSameHint')),
       sw(t('trPrefetch'), s.aiPrefetch !== false, (v) => updateSettings({ aiPrefetch: v }), t('trPrefetchHint')),
       h('div', { class: 'row tr-opt' }, h('span', { class: 'label' }, t('trParallel'), h('small', { class: 'hint' }, t('trParallelHint'))), par),
-      h('button', { type: 'button', class: 'btn tonal small', style: { marginTop: '8px' }, onclick: () => void suggestSheet() }, icon('define'), t('trSuggestTerms')));
+      h('button', { type: 'button', class: 'btn tonal small', style: { marginTop: '8px' }, onclick: () => aiSheet({ tab: 'names' }) }, icon('define'), t('trSuggestTerms')));
   }
   const langLabel = (c: string) => { try { return new Intl.DisplayNames([getLang()], { type: 'language' }).of(c) ?? langName(c); } catch { return langName(c); } };
-  /** Names and terms of the shown chapter proposed by the model, ticked to go into the glossary (this book's, or
-   *  every book's), each rendering editable first. */
-  async function suggestSheet() {
-    if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
-    const ch = host.chapters()[host.currentChapter()]; if (!ch) return;
-    const sh = openSheet(t('trSuggestTerms'), t('close')); sh.body.style.fontFamily = 'var(--font-ui)';
-    sh.body.append(h('p', { class: 'src' }, t('trSuggestBody', { lang: langLabel(getSettings().aiTarget) })), h('div', { class: 'center' }, h('div', { class: 'spinner' })));
-    try {
-      const texts = ch.blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1);
-      const target = getSettings().aiTarget;
-      const known = termsFor(ch.bookId, target).map((x) => x.from);
-      const found = await suggestTerms(texts, known, target);
-      if (!sh.el.isConnected) return;
-      const refused = found.refused ? h('p', { class: 'hint' }, t('glossRefused', { n: localDigits(found.refused), lang: langLabel(target) })) : null;
-      if (!found.length) { sh.body.replaceChildren(h('p', { class: 'src' }, t('trSuggestNone')), ...(refused ? [refused] : [])); return; }
-      const rows = found.map((f) => { const cb = h('input', { type: 'checkbox', checked: true }) as HTMLInputElement; const to = h('input', { type: 'text', value: f.to, dir: 'auto', class: 'tr-term-to' }) as HTMLInputElement; return { f, cb, to, el: h('label', { class: 'tr-term' }, cb, h('span', { class: 'tr-term-from', dir: 'auto' }, f.from), h('span', { class: 'upd-arrow' }, icon('arrowRight')), to) }; });
-      sh.body.replaceChildren(h('p', { class: 'src' }, t('trSuggestPick')), ...(refused ? [refused] : []), h('div', { class: 'tr-terms' }, ...rows.map((r) => r.el)));
-      const add = (scope: { book?: string; folder?: string }) => { const n = addTerms(rows.filter((r) => r.cb.checked && r.to.value.trim()).map((r) => ({ from: r.f.from, to: r.to.value.trim(), kind: (['person', 'place', 'group'].includes(r.f.kind ?? '') ? r.f.kind : 'term') as TermKind, lang: target, ...scope }))); sh.close(); toast(t('trTermsAdded', { n: localDigits(n) })); if (on) void run(); };
-      // (Into this book's glossary, every book's, or a folder — one the book then uses.)
-      const fs = folders();
-      if (fs.length) sh.actions.append(pickButton(t('glossToFolder'), fs.map((f) => [f.id, f.name] as [string, string]), '', (id: string) => { setLinked(ch.bookId, [...linkedFolders(ch.bookId), id]); add({ folder: id }); }, t('close')));
-      sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => add({}) }, t('trAddAllBooks')), h('button', { type: 'button', class: 'btn primary', onclick: () => add({ book: ch.bookId }) }, icon('check'), t('trAddThisBook')));
-    } catch (e) { if (sh.el.isConnected) sh.body.replaceChildren(h('p', { class: 'src' }, String((e as Error).message ?? e))); }
+  /** The names and terms of the shown chapter, proposed by the model (for «Names found»). */
+  async function findNames(): Promise<Awaited<ReturnType<typeof suggestTerms>>> {
+    if (!aiReady()) throw new Error(t('aiNeedsKey'));
+    const ch = host.chapters()[host.currentChapter()]; if (!ch) return Object.assign([], { refused: 0 });
+    const texts = ch.blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1);
+    const target = getSettings().aiTarget;
+    return suggestTerms(texts, termsFor(ch.bookId, target).map((x) => x.from), target);
   }
-
   /** The kept translation of a paragraph, shown or not. */
   /** Saved with the book: it opens translated every time — from the translations kept on this device, offline
    *  too — until the translation is turned off; the bar's state (shown or folded away) kept with it. */
@@ -507,6 +496,27 @@ export function attachTranslator(host: TranslatorHost): Translator {
   }
 
 
+  // (Lent to the AI sheet: this book, its names found, its whole reading, its saved translations.)
+  setAiHooks({
+    get bookId() { return firstBook(); }, title: () => host.bookTitle?.(firstBook()) ?? '',
+    findNames, scan: (folder) => void scanWholeBook(folder),
+    cacheCount: async () => { let n = 0; for (const id of new Set([firstBook(), ...host.blocks().map((b) => b.bookId)].filter(Boolean))) n += Object.keys({ ...((await db.getMeta<Record<string, string>>(`tr:${id}`)) ?? {}), ...(caches.get(id) ?? {}) }).length; return n; },
+    clearCache: () => clearCache(), isKept, setKept: (v) => { void setKept(v); markSaved(v); if (v) void navigator.storage?.persist?.().catch(() => undefined); if (v && !on) setOn(true); toast(v ? t('trKept') : t('trNotKept')); },
+    options: () => h('div', null, optionControls(), aheadControls()), added: () => { if (on) void run(); },
+  } as AiHooks);
+  /** A former volume's glossary, once, when the translation is first turned on for a book with none: taken by itself
+   *  (the same series, «Automatically»: a notice with Undo), or offered in the Glossary tab. */
+  async function formerVolume(): Promise<void> {
+    const id = firstBook(); if (!id || hasGlossary(id) || volChoice(id)) return;
+    const k = 'kr.glossaryVolSeen'; let seen: string[] = []; try { seen = JSON.parse(localStorage.getItem(k) ?? '[]') as string[]; } catch { /* none */ }
+    if (seen.includes(id)) return; try { localStorage.setItem(k, JSON.stringify([...seen, id].slice(-500))); } catch { /* full */ }
+    const { listBooks } = await import('../library'); const all = (await listBooks()).filter((b) => b.format !== 'series').map((b) => ({ id: b.id, title: b.title, ...(b.titles?.length ? { others: b.titles.filter((x) => x !== b.title) } : {}), ...(b.series?.name ? { series: { name: b.series.name, index: b.series.index } } : {}) }));
+    const me = all.find((b) => b.id === id); if (!me || disposed) return;
+    const d = volDecision(me, all, getSettings().aiVolGlossary ?? 'auto');
+    if (d.kind === 'auto') { const und = shareGlossary(id, d.cand, true); const { offerUndo } = await import('./undo'); offerUndo(t('glossVolUsing', { title: `\u2068${d.cand.title}\u2069` }), () => und(), () => { shareGlossary(id, d.cand, true); }); if (on) void run(); }
+    else if (d.kind === 'ask') aiSheet({ tab: 'glossary' });
+  }
+
   /* ---------- pill ---------- */
   let status: HTMLElement, toggleBtn: HTMLButtonElement;
   // (Waiting for the provider's per-minute limit: said on the bar, not as an error — it goes on by itself.)
@@ -521,6 +531,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
     status.textContent = !on ? t('translatorOff') : running ? t('translating') + ` ${localDigits(done)}/${localDigits(pending)}` : pending ? t('translatedCount', { n: done, total: pending }) : t('translatorOn');
   }
   function setOn(v: boolean) {
+    if (v && !on) void formerVolume();
     on = v; void isKept().then((k) => { if (k) void setKept(true); });   // (saved with the book: on or off is kept as it was left)
     if (on) void run(); else { generation++; running = false; restoreAll(); }
     paint();
@@ -545,12 +556,8 @@ export function attachTranslator(host: TranslatorHost): Translator {
   function moreSheet() {
     const sh = openSheet(t('aiTranslate'), t('close')); sh.body.style.fontFamily = 'var(--font-ui)';
     const row = (ic: string, label: string, fn: () => void) => h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label));
-    const autoCb = h('input', { type: 'checkbox', checked: !!getSettings().aiAutoGlossary, onchange: (e: Event) => { updateSettings({ aiAutoGlossary: (e.target as HTMLInputElement).checked }); if ((e.target as HTMLInputElement).checked && on) void run(); } }) as HTMLInputElement;
-    sh.body.append(h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('glossAuto'), h('small', { class: 'hint' }, t('glossAutoHint'))), autoCb));
-    const keepCb = h('input', { type: 'checkbox', onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; void setKept(v); markSaved(v); if (v) void navigator.storage?.persist?.().catch(() => undefined); if (v && !on) setOn(true); toast(v ? t('trKept') : t('trNotKept')); } }) as HTMLInputElement;
-    void isKept().then((v) => { keepCb.checked = v; });
-    sh.body.append(h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('trKeepBook'), h('small', { class: 'hint' }, t('trKeepBookHint'))), keepCb));
-    sh.body.append(h('div', { class: 'dest-list' }, row('books', t('translateAhead'), () => aheadSheet()), row('define', t('trSuggestTerms'), () => void suggestSheet()), row('books', t('glossary'), () => void import('./glossarysheet').then((m) => { const id = host.chapters()[host.currentChapter()]?.bookId; m.glossarySheet(id ? { id, title: host.bookTitle?.(id) ?? '' } : undefined, { scan: (folder) => void scanWholeBook(folder) }); })), row('trash', t('clearTranslationCache'), () => clearCache()), row('settings', t('customize'), () => settingsSheet())));
+    // (The glossary, the names found and the saved translations are the AI sheet's tabs.)
+    sh.body.append(h('div', { class: 'dest-list' }, row('books', t('translateAhead'), () => aheadSheet()), row('define', t('glossary'), () => aiSheet({ tab: 'glossary' })), row('user', t('aiTabNames'), () => aiSheet({ tab: 'names' })), row('download', t('aiTabSaved'), () => aiSheet({ tab: 'saved' })), row('trash', t('clearTranslationCache'), () => clearCache()), row('settings', t('customize'), () => settingsSheet())));
   }
   // (The bar hidden keeps the translation: it folds into a small button, the bar back at a tap. Turning the
   // translation off is the bar's first button; its X only hides the bar.)
@@ -631,8 +638,8 @@ export function attachTranslator(host: TranslatorHost): Translator {
     },
     // (The toolbar's button: the bar shown or hidden — the translation stays; the first time, turned on.)
     toggleUi() { if (pill && !pill.hidden) { hidePill(); return; } if (pill) { showPill(); return; } buildPill(); void (async () => { const id = firstBook(); const kept = !!id && (Object.keys(await sourceIndex(id)).length > 0 || Object.keys(await cache(id)).length > 0); if (aiReady() || kept) setOn(true); else settingsSheet(); })(); },
-    dispose() { disposed = true; offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); flush(); },
+    dispose() { disposed = true; setAiHooks(null); offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); flush(); },
   };
 
-  function settingsSheet() { aiSettingsSheet(() => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }, h('div', null, optionControls(), aheadControls())); }
+  function settingsSheet() { aiSheet({ tab: 'translation', onDone: () => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }, extra: h('div', null, optionControls(), aheadControls()) }); }
 }

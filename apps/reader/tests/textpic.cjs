@@ -8,7 +8,7 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
   await new Promise((r) => server.listen(5492, r));
   const b = await chromium.launch(); const p = await (await b.newContext({ viewport: { width: 500, height: 900 }, locale: 'en' })).newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
-  await p.goto('http://localhost:5492/'); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ readingMode: 'continuous' })); }); await p.reload(); await p.waitForSelector('.library-view');
+  await p.goto('http://localhost:5492/'); await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); localStorage.setItem('kr.visual', JSON.stringify({ readingMode: 'continuous', snapStyle: 'card' })); }); await p.reload(); await p.waitForSelector('.library-view');
   await p.setInputFiles('input[type=file]', [path.resolve('public/samples/alice-in-wonderland.epub')]); await p.waitForSelector('.book-card', { timeout: 60000 }); await p.waitForTimeout(600);
   const id = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result[0].id); }; }));
   await p.evaluate((i) => { location.hash = `#/read/${i}`; }, id); await p.waitForSelector('.kr-content'); await p.waitForTimeout(2500);
@@ -29,9 +29,10 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
     const box = await p.$('.snap-pic-row input'); const h = await p.$eval('.snap-preview', (c) => c.height);
     // (Whether a picture is really drawn: the canvas's middle band holds many different colours.)
     const colours = await p.$eval('.snap-preview', (c) => { const d = c.getContext('2d').getImageData(0, Math.round(c.height * 0.3), c.width, Math.round(c.height * 0.4)).data; const set = new Set(); for (let i = 0; i < d.length; i += 64) set.add((d[i] >> 4) * 4096 + (d[i + 1] >> 4) * 256 + (d[i + 2] >> 4)); return set.size; });
-    const r = { has: !!box, on: box ? await box.isChecked() : null, h, colours };
+    const r = { has: !!box, on: box ? await box.isChecked() : null, h, colours, names: await p.$$eval('.textpic-title, .textpic-author', (e) => e.map((x) => x.hidden || x.closest('[hidden]') ? 'hidden' : 'shown')).catch(() => []) };
+    if (which === 'before') { const u0 = await p.$eval('.snap-preview', (c) => c.toDataURL()); await p.fill('.textpic-author', 'Some Author'); await p.waitForTimeout(600); r.authorChangesPicture = u0 !== await p.$eval('.snap-preview', (c) => c.toDataURL()); await p.fill('.textpic-author', ''); await p.waitForTimeout(500); }
     if (process.env.OUT) await p.screenshot({ path: path.join(process.env.OUT, `textpic-${which}-first.png`) });
-    if (box) { await box.click(); await p.waitForTimeout(500); r.h2 = await p.$eval('.snap-preview', (c) => c.height); }
+    if (box) { await p.click('.snap-pic-row .switch'); await p.waitForTimeout(500); r.h2 = await p.$eval('.snap-preview', (c) => c.height); }
     if (process.env.OUT) await p.screenshot({ path: path.join(process.env.OUT, `textpic-${which}.png`) });
     await p.click('.sheet .sheet-head button[aria-label="Close"]').catch(() => p.keyboard.press('Escape')); await p.waitForTimeout(400); await p.evaluate(() => getSelection().removeAllRanges()); await p.waitForTimeout(300);
     return r;
@@ -39,6 +40,7 @@ let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n
   const a = await run('before'); ok('the words before a picture: the picture on, drawn, and taller', a.has && a.on === true && a.h > a.h2 && a.colours > 8, a);
   const c = await run('after'); ok('the words after a picture: offered, off', c.has && c.on === false && c.h2 > c.h, c);
   const d = await run('both'); ok('the picture inside the words: on, drawn', d.has && d.on === true && d.h > d.h2 && d.colours > 8, d);
+  ok('the card\'s title and author fields are shown, and the author line changes the picture', a.names.join() === 'shown,shown' && a.authorChangesPicture === true, a);
   ok('no page errors', !errors.length, errors);
   await b.close(); server.close(); console.log(fails ? `${fails} failed` : 'all passed'); process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

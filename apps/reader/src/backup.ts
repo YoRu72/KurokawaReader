@@ -3,6 +3,7 @@
 // (keyed by file name + size so they re-attach to the same files; a book from an online source by its source and id). A "full" backup is a ZIP with that JSON plus the
 // book files, covers and the books' translations (paid for, at times: kept with the books, not in the small file).
 // No backup carries a credential (API keys, tokens, passwords): see scrubSettings.
+import { takeNames } from './booktitles';
 import JSZip from 'jszip';
 import { db, stampAfter, type Book, type Folder, type TagDef } from './db';
 import { globalSettings, updateSettings, allBookSettings, setBookSettings, type VisualSettings } from './settings';
@@ -18,7 +19,7 @@ import { brandIcon, setBrandIcon } from './ui/brandIcon';
 
 type CustomApi = NonNullable<VisualSettings['aiCustomApis']>[number];
 export interface BookRecord {
-  key: string; title: string; author?: string; fileName: string; size: number; format: string; folderName?: string; tags?: string[]; tagsAt?: number; done?: boolean; doneAt?: number;
+  key: string; title: string; titles?: string[]; origTitle?: string; origAuthor?: string | null; namesAt?: number; author?: string; fileName: string; size: number; format: string; folderName?: string; tags?: string[]; tagsAt?: number; done?: boolean; doneAt?: number;
   addedAt: number; lastOpenedAt?: number; progress?: Book['progress']; bookmarks: Book['bookmarks']; highlights: Book['highlights']; pins?: Book['pins']; pdfHighlights?: Book['pdfHighlights']; prefs?: Book['prefs']; stats?: Book['stats'];
   id?: string;
   // (version 2)
@@ -35,7 +36,7 @@ export interface Manifest {
   /** The custom AI services without their keys and headers (kept apart from the settings: an older app restoring
    *  this file then leaves the device's own list, keys and all, as it is). */
   customApis?: CustomApi[];
-  glossary?: { terms: Term[]; folders: GlossFolder[]; links: Record<string, string[]>; dest: Record<string, unknown> };
+  glossary?: { terms: Term[]; folders: GlossFolder[]; links: Record<string, string[]>; dest: Record<string, unknown>; /** each book's choice about a former volume's glossary (since 0.65.1) */ vol?: Record<string, unknown> };
   textRules?: TextRule[]; vocab?: unknown[];
   /** The app's icon of the user's choosing (a PNG data URL, at most ICON_CAP long): brought back where the app's own
    *  icon can be set — the desktop shells —, so it also crosses from one desktop build to another. */
@@ -98,14 +99,14 @@ async function manifest(full: boolean): Promise<Manifest> {
   const out: Manifest = {
     app: 'KurokawaReader', version: BACKUP_VERSION, createdAt: Date.now(), full,
     settings: settings as VisualSettings, customApis: settings.aiCustomApis, local, folders, tags: (await db.getMeta<TagDef[]>('tags')) ?? [], fonts: await listFonts(),
-    glossary: { terms: readLocal<Term[]>('kr.glossary', []), folders: readLocal<GlossFolder[]>('kr.glossaryFolders', []), links: readLocal<Record<string, string[]>>('kr.glossaryLinks', {}), dest: readLocal<Record<string, unknown>>('kr.glossaryDest', {}) },
+    glossary: { terms: readLocal<Term[]>('kr.glossary', []), folders: readLocal<GlossFolder[]>('kr.glossaryFolders', []), links: readLocal<Record<string, string[]>>('kr.glossaryLinks', {}), dest: readLocal<Record<string, unknown>>('kr.glossaryDest', {}), vol: readLocal<Record<string, unknown>>('kr.glossaryVol', {}) },
     textRules: readLocal<TextRule[]>('kr.textRules', []), vocab: readLocal<unknown[]>('kr.vocab', []),
     books: [],
   };
   const icon = brandIcon(); if (iconOk(icon)) out.appIcon = icon;
   { const { loadPins } = await import('./pins'); const { pinsForBackup } = await import('./pinedit'); const pins = pinsForBackup(await loadPins(), folders); if (pins) out.libraryPins = pins; }
   for (const b of books) out.books.push({
-    key: keyOf(b), id: b.id, title: b.title, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
+    key: keyOf(b), id: b.id, title: b.title, titles: b.titles, origTitle: b.origTitle, origAuthor: b.origAuthor, namesAt: b.namesAt, author: b.author, fileName: b.fileName, size: b.size, format: b.format,
     folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, done: b.done, doneAt: b.doneAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
     progress: b.progress, progressAt: b.progressAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins, pdfHighlights: b.pdfHighlights, ink: b.ink, prefs: b.prefs, stats: b.stats,
     rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt, readToc: b.readToc, readTocAt: b.readTocAt, chapterMarks: b.chapterMarks, chapterMarksAt: b.chapterMarksAt, chapterStars: b.chapterStars, chapters: b.chapters, chaptersAt: b.chaptersAt,
@@ -359,6 +360,8 @@ function applyRecord(b: Book, rec: BookRecord, fid: string | undefined): void {
   if (rec.series && !b.series) b.series = rec.series;
   if (rec.description && !b.description) b.description = rec.description;
   if (rec.language && !b.language) b.language = rec.language;
+  // The reader's own titles and author: the one set later (a backup from before they were kept has none: the device's stay).
+  takeNames(b, rec);
 }
 
 async function restoreBookExtras(id: string, rec: BookRecord, zip: BackupParts): Promise<void> {
@@ -388,6 +391,9 @@ function restoreShared(m: Manifest, idMap: Map<string, string>): void {
     if (g.folders?.length) { const f = readLocal<GlossFolder[]>('kr.glossaryFolders', []); const add = g.folders.filter((x) => x && !f.some((y) => y.id === x.id)); if (add.length) localStorage.setItem('kr.glossaryFolders', JSON.stringify([...f, ...add])); }
     if (g.links && Object.keys(g.links).length) { const l = readLocal<Record<string, string[]>>('kr.glossaryLinks', {}); for (const [k, v] of Object.entries(g.links)) { const b = id(k)!; l[b] = [...new Set([...(l[b] ?? []), ...(v ?? [])])]; } localStorage.setItem('kr.glossaryLinks', JSON.stringify(l)); }
     if (g.dest && Object.keys(g.dest).length) { const d = readLocal<Record<string, unknown>>('kr.glossaryDest', {}); for (const [k, v] of Object.entries(g.dest)) d[id(k)!] = v; localStorage.setItem('kr.glossaryDest', JSON.stringify(d)); }
+    // (A book's choice about a former volume's glossary: the volume it came from turned into this device's book too; a
+    // backup made before there were such choices has none.)
+    if (g.vol && typeof g.vol === 'object' && Object.keys(g.vol).length) { const d = readLocal<Record<string, { from?: string }>>('kr.glossaryVol', {}); for (const [k, v] of Object.entries(g.vol as Record<string, { from?: string }>)) if (v && typeof v === 'object' && !d[id(k)!]) d[id(k)!] = { ...v, ...(v.from ? { from: id(v.from) } : {}) }; localStorage.setItem('kr.glossaryVol', JSON.stringify(d)); }
   }
   if (m.textRules?.length) {
     const inc = m.textRules.filter((r) => r && typeof r.find === 'string').map((r) => (r.book ? { ...r, book: id(r.book) } : r));

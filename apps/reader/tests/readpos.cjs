@@ -156,6 +156,25 @@ const num = (m) => Number(/P(\d+)/.exec(m ?? '')?.[1] ?? -1);
     await p.waitForSelector('.panel.open'); await p.waitForTimeout(300);
     const setRange = (label) => p.evaluate((label) => { const inp = document.querySelector(`.panel input[type=range][aria-label="${label}"]`); if (!inp) return false; inp.value = String(Number(inp.max) * 0.8 + Number(inp.min) * 0.2); inp.dispatchEvent(new Event('input', { bubbles: true })); return true; }, label);
     ok('a line spacing slider in the options', await setRange('Line height'));
+    // the filled part of the slider stops at the thumb (pixel check on the line-height slider: nothing filled after the thumb), at 20 %, 80 % and both ends
+    const fillCheck = async (frac) => {
+      await p.evaluate((frac) => { const inp = document.querySelector('.panel input[type=range][aria-label="Line height"]'); inp.value = String(Number(inp.min) + (Number(inp.max) - Number(inp.min)) * frac); inp.dispatchEvent(new Event('input', { bubbles: true })); }, frac);
+      await p.waitForTimeout(250);
+      const box = await p.evaluate(() => { const i = document.querySelector('.panel input[type=range][aria-label="Line height"]'); i.scrollIntoView({ block: 'center' }); const r = i.getBoundingClientRect(); const c = document.createElement('i'); c.style.color = 'var(--md-primary)'; document.body.append(c); const col = getComputedStyle(c).color; c.remove(); return { x: r.x, y: r.y, w: r.width, h: r.height, col, rtl: document.documentElement.dir === 'rtl' }; });
+      const png = await p.screenshot({ clip: { x: box.x, y: box.y, width: box.w, height: box.h } });
+      const r = await p.evaluate(async ([b64, col, w, h]) => {
+        const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+        const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height; const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0);
+        const k = img.width / w, row = cx.getImageData(0, Math.round(h * k / 2) - 5, img.width, 1).data; const m = col.match(/\d+/g).map(Number); let lo = -1, hi = -1;
+        for (let x = 0; x < img.width; x++) { const d = Math.abs(row[x * 4] - m[0]) + Math.abs(row[x * 4 + 1] - m[1]) + Math.abs(row[x * 4 + 2] - m[2]); if (d < 24) { if (lo < 0) lo = x; hi = x; } }
+        return { lo: lo / k, hi: hi / k };
+      }, [png.toString('base64'), box.col, box.w, box.h]);
+      const f = box.rtl ? 1 - frac : frac, center = 3 + f * (box.w - 6);
+      // LTR: the filled run starts at the left end and must end before the thumb; RTL mirrored
+      if (box.rtl) return frac === 0 ? r.lo < 0 || r.lo >= box.w - 12 : r.lo >= center - 1 && r.hi >= box.w - 8;
+      return frac === 0 ? r.hi < 0 || r.hi <= 8 : r.hi <= center - 1 && r.lo <= 8;
+    };
+    for (const fr of [0.2, 0.8, 1, 0]) ok(`slider fill stops at the thumb (${Math.round(fr * 100)} %)`, await fillCheck(fr));
     await p.waitForTimeout(700); now = await topPara(p);
     ok('wider line spacing: the same paragraph at the top', now === was, { was, now });
     ok('a margins slider in the options', await setRange('Margins'));

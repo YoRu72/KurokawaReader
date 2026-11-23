@@ -43,6 +43,8 @@ const VIEWS = [
   ['stats', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view'); await p.click('.library-view [title="Reading statistics"], .library-view [aria-label="Reading statistics"], .library-view button:has(svg) >> nth=0').catch(() => {}); await p.evaluate(() => { [...document.querySelectorAll('.library-view .icon-btn, .library-view button')].find((b) => /chart|stat|إحصاء|إحصائ/i.test((b.title || '') + (b.getAttribute('aria-label') || '')))?.click(); }); await p.waitForSelector('.sheet, .stats-view, .panel.open', { timeout: 8000 }); }],
   ['sources', lib('#/sources')], ['catalog', lib('#/catalog')], ['notes', lib('#/notes')],
   ['book', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-view, .book-page, .view', { timeout: 10000 }); }],
+  // The book's «Edit title and author» sheet (src/ui/booknames.ts): with another title to show the rows and the keep switch.
+  ['book-edit-names', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(300); await p.evaluate(() => [...document.querySelectorAll('.book-tile')].find((x) => x.querySelector('svg') && /^(Edit|تعديل)/.test(x.textContent.trim())).click()); await p.waitForSelector('.names-shown'); await p.fill('.names-add', 'Another title'); await p.keyboard.press('Enter'); await p.fill('.names-shown', 'A new shown title'); await p.waitForTimeout(250); }],
   ['settings', async (p) => { await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('.settings-body .card.collapsed').forEach((c) => c.classList.remove('collapsed'))); }, 'phone'],
   ...Array.from({ length: SETTING_COUNT }, (_, i) => ['settings-' + i, settingsSec(i), 'pc']),
   ['read-epub', openBook(/alice/i, '.reader-flow .kr-content')],
@@ -51,6 +53,16 @@ const VIEWS = [
   ['read-options', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('options')(p); await p.waitForSelector('.panel.open, .sheet', { timeout: 8000 }); }],
   ['read-contents', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('toc')(p); await p.waitForSelector('.panel.open, .sheet', { timeout: 8000 }); }],
   ['read-search', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('search')(p); await p.waitForSelector('.panel.open, .sheet, .search-bar, input[type=search]', { timeout: 8000 }); }],
+  // The AI sheet's four tabs (src/ui/aisheet.ts), from the reader's Glossary command.
+  ...['translation', 'glossary', 'names', 'saved'].map((k) => ['read-ai-' + k, async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('glossary')(p); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 8000 }); await p.click(`.ai-tab[data-tab="${k}"]`); await p.waitForSelector(`.ai-panel[data-tab="${k}"]:not([hidden]) > *`, { timeout: 8000 }); await p.waitForTimeout(500); }]),
+  // «Text as image» (src/ui/textcard.ts): a paragraph picked, the card's title and author fields, the sheet scrolled to its end.
+  ['read-text-card', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p);
+    // (A sheet left over from the view before — the AI sheet on a computer — keeps the selection bar away: closed first.)
+    for (let i = 0; i < 6 && await p.evaluate(() => !!document.querySelector('.sheet, .panel.open')); i++) { await p.keyboard.press('Escape'); await p.waitForTimeout(300); }
+    // (The words of the first chapter on the screen — the others are drawn only when reached.)
+    await p.evaluate(() => { const e = [...document.querySelectorAll('.kr-content > section')].find((x) => x.getClientRects().length && x.textContent.trim().length > 40); if (!e) throw new Error('no chapter on screen'); const r = document.createRange(); r.selectNodeContents(e); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }); await p.waitForTimeout(500); await p.evaluate(() => document.dispatchEvent(new Event('selectionchange'))); await p.waitForTimeout(500);
+    await p.evaluate(() => { const b = [...document.querySelectorAll('.sel-toolbar button')].find((x) => /Text as image|صوِّر النص/.test(x.textContent)); if (!b) throw new Error('no Text as image button'); b.click(); }); await p.waitForSelector('.snap-sheet .snap-preview', { timeout: 8000 }).catch(async () => { throw new Error('no card: ' + await p.evaluate(() => [...document.querySelectorAll('.sheet,.toast')].map((x) => x.className + ':' + x.textContent.slice(0, 60)).join(' | '))); }); await p.waitForSelector('.snap-sheet .textpic-author', { timeout: 3000, state: 'attached' }); if (!(await p.isVisible('.snap-sheet .textpic-author'))) { await p.evaluate(() => document.querySelector('.snap-sheet .sheet-actions button').click()); await p.waitForSelector('.snap-sheet .textpic-author', { timeout: 8000 }); } await p.waitForTimeout(600);
+    await p.evaluate(() => { const b = document.querySelector('.snap-sheet .sheet-body'); b.scrollTop = b.scrollHeight; }); await p.waitForTimeout(300); }],
   ['read-pdf', openBook(/pages/i, '.pdf-bar, .pdf-view, .pdf-pages')],
   ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
   ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
@@ -60,6 +72,7 @@ const VIEWS = [
 const ALLOW = [
   ['colour settings', 'reading-theme previews (sepia, candlelight, manuscript) and the highlight colour palette show the colours they stand for'],
   ['colour read-options', 'the same theme previews and highlight palette, inside the options panel'],
+  ['stick-out book-edit-names div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
   ['stick-out book div.book-hero-bg', 'the blurred cover backdrop is bled past the edge on purpose and clipped by the page (no page overflow)'],
 ];
 const allowedBy = {}; const allowed = (key) => { const a = ALLOW.find(([k]) => key.startsWith(k)); if (a) allowedBy[a[0]] = (allowedBy[a[0]] || 0) + 1; return !!a; };
@@ -163,6 +176,29 @@ function hunt({ phone, rtl, lang }) {
         }
         if (SHOTS) await p.screenshot({ path: path.join(SHOTS, `hunt-${name}-${dev}-${lang}.png`) });
       } catch (e) { if (e.message === 'SKIP') continue; console.log(`ERR   ${lang} ${dev} ${name}: ${String(e.message).split('\n')[0]}`); fails++; }
+    }
+    if (phone && (!ONLY || ONLY === 'narrowcards')) { // narrow cards: 2-5 columns at 360 / 390 / 412 px: the marks sit inside the cover and never overlap, the stars stay in the card, nothing is clipped
+      try {
+        await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { for (const b of e.target.result) { b.done = true; b.rating = 5; b.title = 'Mushoku Tensei: Jobless Reincarnation ' + b.title; b.author = 'Rifujin na Magonote'; st.put(b); } }; tx.oncomplete = () => res(); }; }));
+        await p.evaluate(() => { location.hash = '#/'; }); await p.reload(); await p.waitForSelector('.library-view .book-card', { timeout: 15000 }); await p.waitForTimeout(500);
+        for (const w of [360, 390, 412]) for (const cols of [2, 3, 4, 5]) {
+          await p.setViewportSize({ width: w, height: 915 }); await p.evaluate((c) => { document.documentElement.style.setProperty('--lib-cols', String(c)); }, cols); await p.waitForTimeout(250);
+          const bad = await p.evaluate(() => {
+            const out = []; const r = (e) => e.getBoundingClientRect();
+            for (const card of document.querySelectorAll('.book-card')) {
+              const cv = card.querySelector('.cover'); if (!cv) continue; const cr = r(cv), kr = r(card); const bs = [...cv.querySelectorAll('.badge')].filter((b) => getComputedStyle(b).display !== 'none');
+              for (const b of bs) { const x = r(b); if (x.left < cr.left + 2 || x.right > cr.right - 2 || x.top < cr.top + 2) out.push(`badge outside the cover «${b.textContent || b.className}»`); if (b.scrollWidth > b.clientWidth + 1) out.push(`badge clipped «${b.textContent}»`); }
+              for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) { const a = r(bs[i]), c = r(bs[j]); if (a.left < c.right - 0.5 && c.left < a.right - 0.5 && a.top < c.bottom - 0.5 && c.top < a.bottom - 0.5) out.push(`badges overlap «${bs[i].textContent}» «${bs[j].textContent}»`); }
+              const st = card.querySelector('.stars-badge'); if (st && (r(st).right > kr.right + 0.5 || st.scrollWidth > st.clientWidth + 1)) out.push('stars outside the card');
+              const bt = card.querySelector('.book-meta .bt'); if (bt && r(bt).right > kr.right + 0.5) out.push('title outside the card');
+            }
+            return [...new Set(out)];
+          });
+          for (const m of bad) { console.log(`FAULT ${lang} phone narrowcards ${w}px x ${cols} columns: ${m}`); fails++; summary.narrowcards = (summary.narrowcards || 0) + 1; }
+          if (SHOTS && w === 412 && (cols === 3 || cols === 4)) await p.screenshot({ path: path.join(SHOTS, `R6-library-${cols}col${lang === 'ar' ? '-ar' : ''}.png`) });
+        }
+        await p.evaluate(() => document.documentElement.style.removeProperty('--lib-cols')); await p.setViewportSize({ width: 412, height: 915 });
+      } catch (e) { console.log(`ERR   ${lang} phone narrowcards: ${String(e.message).split('\n')[0]} | ${await p.evaluate(() => location.hash + ' ' + document.body.className + ' ' + document.body.innerText.slice(0, 120).replace(/\s+/g, ' ')).catch(() => '')}`); fails++; }
     }
     if (errors.length) { console.log(`ERR   ${lang} ${dev}: page errors ${errors.slice(0, 3).join(' | ')}`); fails++; }
     await ctx.close(); // (one page closed before the next opens: the machine is short of memory)

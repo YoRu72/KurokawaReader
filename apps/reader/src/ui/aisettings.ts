@@ -1,5 +1,6 @@
 // Provider, key, model, language and instructions for the AI features (shared by
 // the translator pill and Settings). Choice lists open as stacked M3 sheets.
+import { deviceOrder, isTranslateGemma, recommendedDevice } from '../translategemma';
 import { kittenPanel } from './kittenpanel';
 import { copyText } from './share';
 import { h, icon, iconButton, openSheet, pickButton, pickSheet, toast } from './dom';
@@ -10,10 +11,13 @@ import { candidatesFor, probe, detectAt, SERVICES, type Detected, type KnownServ
 
 const TARGETS = ['ar', 'en', 'fr', 'tr', 'ur', 'fa', 'de', 'es', 'id', 'ja', 'zh-CN', 'ru'];
 
-export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void {
+/** The AI sheet on its «Translation» tab (the pill's settings, Settings): src/ui/aisheet.ts. */
+export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void { void import('./aisheet').then((m) => m.aiSheet({ tab: 'translation', onDone, extra })); }
+
+/** The «Translation» tab: task, provider, key, model, target, instructions; read aloud below. */
+export function translationPanel(extra?: HTMLElement, toGlossary?: () => void): HTMLElement {
   const s = getSettings();
-  const sh = openSheet(t('aiTranslate'), t('close'));
-  sh.body.style.fontFamily = 'var(--font-ui)';
+  const sh = { body: h('div', { class: 'ai-tr-panel' }) };
   const field = (label: string, control: HTMLElement, hint?: string) => h('div', { class: 'field' }, h('span', { class: 'label' }, label), control, hint ? h('span', { class: 'hint' }, hint) : null);
 
   const key = h('input', { type: 'password', value: s.aiKey, placeholder: 'API key', autocomplete: 'off', dir: 'ltr', onchange: () => updateSettings({ aiKey: key.value.trim() }) }) as HTMLInputElement;
@@ -61,8 +65,10 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
   prefillCb.checked = s.aiPromptPrefill;
   const prefillRow = h('label', { class: 'row' }, h('span', { class: 'label' }, t('aiPromptPrefill')), h('span', { class: 'switch' }, prefillCb, h('i')));
   // (The glossary: names and terms always rendered the same.)
-  const glossaryBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./glossarysheet').then((m) => m.glossarySheet()) }, icon('define'), t('glossary'));
-  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow, h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, glossaryBtn, h('span', { style: { flex: '1' } }), iconButton('copy', t('copyPrompt'), () => void copyText(prompt.value.trim() ? prompt.value : defaultPrompt(getSettings().aiTarget))))), t('aiPromptHint'));
+  // (The glossary is the sheet's next tab; the built-in instructions put in the box beside its other tools.)
+  const glossaryBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: () => (toGlossary ? toGlossary() : void import('./aisheet').then((m) => m.aiSheet({ tab: 'glossary' }))) }, icon('define'), t('glossary'));
+  const insertBtn = h('button', { class: 'btn small ai-insert-prompt', type: 'button', onclick: () => { prompt.value = defaultPrompt(getSettings().aiTarget); updateSettings({ aiPrompt: '' }); promptDir(); prompt.focus(); } }, icon('type'), t('insertDefaultPrompt'));
+  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow, h('div', { class: 'ai-prompt-tools' }, glossaryBtn, insertBtn, iconButton('copy', t('copyPrompt'), () => void copyText(prompt.value.trim() ? prompt.value : defaultPrompt(getSettings().aiTarget))))), t('aiPromptHint'));
   langField.hidden = s.aiTask !== 'translate'; promptField.hidden = s.aiTask !== 'translate';
 
   // Read-aloud engine and AI voice live here too (same key / provider).
@@ -81,8 +87,8 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     local,
     custom,
     ...(cloudFields.push(
-      field('API key', h('div', { style: { display: 'flex', gap: '8px' } }, key, keyLink)),
-      field(t('aiModel'), h('div', { style: { display: 'flex', gap: '8px' } }, model, modelsBtn), t('aiModelHint')),
+      field('API key', h('div', { class: 'ai-input-row' }, key, keyLink)),
+      field(t('aiModel'), h('div', { class: 'ai-input-row' }, model, modelsBtn), t('aiModelHint')),
       field(t('aiBaseUrl'), url)), cloudFields),
     langField,
     promptField,
@@ -96,9 +102,7 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     ttsField,
   );
   syncLocal();
-  sh.actions.append(
-    h('button', { class: 'btn small', type: 'button', onclick: () => { prompt.value = defaultPrompt(getSettings().aiTarget); updateSettings({ aiPrompt: '' }); promptDir(); prompt.focus(); } }, icon('type'), t('insertDefaultPrompt')),
-    h('button', { class: 'btn small primary', type: 'button', onclick: () => { sh.close(); onDone?.(); } }, icon('check'), t('done')));
+  return sh.body;
 }
 
 /* ---------- local models ---------- */
@@ -115,7 +119,7 @@ function localPanel(): HTMLElement {
       if (!L.deviceSupported()) body.append(h('p', { class: 'hint' }, t('localNoDevice')));
       const list = h('div', { class: 'local-models' });
       const inst = L.installed();
-      const row = (id: string, name: string, meta: string, isIn: boolean, imported = false) => {
+      const row = (id: string, name: string, meta: string, isIn: boolean, imported = false, rec = false) => {
         const bar = h('div', { class: 'progress-bar', hidden: true }, h('span'));
         const status = h('small', { class: 'local-status' });
         const use = h('input', { type: 'radio', name: 'kr-local-model', checked: getSettings().localModel === id, disabled: !isIn, onchange: () => updateSettings({ localModel: id }) }) as HTMLInputElement;
@@ -131,11 +135,12 @@ function localPanel(): HTMLElement {
               void draw();
             } catch (err) { status.textContent = String((err as Error).message ?? err); b.disabled = false; bar.hidden = true; }
           } }, icon('download'), t('download'));
-        return h('label', { class: 'local-row' + (isIn ? ' in' : '') }, use, h('span', { class: 'local-name' }, h('b', { dir: 'ltr' }, name), h('small', null, meta), status, bar), imported ? h('span', { class: 'chip small' }, t('localImported')) : null, act);
+        return h('label', { class: 'local-row' + (isIn ? ' in' : '') }, use, h('span', { class: 'local-name' }, h('b', { dir: 'ltr' }, name), h('small', null, meta), status, bar), imported ? h('span', { class: 'chip small' }, t('localImported')) : null, rec ? h('span', { class: 'chip small' }, t('localRecTranslate')) : null, act);
       };
       // (Sizes kept left to right inside a right-to-left line: "398 MB", not "MB 398".)
       const iso = (x: string) => `\u2066${x}\u2069`;
-      for (const m of L.CATALOG) list.append(row(m.id, m.name, `${iso(m.sizeMB >= 1000 ? (m.sizeMB / 1024).toFixed(1) + ' GB' : m.sizeMB + ' MB')} · ${t('localRam', { ram: iso(m.ram) })} · ${t(m.note === 'fast' ? 'localFast' : m.note === 'best' ? 'localBest' : m.note === 'balanced' ? 'localBalanced' : 'localMultilingual')}`, inst.some((x) => x.id === m.id)));
+      const ordered = deviceOrder(L.CATALOG, L.isPhone());
+      for (const m of ordered) list.append(row(m.id, m.name, `${iso(m.sizeMB >= 1000 ? (m.sizeMB / 1024).toFixed(1) + ' GB' : m.sizeMB + ' MB')} · ${t('localRam', { ram: iso(m.ram) })} · ${t(m.note === 'light' ? 'localLight' : m.note === 'fast' ? 'localFast' : m.note === 'best' ? 'localBest' : m.note === 'balanced' ? 'localBalanced' : 'localMultilingual')}`, inst.some((x) => x.id === m.id), false, !!recommendedDevice(L.isPhone()) && m.id === recommendedDevice(L.isPhone())));
       for (const m of inst.filter((x) => x.imported)) list.append(row(m.id, m.name, iso(`${m.sizeMB} MB`), true, true));
       const importBtn = h('button', { class: 'btn small', type: 'button', onclick: () => {
         const input = h('input', { type: 'file', accept: '.gguf', style: { display: 'none' } }) as HTMLInputElement;
@@ -148,7 +153,7 @@ function localPanel(): HTMLElement {
         });
         document.body.append(input); input.click();
       } }, icon('folder'), t('localImport'));
-      body.append(list, h('div', { class: 'tool-bar' }, importBtn), h('p', { class: 'hint' }, t('localDeviceHint')));
+      body.append(list, ...(L.isPhone() ? [h('p', { class: 'hint local-phone-note' }, t('aiPhoneNoRec'))] : []), h('div', { class: 'tool-bar' }, importBtn), h('p', { class: 'hint' }, t('localDeviceHint')));
     } else {
       const url = h('input', { type: 'text', dir: 'ltr', spellcheck: 'false', value: s.localServer, placeholder: 'http://localhost:11434/v1', onchange: () => updateSettings({ localServer: url.value.trim() }) }) as HTMLInputElement;
       const found = h('div', { class: 'local-models' });
@@ -162,11 +167,11 @@ function localPanel(): HTMLElement {
       } }, icon('search'), t('localFind'));
       const modelBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
         try { const names = await L.serverModels(getSettings().localServer || url.value.trim()); if (!names.length) { toast(t('noModelsFound'), 'error'); return; }
-          pickSheet(t('browseModels'), names.map((n): [string, string] => [n, n]), getSettings().localServerModel, (v) => { updateSettings({ localServerModel: v }); void draw(); }, t('close')); }
+          pickSheet(t('browseModels'), names.map((n): [string, string] => [n, isTranslateGemma(n) ? `${n} · ${t('localTranslateOnlyTag')}` : n]), getSettings().localServerModel, (v) => { updateSettings({ localServerModel: v }); void draw(); }, t('close')); }
         catch (err) { toast(String((err as Error).message ?? err), 'error', 5000); }
       } }, icon('search'), getSettings().localServerModel || t('browseModels'));
       body.append(h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiBaseUrl')), h('div', { style: { display: 'flex', gap: '8px' } }, url, findBtn)), found,
-        h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiModel')), modelBtn), h('p', { class: 'hint' }, t('localServerHint')));
+        h('div', { class: 'field' }, h('span', { class: 'label' }, t('aiModel')), modelBtn), translateField(L, url), h('p', { class: 'hint' }, t('localServerHint')));
     }
     const tryBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
       tryBtn.disabled = true; const label = tryBtn.textContent; tryBtn.textContent = t('working');
@@ -178,6 +183,27 @@ function localPanel(): HTMLElement {
   };
   void draw();
   return wrap;
+}
+
+/** «Model for translation»: the server's models with TranslateGemma first, marked as recommended; when none is
+ *  installed, the name to pull in Ollama (text to copy: the app runs nothing on the computer). */
+function translateField(L: typeof import('../localai'), url: HTMLInputElement): HTMLElement {
+  const box = h('div', { class: 'field', 'data-translate-model': '' });
+  const draw = (names: string[] | null) => {
+    const cur = getSettings().localTranslateModel;
+    const auto = names ? L.pickTranslationModel(names) : '';
+    const shown = cur || (auto ? `${auto} · ${t('localRecTranslate')}` : t('localTranslateAuto'));
+    const btn = h('button', { class: 'btn small', type: 'button', onclick: () => {
+      const ordered = [...(names ?? [])].sort((a, b) => Number(isTranslateGemma(b)) - Number(isTranslateGemma(a)));
+      pickSheet(t('localTranslateModel'), [['', t('localTranslateAuto')] as [string, string], ...ordered.map((n): [string, string] => [n, isTranslateGemma(n) ? `${n} · ${t('localRecTranslate')}` : n])], cur,
+        (v) => { updateSettings({ localTranslateModel: v }); draw(names); }, t('close'));
+    } }, icon('translate'), shown);
+    box.replaceChildren(h('span', { class: 'label' }, t('localTranslateModel')), btn, h('p', { class: 'hint' }, t('localTranslateHint')),
+      ...(names && !auto ? [h('p', { class: 'hint', 'data-pull-hint': '' }, t('localPullHint'), ' ', h('code', { dir: 'ltr', style: { userSelect: 'all' } }, 'translategemma:4b'), ' · ', h('code', { dir: 'ltr', style: { userSelect: 'all' } }, 'translategemma:12b'))] : []));
+  };
+  draw(null);
+  void L.serverModels(getSettings().localServer || url.value.trim() || 'http://localhost:11434/v1').then(draw, () => undefined);
+  return box;
 }
 
 /* ---------- custom APIs: any service, told apart from its key, its models listed with what it says of them ---------- */

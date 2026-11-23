@@ -177,6 +177,36 @@ function reverseArabicRuns(line: string): string {
   return words.reverse().map((w) => (/^[\u0600-\u06FF\s؛،؟.!:«»()]+$/.test(w) ? [...w].reverse().map((c) => ({ '(': ')', ')': '(', '«': '»', '»': '«' }[c] ?? c)).join('') : w)).join(' ');
 }
 
+interface Band { top: number; bottom: number; left: number; right: number }
+/** The first and the last line of a selection (the boxes of the text itself: not a block around it, not a tall drop capital). */
+export function selectionEnds(rects: Band[]): { first: Band; last: Band } | null {
+  let rs = rects.filter((r) => r.right - r.left > 1 && r.bottom - r.top > 1);
+  if (!rs.length) return null;
+  const hs = rs.map((r) => r.bottom - r.top).sort((a, b) => a - b); const med = hs[Math.floor(hs.length / 2)];
+  const small = rs.filter((r) => r.bottom - r.top <= med * 2.2); if (small.length) rs = small;
+  // (a box that holds smaller boxes — the block around the lines — is not a line)
+  rs = rs.filter((r) => !rs.some((o) => o !== r && o.top >= r.top - 1 && o.bottom <= r.bottom + 1 && o.left >= r.left - 1 && o.right <= r.right + 1 && (o.bottom - o.top) < (r.bottom - r.top) * 0.7));
+  if (!rs.length) return null;
+  const band = (pick: Band): Band => { const mid = (pick.top + pick.bottom) / 2; const same = rs.filter((r) => (r.top + r.bottom) / 2 >= pick.top && (r.top + r.bottom) / 2 <= pick.bottom && mid >= r.top - 1 && mid <= r.bottom + 1); const set = same.length ? same : [pick]; return { top: Math.min(...set.map((r) => r.top)), bottom: Math.max(...set.map((r) => r.bottom)), left: Math.min(...set.map((r) => r.left)), right: Math.max(...set.map((r) => r.right)) }; };
+  const first = rs.reduce((a, b) => (b.top < a.top - 2 || (Math.abs(b.top - a.top) <= 2 && b.left < a.left) ? b : a));
+  const last = rs.reduce((a, b) => (b.bottom > a.bottom + 2 || (Math.abs(b.bottom - a.bottom) <= 2 && b.right > a.right) ? b : a));
+  return { first: band(first), last: band(last) };
+}
+
+/** Where the selection's menu goes (its top edge): above the selection if there is room, else below it, else the nearest
+    free band at the top or bottom of the page area, else the free gap between the first and the last line. It never covers the
+    first line, the last line or the two handles hanging under them (touch). */
+export function placeToolbar(p: { first: Band; last: Band; bh: number; vh: number; top: number; bottom: number; touch: boolean }): number {
+  const hh = p.touch ? 30 : 0, g = p.touch ? 10 : 8;
+  const zones: [number, number][] = [[p.first.top - 6, p.first.bottom + hh], [p.last.top - 6, p.last.bottom + hh]];
+  const lo = p.top, hi = p.vh - p.bottom - p.bh;
+  const free = (y: number) => y >= lo && y <= hi && zones.every(([a, b]) => y + p.bh + 4 <= a || y - 4 >= b);
+  const cands = [p.first.top - 6 - g - p.bh, p.last.bottom + hh + g, lo, hi, p.first.bottom + hh + g, p.last.top - 6 - g - p.bh];
+  for (const y of cands) if (free(y)) return y;
+  // nowhere is free: the least bad is the band at the top or the bottom that covers the fewer lines
+  return Math.max(lo, Math.min(hi, p.first.top - 6 - g - p.bh >= lo ? p.first.top - 6 - g - p.bh : hi));
+}
+
 export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionActions): () => void {
   let bar: HTMLElement | null = null;
   let timer: number | undefined;
@@ -234,19 +264,30 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     const bw = bar.offsetWidth, bh = bar.offsetHeight;
     let x = rect.left + rect.width / 2;
     x = Math.max(bw / 2 + 8, Math.min(window.innerWidth - bw / 2 - 8, x));
-    // Above the selection (clear of the handles); below it only when there is no room above.
-    let y = rect.top - bh - (touch ? 28 : 10);
-    if (y < 64) y = rect.bottom + (touch ? 28 : 10);
-    y = Math.max(64, Math.min(window.innerHeight - bh - 20, y));
+    const ends = selectionEnds([...range.getClientRects()]) ?? { first: rect, last: rect };
+    const y = placeToolbar({ first: ends.first, last: ends.last, bh, vh: window.innerHeight, top: 64, bottom: touch ? 64 : 20, touch });
     bar.style.left = `${x}px`;
     bar.style.top = `${y}px`;
   };
 
   // On touch screens wait until the finger lifts and the selection stops changing,
   // so the toolbar appears once, over the final selection, instead of jumping around.
-  const shown = () => { show(); if (bar) bar.style.opacity = ''; };
-  const schedule = () => { window.clearTimeout(timer); if (touch && touching) return; timer = window.setTimeout(shown, touch ? 450 : 180); };
-  const onChange = () => { if (touch && bar) { const sel = document.getSelection(); if (sel && !sel.isCollapsed) bar.style.opacity = '0'; } schedule(); };
+  // (The handles and the magnifier are the system's: no touch event tells when a finger is on a handle. A selection that
+  // changes again soon after changing is a drag: the menu stays hidden — it and the magnifier never show together — and
+  // comes, placed afresh, only once the selection has been still for a longer while.)
+  let lastChange = 0;
+  const shown = () => { if (overlayUp()) { hide(); return; } show(); if (bar) { bar.style.opacity = ''; bar.style.pointerEvents = ''; } };
+  const schedule = (dragging = false) => { window.clearTimeout(timer); if (touch && touching) return; timer = window.setTimeout(shown, touch ? (dragging ? 900 : 450) : 180); };
+  const onChange = () => {
+    const now = Date.now(); const dragging = touch && now - lastChange < 1500; lastChange = now;
+    if (touch && bar) { const sel = document.getSelection(); if (sel && !sel.isCollapsed) { bar.style.opacity = '0'; bar.style.pointerEvents = 'none'; } }
+    schedule(dragging);
+  };
+  // (A sheet or a dialog over the page: the selection is cleared — its handles would be drawn over the sheet — and stays
+  // cleared when the sheet closes; the sheet that was opened from the menu holds the text it needs.)
+  const overlayUp = () => !!document.querySelector('.sheet, .panel.open');
+  const ov = new MutationObserver(() => { if (!overlayUp()) return; const sel = document.getSelection(); if (sel && !sel.isCollapsed && scope.contains(sel.anchorNode)) { window.clearTimeout(timer); hide(); sel.removeAllRanges(); } else if (bar) hide(); });
+  ov.observe(document.body, { childList: true });
   const onTouchStart = () => { touching = true; window.clearTimeout(timer); };
   const onTouchEnd = () => { touching = false; schedule(); };
   const onScroll = () => { if (bar || offscreen) show(); };
@@ -268,7 +309,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
     document.removeEventListener('selectionchange', onChange); document.removeEventListener('copy', onCopy);
     document.removeEventListener('touchstart', onTouchStart);
     document.removeEventListener('touchend', onTouchEnd); document.removeEventListener('touchcancel', onTouchEnd);
-    scope.removeEventListener('scroll', onScroll, true); hide();
+    scope.removeEventListener('scroll', onScroll, true); ov.disconnect(); hide();
     window.removeEventListener('resize', onResize); vv?.removeEventListener('resize', onResize); cancelAnimationFrame(rz);
   };
 }

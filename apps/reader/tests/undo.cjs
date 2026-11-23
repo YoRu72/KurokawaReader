@@ -541,7 +541,8 @@ async function listsSection() {
   await p.evaluate(() => { const b = [...document.querySelectorAll('.settings-body .card button.btn')].find((x) => /Provider, key/i.test(x.textContent)); b?.click(); });
   const gl = await p.waitForSelector('.sheet button:has-text("Glossary")', { timeout: 4000 }).catch(() => null);
   if (gl) {
-    await gl.click(); await p.waitForSelector('.gloss-sheet .gloss-row');
+    await gl.click(); await p.waitForSelector('.gloss-sheet .gloss-file[data-kind="place"]');
+    await p.click('.gloss-sheet .gloss-file[data-kind="place"]'); await p.waitForSelector('.gloss-sheet .gloss-row');   // (the glossary is a folder of files by kind: rows live inside an open file)
     const g0 = await p.evaluate(() => localStorage.getItem('kr.glossary'));
     await p.click('.gloss-sheet .gloss-row[data-id="g1"] .icon-btn[data-icon="trash"]'); const s = await snack(p);
     ok(tag + 'a glossary term deleted: «Term “Vell” deleted»', /Vell/.test(s.text), s);

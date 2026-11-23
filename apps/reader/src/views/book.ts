@@ -11,6 +11,7 @@ import { getSettings } from '../settings';
 import { liveStatsOf } from '../stats';
 import { setJump } from '../jump';
 import { anilistOn, linked } from '../anilist';
+import { otherTitles, origTitleOf, origAuthorOf, titleChanged, authorChanged } from '../booktitles';
 
 /** Did the book come from a source other than archive.org or Shamela (an extension, a web folder)? */
 const fromSource = (b: Book): boolean => !!b.remote?.source && b.remote.source !== 'archive' && b.remote.source !== 'shamela' && b.remote.source !== 'link';
@@ -113,6 +114,8 @@ export function bookView(id: string): HTMLElement {
         coverEl,
         h('div', { class: 'book-hero-text' },
           h('h1', { dir: 'auto' }, book.title),
+          otherTitles(book).length ? h('div', { class: 'book-other-titles', 'aria-label': t('otherTitles') }, ...otherTitles(book).map((x) => h('span', { class: 'other-title', dir: 'auto' }, x))) : null,
+          titleChanged(book) || authorChanged(book) ? h('p', { class: 'book-orig src' }, h('span', { dir: 'auto' }, [titleChanged(book) ? `${t('originalTitle')}: ⁨${origTitleOf(book)}⁩` : '', authorChanged(book) ? `${t('originalAuthor')}: ⁨${origAuthorOf(book) ?? '—'}⁩` : ''].filter(Boolean).join(' · '))) : null,
           book.author ? h('p', { dir: 'auto' }, icon('user'), h('span', null, book.author)) : null,
           h('p', null, icon('clock'), h('span', null, `${status}${pct > 0 && !done ? ' · ' + (getLang() === 'ar' ? `٪${localDigits(String(pct))}` : `${pct}%`) : ''}`)),
           h('p', null, icon('file'), h('span', { dir: 'auto' }, `${formatLabel(book.format)} · ${formatBytes(book.size)}${book.pageCount ? ' · ' + (book.format === 'webnovel' ? countChapters(book.pageCount) : localDigits(String(book.pageCount)) + ' ' + t('pages').toLowerCase()) : ''}`)))));
@@ -129,6 +132,7 @@ export function bookView(id: string): HTMLElement {
       // (Tracking is for titles that came from a source — an extension, a web folder — as Mihon tracks its
       // entries; a book of one's own files gets it once an AniList account is linked.)
       anilistOn() && (fromSource(book) || book.track || linked()) ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { await (await import('../ui/anilistlink')).anilistSignIn(() => render(book)); if (!linked()) return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
+      tile('pen', t('edit'), false, () => void import('../ui/booknames').then((m) => m.editNamesSheet(book, (b) => { top.querySelector('.title')!.textContent = b.title; render(book); }))),
       tile('star', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }),
       tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }),
       // (A novel from an extension: moved to another source — its site gone or blocked — with its reading kept.)
