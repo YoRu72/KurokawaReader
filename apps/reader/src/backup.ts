@@ -25,7 +25,7 @@ export interface BookRecord {
   // (version 2)
   progressAt?: number; ink?: Book['ink']; rating?: number; ratingAt?: number; review?: string; reviewAt?: number; readToc?: number; readTocAt?: number;
   chapterMarks?: Book['chapterMarks']; chapterMarksAt?: number; chapterStars?: Book['chapterStars']; chapters?: number; chaptersAt?: number;
-  track?: Book['track']; series?: Book['series']; remote?: Book['remote']; description?: string; language?: string;
+  track?: Book['track']; alDraft?: Book['alDraft']; series?: Book['series']; remote?: Book['remote']; description?: string; language?: string;
   /** The book's own settings (kr.bookVisual), its Anki progress, its audiobook place. */
   visual?: Partial<VisualSettings>; anki?: unknown; audio?: unknown;
 }
@@ -110,7 +110,7 @@ async function manifest(full: boolean): Promise<Manifest> {
     folderName: folders.find((f) => f.id === b.folderId)?.name, tags: b.tags, tagsAt: b.tagsAt, done: b.done, doneAt: b.doneAt, addedAt: b.addedAt, lastOpenedAt: b.lastOpenedAt,
     progress: b.progress, progressAt: b.progressAt, bookmarks: b.bookmarks, highlights: b.highlights, pins: b.pins, pdfHighlights: b.pdfHighlights, ink: b.ink, prefs: b.prefs, stats: b.stats,
     rating: b.rating, ratingAt: b.ratingAt, review: b.review, reviewAt: b.reviewAt, readToc: b.readToc, readTocAt: b.readTocAt, chapterMarks: b.chapterMarks, chapterMarksAt: b.chapterMarksAt, chapterStars: b.chapterStars, chapters: b.chapters, chaptersAt: b.chaptersAt,
-    track: b.track, series: b.series, remote: b.remote, description: b.description, language: b.language,
+    track: b.track, alDraft: b.alDraft, series: b.series, remote: b.remote, description: b.description, language: b.language,
     visual: visual[b.id], anki: await db.getMeta(`anki:${b.id}`), audio: await db.getMeta(`audio:${b.id}`),
   });
   return scrubManifest(out);
@@ -355,6 +355,7 @@ function applyRecord(b: Book, rec: BookRecord, fid: string | undefined): void {
   if (rec.readToc !== undefined && later(rec.readTocAt, b.readTocAt, b.readToc !== undefined)) { b.readToc = rec.readToc; b.readTocAt = rec.readTocAt; }
   if (rec.chapterMarks && later(rec.chapterMarksAt, b.chapterMarksAt, !!b.chapterMarks)) { b.chapterMarks = rec.chapterMarks; b.chapterMarksAt = rec.chapterMarksAt; }
   if (rec.chapters !== undefined && later(rec.chaptersAt, b.chaptersAt, b.chapters !== undefined)) { b.chapters = rec.chapters; b.chaptersAt = rec.chaptersAt; }
+  if (rec.alDraft && (rec.alDraft.at ?? 0) > (b.alDraft?.at ?? 0)) b.alDraft = rec.alDraft;
   if (rec.track && (!b.track || (rec.track.updatedAt ?? 0) > (b.track.updatedAt ?? 0))) b.track = rec.track;
   if (rec.remote && !b.remote) b.remote = rec.remote;
   if (rec.series && !b.series) b.series = rec.series;

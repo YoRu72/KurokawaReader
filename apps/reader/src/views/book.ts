@@ -132,6 +132,8 @@ export function bookView(id: string): HTMLElement {
       // (Tracking is for titles that came from a source — an extension, a web folder — as Mihon tracks its
       // entries; a book of one's own files gets it once an AniList account is linked.)
       anilistOn() && (fromSource(book) || book.track || linked()) ? tile('globe', book.track ? t('tracked') : t('tracking'), !!book.track, async () => { if (!linked()) { await (await import('../ui/anilistlink')).anilistSignIn(() => render(book)); if (!linked()) return; } const { trackSheet } = await import('../ui/track'); trackSheet(book, () => render(book)); }) : null,
+      // (A review on AniList: only with an account linked and the book matched there.)
+      anilistOn() && linked() && book.track ? tile('note', book.track.reviewId ? t('alrEdit') : t('alrAction'), !!book.track.reviewId, async () => { const m = await import('../ui/alreview'); m.reviewSheet((await db.getBook(book.id)) ?? book, () => void db.getBook(book.id).then((b) => { if (b) render(b); })); }) : null,
       tile('pen', t('edit'), false, () => void import('../ui/booknames').then((m) => m.editNamesSheet(book, (b) => { top.querySelector('.title')!.textContent = b.title; render(book); }))),
       tile('star', book.rating ? '★'.repeat(book.rating) : t('reviewBook'), !!book.rating, async () => { const { reviewSheet } = await import('../ui/review'); reviewSheet(book, () => render(book)); }),
       tile('external', t('shareFile'), false, async () => { const { shareBooks } = await import('../library'); void shareBooks([book.id]); }),

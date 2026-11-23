@@ -149,7 +149,9 @@ export function trackSheet(book: Book, onChange: () => void): void {
         field(`${t('alScore')} (${t(`alFormat_${u.scoreFormat}` as 'alFormat_POINT_10')})`, score),
         field(t('alStarted'), started),
         field(t('alFinished'), finished)),
-      h('p', { class: 'hint' }, t('trackStarsHint')));
+      h('p', { class: 'hint' }, t('trackStarsHint')),
+      // (The review entry: only with an account linked and a media matched — which is this view.)
+      ...(al.anilistOn() && al.linked() ? [h('button', { type: 'button', class: 'btn tonal track-review', style: { width: '100%', minHeight: '44px', marginTop: '8px' }, onclick: () => void import('./alreview').then(async (m) => { const fresh = (await db.getBook(book.id)) ?? book; m.reviewSheet(fresh, () => { void db.getBook(book.id).then((b) => { if (b) book.track = b.track; onChange(); }); }); }) }, icon('note'), book.track?.reviewId ? t('alrEdit') : t('alrAction'))] : []));
     const saveBtn = h('button', { type: 'button', class: 'btn small primary', onclick: async () => {
       const next: al.AlEntry = { ...e, status: status.value as al.AlStatus, progress: Number(progress.value) || 0, score: Number(score.value) || 0, startedAt: al.toAlDate(started.value), completedAt: al.toAlDate(finished.value) };
       if (next.status === 'COMPLETED' && !next.completedAt) next.completedAt = al.today();
