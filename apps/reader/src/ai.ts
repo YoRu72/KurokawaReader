@@ -2,7 +2,7 @@
 // OpenAI-compatible endpoints (OpenRouter, local servers), Anthropic.
 // Keys live in the visual settings (localStorage) and are left out of backups (backup.ts scrubSettings).
 import { REPO } from './repo';
-import { termsIn, glossaryPrompt, applyGlossary, glossaryStamp, glossaryStampOf, scriptOfLang, scriptVerdict } from './glossary';
+import { termsIn, glossaryPrompt, applyGlossary, citationFor, normKind, KINDS, glossaryStamp, glossaryStampOf, scriptOfLang, scriptVerdict } from './glossary';
 import { getSettings } from './settings';
 import { t } from './i18n';
 
@@ -261,7 +261,7 @@ export async function translateBatch(texts: string[], bookId?: string, ctx?: TrC
   const gl = s.aiTask === 'furigana' ? [] : termsIn(texts, bookId, s.aiTarget);
   const styled = s.aiTask !== 'furigana' && texts.some((x) => /<(i|b|em|strong|u|sup|sub)>/.test(x));
   const prompt = [effectivePrompt(), glossaryPrompt(gl, langName(s.aiTarget)), s.aiTask !== 'furigana' ? namesRule(s.aiTarget) : '', styled ? STYLE : '', s.aiContext !== false && s.aiTask !== 'furigana' ? contextLines(ctx) : ''].filter(Boolean).join('\n\n');
-  const fix = (out: string[]) => (gl.length ? out.map((x) => applyGlossary(x, gl)) : out);
+  const fix = (out: string[]) => (gl.length ? out.map((x, i) => citationFor(texts[i] ?? '', gl) ?? applyGlossary(x, gl)) : out);
   // TranslateGemma on a local server: its own prompt (one user message), one paragraph at a time, the reply as it is.
   if (s.aiProvider === 'local' && s.localEngine === 'server' && s.aiTask !== 'furigana') {
     const L = await import('./localai'); const tm = await L.translationModel().catch(() => '');
@@ -288,27 +288,40 @@ export async function translateBatch(texts: string[], bookId?: string, ctx?: TrC
 
 /** A JSON array of objects read from a model's reply (code fences and prose around it left out). */
 function parseObjects(raw: string): { from?: unknown; to?: unknown; kind?: unknown }[] {
-  let txt = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''); const a = txt.indexOf('['), b = txt.lastIndexOf(']'); if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
-  const arr = JSON.parse(txt) as unknown; return Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object') as { from?: unknown; to?: unknown; kind?: unknown }[] : [];
+  type O = { from?: unknown; to?: unknown; kind?: unknown };
+  const txt0 = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  // (An answer grouped by kind — {"characters": [...], "places": [...]} — read as well: each one of its group's kind.)
+  const o0 = txt0.indexOf('{'), a0 = txt0.indexOf('[');
+  if (o0 >= 0 && (a0 < 0 || o0 < a0)) {
+    try {
+      const obj = JSON.parse(txt0.slice(o0, txt0.lastIndexOf('}') + 1)) as Record<string, unknown>;
+      const groups = Object.entries(obj).filter(([, v]) => Array.isArray(v));
+      if (groups.length) return groups.flatMap(([k, v]) => (v as unknown[]).filter((x) => x && typeof x === 'object').map((x) => ({ kind: groups.length === 1 && /^(terms|items|glossary|names|results|entries)$/i.test(k) ? undefined : k, ...(x as O) })));
+    } catch { /* read as an array below */ }
+  }
+  let txt = txt0; const a = txt.indexOf('['), b = txt.lastIndexOf(']'); if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
+  const arr = JSON.parse(txt) as unknown; return Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object') as O[] : [];
 }
 const scriptAsk = (target: string): string => { const sc = scriptOfLang(target); return !sc ? '' : sc === 'latin' ? ` Every rendering must be in Latin letters, spelt as ${langName(target)} spells it.` : ` Every rendering must be written in the ${SCRIPT_NAMES[sc]} script, as ${langName(target)} writes it — never in Latin letters or in the original's script.`; };
 export type Found = { from: string; to: string; kind?: string };
+// (The kinds as the model is told them: each with what it holds.)
+const KIND_HELP = '"person" (characters), "place" (cities, countries, buildings), "group" (organisations, clans, sects, schools), "skill" (spells, techniques, abilities), "item" (weapons, artefacts, objects), "title" (titles and ranks), "creature" (monsters, races), "event" (battles, festivals), "quote" (citations), "term" (anything else)';
 /** Names and terms a passage holds (people, places, sects, techniques, titles), each with a rendering in the
  *  target language (the one chosen when asked — `target`) — offered to the reader for the book's glossary. A
  *  rendering plainly not in that language's script («Keyaru» for Arabic) is asked for again once, and left out if
  *  it comes back so again: `refused` says how many. */
 export async function suggestTerms(texts: string[], known: string[], target = getSettings().aiTarget): Promise<Found[] & { refused: number }> {
   const lang = langName(target);
-  const system = `You build a translation glossary for a translation into ${lang} (language code ${target}). From the text, list the proper names and recurring special terms (people, places, organisations, sects, techniques, titles, invented words) — at most 40, the most frequent first — each with its rendering in ${lang} as a careful translator would fix it for the whole book (transliterate names; translate meaningful titles).${scriptAsk(target)} Skip these, already in the glossary: ${JSON.stringify(known.slice(0, 200))}. Return ONLY a JSON array of objects {"from": original, "to": rendering in ${lang}, "kind": "person|place|group|term"}. No prose.`;
+  const system = `You build a translation glossary for a translation into ${lang} (language code ${target}). From the text, list the proper names and recurring special terms (people, places, organisations, sects, techniques, titles, invented words) — at most 40, the most frequent first — each with its rendering in ${lang} as a careful translator would fix it for the whole book (transliterate names; translate meaningful titles).${scriptAsk(target)} Skip these, already in the glossary: ${JSON.stringify(known.slice(0, 200))}. Give each its kind, one of: ${KIND_HELP}. List a citation (kind "quote": a verse, a saying, a chant, a recurring line — "from" the whole line, "to" its fixed rendering) only when the same line recurs or is plainly quoted. Return ONLY a JSON array of objects {"from": original, "to": rendering in ${lang}, "kind": one of ${KINDS.map((k) => `"${k}"`).join(', ')}}. No prose.`;
   const raw = await chat(system, texts.join('\n\n').slice(0, 24000));
   const seen = new Set(known.map((x) => x.toLowerCase()));
-  const clean = (arr: { from?: unknown; to?: unknown; kind?: unknown }[]): Found[] => arr.filter((x) => typeof x.from === 'string' && typeof x.to === 'string' && x.from.trim() && x.to.trim() && !seen.has(x.from.trim().toLowerCase())).map((x) => ({ from: (x.from as string).trim(), to: (x.to as string).trim(), kind: typeof x.kind === 'string' ? x.kind : undefined }));
+  const clean = (arr: { from?: unknown; to?: unknown; kind?: unknown }[]): Found[] => arr.filter((x) => typeof x.from === 'string' && typeof x.to === 'string' && x.from.trim() && x.to.trim() && !seen.has(x.from.trim().toLowerCase())).map((x) => ({ from: (x.from as string).trim(), to: (x.to as string).trim(), kind: normKind(x.kind) }));
   const all = clean(parseObjects(raw));
   const good = all.filter((x) => scriptVerdict(x.to, target) !== 'bad'); let bad = all.filter((x) => scriptVerdict(x.to, target) === 'bad');
   if (bad.length) {
     // (Asked again for those alone, the language and its script said once more.)
     try {
-      const again = clean(parseObjects(await chat(`These glossary renderings were not written in ${lang}.${scriptAsk(target)} Give each name or term its ${lang} rendering. Return ONLY a JSON array of objects {"from": original, "to": rendering in ${lang}, "kind": "person|place|group|term"}. No prose.`, JSON.stringify(bad.map((x) => ({ from: x.from, kind: x.kind }))))));
+      const again = clean(parseObjects(await chat(`These glossary renderings were not written in ${lang}.${scriptAsk(target)} Give each name or term its ${lang} rendering. Return ONLY a JSON array of objects {"from": original, "to": rendering in ${lang}, "kind": the same kind}. No prose.`, JSON.stringify(bad.map((x) => ({ from: x.from, kind: x.kind }))))));
       const fixed = again.filter((x) => bad.some((y) => y.from.toLowerCase() === x.from.toLowerCase()) && scriptVerdict(x.to, target) !== 'bad');
       good.push(...fixed); bad = bad.filter((y) => !fixed.some((x) => x.from.toLowerCase() === y.from.toLowerCase()));
     } catch (e) { if ((e as Error).name === 'QuotaError') throw e; /* the first answer's good ones kept */ }

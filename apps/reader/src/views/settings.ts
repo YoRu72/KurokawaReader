@@ -193,7 +193,11 @@ export function settingsView(): HTMLElement {
   // AI (translation & voices)
   body.append(h('section', { class: 'card' }, h('h3', null, t('aiSection')), h('p', null, t('aiTranslateBody')),
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-      h('button', { class: 'btn tonal small', onclick: async () => { const { aiSettingsSheet } = await import('../ui/aisettings'); aiSettingsSheet(); } }, icon('settings'), t('aiSetup')))));
+      h('button', { class: 'btn tonal small', onclick: async () => { const { aiSettingsSheet } = await import('../ui/aisettings'); aiSettingsSheet(); } }, icon('settings'), t('aiSetup'))),
+    // (A new volume with no glossary: its series' glossary taken by itself, offered, or never — also in the Glossary tab.)
+    h('div', { class: 'field gloss-vol-mode', style: { marginTop: '12px' } }, h('span', { class: 'label' }, t('glossVolMode')),
+      pickButton<'auto' | 'ask' | 'never'>(t('glossVolMode'), [['auto', t('glossVolAuto')], ['ask', t('glossVolAsk')], ['never', t('glossVolNever')]], getSettings().aiVolGlossary ?? 'auto', (v) => updateSettings({ aiVolGlossary: v }), t('close')),
+      h('small', { class: 'hint' }, t('glossVolModeHint')))));
 
   // Checks for new chapters at the sources (the same choices as the bell in Browse offers).
   {

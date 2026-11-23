@@ -35,7 +35,7 @@ export interface Manifest {
   /** The custom AI services without their keys and headers (kept apart from the settings: an older app restoring
    *  this file then leaves the device's own list, keys and all, as it is). */
   customApis?: CustomApi[];
-  glossary?: { terms: Term[]; folders: GlossFolder[]; links: Record<string, string[]>; dest: Record<string, unknown> };
+  glossary?: { terms: Term[]; folders: GlossFolder[]; links: Record<string, string[]>; dest: Record<string, unknown>; /** each book's choice about a former volume's glossary (since 0.65.1) */ vol?: Record<string, unknown> };
   textRules?: TextRule[]; vocab?: unknown[];
   /** The app's icon of the user's choosing (a PNG data URL, at most ICON_CAP long): brought back where the app's own
    *  icon can be set — the desktop shells —, so it also crosses from one desktop build to another. */
@@ -98,7 +98,7 @@ async function manifest(full: boolean): Promise<Manifest> {
   const out: Manifest = {
     app: 'KurokawaReader', version: BACKUP_VERSION, createdAt: Date.now(), full,
     settings: settings as VisualSettings, customApis: settings.aiCustomApis, local, folders, tags: (await db.getMeta<TagDef[]>('tags')) ?? [], fonts: await listFonts(),
-    glossary: { terms: readLocal<Term[]>('kr.glossary', []), folders: readLocal<GlossFolder[]>('kr.glossaryFolders', []), links: readLocal<Record<string, string[]>>('kr.glossaryLinks', {}), dest: readLocal<Record<string, unknown>>('kr.glossaryDest', {}) },
+    glossary: { terms: readLocal<Term[]>('kr.glossary', []), folders: readLocal<GlossFolder[]>('kr.glossaryFolders', []), links: readLocal<Record<string, string[]>>('kr.glossaryLinks', {}), dest: readLocal<Record<string, unknown>>('kr.glossaryDest', {}), vol: readLocal<Record<string, unknown>>('kr.glossaryVol', {}) },
     textRules: readLocal<TextRule[]>('kr.textRules', []), vocab: readLocal<unknown[]>('kr.vocab', []),
     books: [],
   };
@@ -388,6 +388,9 @@ function restoreShared(m: Manifest, idMap: Map<string, string>): void {
     if (g.folders?.length) { const f = readLocal<GlossFolder[]>('kr.glossaryFolders', []); const add = g.folders.filter((x) => x && !f.some((y) => y.id === x.id)); if (add.length) localStorage.setItem('kr.glossaryFolders', JSON.stringify([...f, ...add])); }
     if (g.links && Object.keys(g.links).length) { const l = readLocal<Record<string, string[]>>('kr.glossaryLinks', {}); for (const [k, v] of Object.entries(g.links)) { const b = id(k)!; l[b] = [...new Set([...(l[b] ?? []), ...(v ?? [])])]; } localStorage.setItem('kr.glossaryLinks', JSON.stringify(l)); }
     if (g.dest && Object.keys(g.dest).length) { const d = readLocal<Record<string, unknown>>('kr.glossaryDest', {}); for (const [k, v] of Object.entries(g.dest)) d[id(k)!] = v; localStorage.setItem('kr.glossaryDest', JSON.stringify(d)); }
+    // (A book's choice about a former volume's glossary: the volume it came from turned into this device's book too; a
+    // backup made before there were such choices has none.)
+    if (g.vol && typeof g.vol === 'object' && Object.keys(g.vol).length) { const d = readLocal<Record<string, { from?: string }>>('kr.glossaryVol', {}); for (const [k, v] of Object.entries(g.vol as Record<string, { from?: string }>)) if (v && typeof v === 'object' && !d[id(k)!]) d[id(k)!] = { ...v, ...(v.from ? { from: id(v.from) } : {}) }; localStorage.setItem('kr.glossaryVol', JSON.stringify(d)); }
   }
   if (m.textRules?.length) {
     const inc = m.textRules.filter((r) => r && typeof r.find === 'string').map((r) => (r.book ? { ...r, book: id(r.book) } : r));

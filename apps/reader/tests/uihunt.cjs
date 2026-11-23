@@ -51,6 +51,8 @@ const VIEWS = [
   ['read-options', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('options')(p); await p.waitForSelector('.panel.open, .sheet', { timeout: 8000 }); }],
   ['read-contents', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('toc')(p); await p.waitForSelector('.panel.open, .sheet', { timeout: 8000 }); }],
   ['read-search', async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('search')(p); await p.waitForSelector('.panel.open, .sheet, .search-bar, input[type=search]', { timeout: 8000 }); }],
+  // The AI sheet's four tabs (src/ui/aisheet.ts), from the reader's Glossary command.
+  ...['translation', 'glossary', 'names', 'saved'].map((k) => ['read-ai-' + k, async (p) => { await openBook(/alice/i, '.reader-flow .kr-content')(p); await command('glossary')(p); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 8000 }); await p.click(`.ai-tab[data-tab="${k}"]`); await p.waitForSelector(`.ai-panel[data-tab="${k}"]:not([hidden]) > *`, { timeout: 8000 }); await p.waitForTimeout(500); }]),
   ['read-pdf', openBook(/pages/i, '.pdf-bar, .pdf-view, .pdf-pages')],
   ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
   ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],

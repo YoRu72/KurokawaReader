@@ -93,4 +93,57 @@ ok('pasted: an Arabic rendering kept as Arabic; an English one not taken for Ara
 // The stored format: read by the version before (the same fields; `lang` was already optional).
 reset('ar'); G.saveTerms([{ id: 's', from: 'Keyaru', to: 'كيارو', lang: 'ar', kind: 'person', book: 'b1' }]);
 ok('stored as before: an array of {id, from, to, lang, kind, book}', JSON.stringify(JSON.parse(store['kr.glossary'])[0]) === JSON.stringify({ id: 's', from: 'Keyaru', to: 'كيارو', lang: 'ar', kind: 'person', book: 'b1' }));
+/* ---------- 0.65.1: files by kind, citations, a former volume's glossary ---------- */
+const wipe = () => { for (const k of Object.keys(store)) delete store[k]; G._forgetLegacy(); G.saveTerms([]); };
+wipe();
+ok('kinds: the old four map onto themselves; an unknown kind is «Terms»; the reader\'s own kept', ['person', 'place', 'group', 'term'].every((k) => G.kindOf(k) === k) && G.kindOf('weird') === 'term' && G.kindOf(undefined) === 'term' && G.kindOf('u:Spells') === 'u:Spells');
+ok('a model\'s words for kinds: organisation → group, spell → skill, verse → quote, monster → creature', G.normKind('Organization') === 'group' && G.normKind('spells') === 'skill' && G.normKind('verse') === 'quote' && G.normKind('monsters') === 'creature' && G.normKind('???') === 'term');
+// Old stored data: terms without a kind, and one with a kind no longer known, still load and still work.
+store['kr.glossary'] = JSON.stringify([{ id: 'o1', from: 'Lin Feng', to: 'لين فنغ', lang: 'ar' }, { id: 'o2', from: 'Qi', to: 'التشي', lang: 'ar', kind: 'oddkind' }]); G._forgetLegacy();
+{ const m = { exports: {} }; new Function('module', 'exports', code)(m, m.exports); const G2 = m.exports; const l = G2.termsIn(['Lin Feng felt the Qi.'], 'b', 'ar');
+  ok('old stored data loads: no kind → Terms, used as before', l.length === 2 && l.every((x) => G2.kindOf(x) === 'term' || G2.kindOf(x) === 'term')); }
+wipe();
+G.saveTerms([{ id: 'p', from: 'Lin Feng', to: 'لين فنغ', kind: 'person', lang: 'ar' }, { id: 'k', from: 'Iron Palm', to: 'كفّ الحديد', kind: 'skill', lang: 'ar' }, { id: 'c', from: 'The gate sang its old song.', to: 'غنّت البوابة أغنيتها القديمة.', kind: 'quote', lang: 'ar' }]);
+const inP = G.termsIn(['Lin Feng used Iron Palm.', '«The gate  sang its old song!»'], 'b', 'ar'); const pr = G.glossaryPrompt(inP, 'Arabic');
+ok('the prompt grouped by kind with a one-word label', /Characters:\n- "Lin Feng"/.test(pr) && /Skills:\n- "Iron Palm"/.test(pr) && /Citations \(/.test(pr) && pr.indexOf('Characters') < pr.indexOf('Citations'), pr);
+ok('a citation matched as a whole line, spaces and punctuation folded', inP.some((x) => x.id === 'c'));
+ok('… not matched by its words alone', !G.termsIn(['The gate sang.'], 'b', 'ar').some((x) => x.id === 'c'));
+ok('a citation rendered exactly', G.citationFor('<i>The gate sang its old song</i>', inP) === 'غنّت البوابة أغنيتها القديمة.' && G.citationFor('Something else', inP) === undefined);
+ok('… never searched for inside a translation', G.applyGlossary('The gate sang its old song.', inP) === 'The gate sang its old song.');
+// Files out and back: one text file per kind in a folder named after the book.
+const lab = (k) => ({ person: 'Characters', skill: 'Skills', quote: 'Citations' }[k] || k);
+const filesOut = G.glossaryFiles(G.terms(), 'Gate Story: Vol/1', lab);
+ok('files out: one per kind, in a folder named after the book', JSON.stringify(filesOut.map((f) => f.name)) === JSON.stringify(['Gate Story Vol 1/Characters.txt', 'Gate Story Vol 1/Skills.txt', 'Gate Story Vol 1/Citations.txt']), filesOut.map((f) => f.name));
+const back = filesOut.flatMap((f) => G.parseKindFile(f.name, f.text));
+ok('… read back: each term in its kind (round trip)', back.length === 3 && back.find((x) => x.from === 'Iron Palm').kind === 'skill' && back.find((x) => x.from === 'Lin Feng').kind === 'person' && back.find((x) => /gate sang/.test(x.from)).kind === 'quote');
+ok('file names in any language → the kind; an unknown name → the reader\'s own file', G.kindFromFileName('x/الشخصيات.txt') === 'person' && G.kindFromFileName('スキル.txt') === 'skill' && G.kindFromFileName('Spells.txt') === 'skill' && G.kindFromFileName('My lore.txt') === 'u:My lore');
+ok('the old one-file form still read (kinds after tabs)', G.parseTerms('Lin Feng = لين فنغ\tperson\tar\nQi = التشي').map((x) => x.kind || '-').join() === 'person,-');
+// A former volume's glossary: the titles.
+ok('titles: «Mushoku Tensei V1» and «… V29» are one series', G.seriesMatch('Mushoku Tensei V1', 'Mushoku Tensei V29') === 'same' && G.volumeStem('Mushoku Tensei V29').vol === 29);
+ok('titles: «Vol. 1» and «Volume 12»', G.seriesMatch('Overlord Vol. 1', 'Overlord Volume 12') === 'same');
+ok('titles: Japanese 巻', G.seriesMatch('無職転生 第1巻', '無職転生 29巻') === 'same' && G.volumeStem('無職転生 第29巻').vol === 29);
+ok('titles: another series with a shared first word does not match', G.seriesMatch('Sword Art Online 1', 'Sword of the Stranger') === null);
+ok('titles: identical ones match; a subtitle differing is «similar»', G.seriesMatch('Same Title', 'Same Title') === 'same' && G.seriesMatch('Mushoku Tensei V1', 'Mushoku Tensei Redundancy 2') === 'similar');
+// The three modes.
+wipe();
+const books = [{ id: 'v1', title: 'Gate Story Vol. 1' }, { id: 'v3', title: 'Gate Story Vol. 3' }, { id: 'v2', title: 'Gate Story Vol. 2' }, { id: 'x', title: 'Gate Stories Remix 1' }];
+G.saveTerms([{ id: 't1', from: 'Lin Feng', to: 'لين فنغ', book: 'v1', kind: 'person', lang: 'ar' }, { id: 't3', from: 'Wen', to: 'ون', book: 'v3', kind: 'person', lang: 'ar' }]);
+const d1 = G.volDecision(books[2], books, 'auto');
+ok('automatically + identical: taken by itself, the nearest volume first', d1.kind === 'auto' && ['v1', 'v3'].includes(d1.cand.bookId) && G.volCandidates(books[2], books).length === 2, d1);
+ok('… a former volume first when two are as near', d1.cand.bookId === 'v1');
+const und = G.shareGlossary('v2', d1.cand, true);
+ok('shared: one folder for both volumes, its new names added there', G.linkedFolders('v2').length === 1 && G.linkedFolders('v1').includes(G.linkedFolders('v2')[0]) && G.destOf('v2').to === G.linkedFolders('v2')[0] && G.terms().find((x) => x.id === 't1').folder === G.linkedFolders('v2')[0]);
+ok('… named after the series', G.folders()[0].name === 'Gate Story');
+const tgt = G.namesTarget('v2', 'Gate Story Vol. 2'); G.addTerms([{ from: 'Azure Sect', to: 'الطائفة', kind: 'group', lang: 'ar', ...tgt }]);
+ok('… what volume 2 adds is there for volume 1', G.termsIn(['Azure Sect'], 'v1', 'ar').length === 1);
+und(); ok('Undo: everything back as it was', !G.linkedFolders('v2').length && !G.folders().length && G.terms().every((x) => !x.folder) && !G.volChoice('v2'));
+ok('ask me: the choices offered, nothing applied', G.volDecision(books[2], books, 'ask').kind === 'ask' && !G.linkedFolders('v2').length);
+ok('never: nothing looked for', G.volDecision(books[2], books, 'never').kind === 'none');
+ok('automatically + only similar: offered, not taken', G.volDecision({ id: 'y', title: 'Gate Story Remix 2' }, [{ id: 'v1', title: 'Gate Story Vol. 1' }], 'auto').kind !== 'auto');
+G.addTerms([{ from: 'Own', to: 'خاص', book: 'v2', lang: 'ar' }]);
+ok('an existing glossary is untouched (no offer, nothing taken)', G.volDecision(books[2], books, 'auto').kind === 'none' && G.terms().filter((x) => x.book === 'v2').length === 1);
+G.saveTerms(G.terms().filter((x) => x.book !== 'v2')); G.setVolChoice('v2', { choice: 'empty' });
+ok('a choice made earlier is kept (no offer)', G.volDecision(books[2], books, 'auto').kind === 'none');
+G.setVolChoice('v2', null); G.copyGlossary('v2', G.volCandidates(books[2], books)[0]);
+ok('Copy it: a separate copy, the former volume untouched', G.terms().filter((x) => x.book === 'v2').length === 1 && G.terms().filter((x) => x.book === 'v1').length === 1 && G.volChoice('v2').choice === 'copy');
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);

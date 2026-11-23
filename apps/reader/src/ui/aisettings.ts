@@ -11,10 +11,13 @@ import { candidatesFor, probe, detectAt, SERVICES, type Detected, type KnownServ
 
 const TARGETS = ['ar', 'en', 'fr', 'tr', 'ur', 'fa', 'de', 'es', 'id', 'ja', 'zh-CN', 'ru'];
 
-export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void {
+/** The AI sheet on its «Translation» tab (the pill's settings, Settings): src/ui/aisheet.ts. */
+export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void { void import('./aisheet').then((m) => m.aiSheet({ tab: 'translation', onDone, extra })); }
+
+/** The «Translation» tab: task, provider, key, model, target, instructions; read aloud below. */
+export function translationPanel(extra?: HTMLElement, toGlossary?: () => void): HTMLElement {
   const s = getSettings();
-  const sh = openSheet(t('aiTranslate'), t('close'));
-  sh.body.style.fontFamily = 'var(--font-ui)';
+  const sh = { body: h('div', { class: 'ai-tr-panel' }) };
   const field = (label: string, control: HTMLElement, hint?: string) => h('div', { class: 'field' }, h('span', { class: 'label' }, label), control, hint ? h('span', { class: 'hint' }, hint) : null);
 
   const key = h('input', { type: 'password', value: s.aiKey, placeholder: 'API key', autocomplete: 'off', dir: 'ltr', onchange: () => updateSettings({ aiKey: key.value.trim() }) }) as HTMLInputElement;
@@ -62,8 +65,10 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
   prefillCb.checked = s.aiPromptPrefill;
   const prefillRow = h('label', { class: 'row' }, h('span', { class: 'label' }, t('aiPromptPrefill')), h('span', { class: 'switch' }, prefillCb, h('i')));
   // (The glossary: names and terms always rendered the same.)
-  const glossaryBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./glossarysheet').then((m) => m.glossarySheet()) }, icon('define'), t('glossary'));
-  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow, h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, glossaryBtn, h('span', { style: { flex: '1' } }), iconButton('copy', t('copyPrompt'), () => void copyText(prompt.value.trim() ? prompt.value : defaultPrompt(getSettings().aiTarget))))), t('aiPromptHint'));
+  // (The glossary is the sheet's next tab; the built-in instructions put in the box beside its other tools.)
+  const glossaryBtn = h('button', { type: 'button', class: 'btn tonal small', onclick: () => (toGlossary ? toGlossary() : void import('./aisheet').then((m) => m.aiSheet({ tab: 'glossary' }))) }, icon('define'), t('glossary'));
+  const insertBtn = h('button', { class: 'btn small ai-insert-prompt', type: 'button', onclick: () => { prompt.value = defaultPrompt(getSettings().aiTarget); updateSettings({ aiPrompt: '' }); promptDir(); prompt.focus(); } }, icon('type'), t('insertDefaultPrompt'));
+  const promptField = field(t('aiPrompt'), h('div', { style: { display: 'grid', gap: '8px' } }, prompt, prefillRow, h('div', { class: 'ai-prompt-tools' }, glossaryBtn, insertBtn, iconButton('copy', t('copyPrompt'), () => void copyText(prompt.value.trim() ? prompt.value : defaultPrompt(getSettings().aiTarget))))), t('aiPromptHint'));
   langField.hidden = s.aiTask !== 'translate'; promptField.hidden = s.aiTask !== 'translate';
 
   // Read-aloud engine and AI voice live here too (same key / provider).
@@ -82,8 +87,8 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     local,
     custom,
     ...(cloudFields.push(
-      field('API key', h('div', { style: { display: 'flex', gap: '8px' } }, key, keyLink)),
-      field(t('aiModel'), h('div', { style: { display: 'flex', gap: '8px' } }, model, modelsBtn), t('aiModelHint')),
+      field('API key', h('div', { class: 'ai-input-row' }, key, keyLink)),
+      field(t('aiModel'), h('div', { class: 'ai-input-row' }, model, modelsBtn), t('aiModelHint')),
       field(t('aiBaseUrl'), url)), cloudFields),
     langField,
     promptField,
@@ -97,9 +102,7 @@ export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void 
     ttsField,
   );
   syncLocal();
-  sh.actions.append(
-    h('button', { class: 'btn small', type: 'button', onclick: () => { prompt.value = defaultPrompt(getSettings().aiTarget); updateSettings({ aiPrompt: '' }); promptDir(); prompt.focus(); } }, icon('type'), t('insertDefaultPrompt')),
-    h('button', { class: 'btn small primary', type: 'button', onclick: () => { sh.close(); onDone?.(); } }, icon('check'), t('done')));
+  return sh.body;
 }
 
 /* ---------- local models ---------- */

@@ -62,14 +62,16 @@ let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); 
   // Names for the glossary.
   await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Customise' }).click();
   await p.waitForSelector('.tr-options'); await p.locator('.tr-options button', { hasText: 'Find names' }).click();
-  await p.waitForSelector('.tr-term'); await p.locator('.sheet button', { hasText: 'Add for this book' }).click(); await p.waitForTimeout(300);
+  // (The AI sheet's «Names found» tab: the chapter's names, each in its file, accepted into this book's glossary.)
+  await p.waitForSelector('.ai-tab[aria-selected="true"][data-tab="names"]'); await p.click('.names-find');
+  await p.waitForSelector('.names-group[data-kind="person"] .names-row'); await p.click('.names-accept-all'); await p.waitForTimeout(300);
   const gl = await p.evaluate(() => JSON.parse(localStorage.getItem('kr.glossary') || '[]')); console.log('glossary:', JSON.stringify(gl));
   ok('a proposed name added to this book\'s glossary', gl.some((x) => x.from === 'Lin Feng' && x.to === 'لين فنغ' && x.book));
   ok('the minute\'s limit waited out, no error shown', limited === 1 && !(await p.$('.toast.error')));
   // Glossary folders: this book's names made a folder (for its other volumes), used by the book; the whole book
   // read for names as a job — the name it finds again not doubled.
   await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
-  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translation glossary' }).click(); await p.waitForSelector('.gloss-sheet .gloss-row');
+  await p.click('.tr-pill button[aria-label="More"]'); await p.locator('.sheet .dest-row', { hasText: 'Translation glossary' }).click(); await p.waitForSelector('.ai-sheet .gloss-file[data-kind="person"]');
   // (The folder's name asked in the app's own dialog — window.prompt does not exist in the desktop app.)
   let native = false; const onNative = (d) => { native = true; void d.accept('Gate series'); }; p.once('dialog', onNative); await p.locator('.gloss-folder-bar button').click();
   if (!native) { await p.waitForSelector('.text-ask-sheet input', { state: 'visible', timeout: 5000 }); await p.fill('.text-ask-sheet input', 'Gate series'); await p.click('.text-ask-sheet .text-ask-ok'); }

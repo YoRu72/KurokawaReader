@@ -2445,3 +2445,69 @@ html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
   .book-meta .ba { font-size: 10px; }
   .book-meta .stars-badge { font-size: 9px; }
 }
+/* The AI sheet: one sheet, tabs on top — a row that scrolls sideways on a narrow phone and never scrolls away with
+   the panels; «Done» and the close button where they always are. */
+.ai-sheet { max-height: 86vh; }
+.ai-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 4px 16px 8px; flex: none; border-bottom: 1px solid var(--md-outline-variant); overscroll-behavior-x: contain; }
+.ai-tabs::-webkit-scrollbar { display: none; }
+.ai-tab { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: var(--sh-full); border: 0; background: transparent; color: var(--md-on-surface-variant); font: 500 14px var(--font-ui); white-space: nowrap; cursor: pointer; }
+.ai-tab svg { width: 18px; height: 18px; flex: none; }
+.ai-tab:hover { background: var(--md-surface-container-high); }
+.ai-tab[aria-selected='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 600; }
+.ai-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.ai-panel { display: flex; flex-direction: column; gap: 10px; } .ai-panel[hidden] { display: none; }
+.ai-tr-panel { display: flex; flex-direction: column; gap: 14px; }
+.ai-sheet .sheet-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.ai-tab-acts { display: contents; }
+.ai-sheet .sheet-actions .btn { min-width: 0; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-input-row { display: flex; gap: 8px; align-items: center; } .ai-input-row > input { flex: 1 1 auto; min-width: 0; width: auto; } .ai-input-row > .btn { flex: none; white-space: nowrap; }
+.ai-prompt-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .ai-prompt-tools > .icon-btn { margin-inline-start: auto; }
+.ai-empty { padding: 18px 4px; text-align: center; }
+.ai-saved { display: flex; align-items: center; gap: 10px; font: 500 15px var(--font-ui); } .ai-saved p { margin: 0; }
+.ai-clear { align-self: flex-start; }
+/* The glossary as a folder named after the book: its files (kinds), each with how many it holds. */
+.gloss-panel { display: flex; flex-direction: column; gap: 10px; }
+.gloss-head-row { display: flex; align-items: center; gap: 10px; } .gloss-head-row > svg { width: 28px; height: 28px; color: var(--md-primary); flex: none; }
+.gloss-title { margin: 0; font: 600 17px var(--font-ui); overflow-wrap: anywhere; } .gloss-head-row .hint { display: block; }
+.gloss-shared { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 13px var(--font-ui); color: var(--md-on-surface-variant); margin-top: 4px; }
+.gloss-files { display: flex; flex-direction: column; gap: 6px; }
+.gloss-file { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 14px; border: 0; border-radius: 14px; background: var(--md-surface-container); color: var(--md-on-surface); font: 15px var(--font-ui); text-align: start; cursor: pointer; }
+.gloss-file:hover { background: var(--md-surface-container-high); }
+.gloss-file-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--md-secondary-container); color: var(--md-on-secondary-container); flex: none; }
+.gloss-file-icon svg { width: 20px; height: 20px; }
+.gloss-file-name { overflow-wrap: anywhere; }
+.gloss-file-count { color: var(--md-on-surface-variant); font-size: 12.5px; white-space: nowrap; }
+.gloss-file > svg:last-child { opacity: .6; flex: none; } [dir='rtl'] .gloss-file > svg:last-child { transform: scaleX(-1); }
+.gloss-new-file .gloss-file-icon { background: transparent; border: 1px dashed var(--md-outline); }
+.gloss-file-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .gloss-file-bar:empty { display: none; }
+.gloss-file-now { display: inline-flex; align-items: center; gap: 6px; } .gloss-file-now small { color: var(--md-on-surface-variant); }
+.gloss-empty { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; }
+.gloss-opts summary { cursor: pointer; display: flex; align-items: center; gap: 8px; font: 500 14px var(--font-ui); min-height: 40px; color: var(--md-on-surface-variant); }
+.gloss-opts[open] { display: flex; flex-direction: column; gap: 8px; }
+.gloss-vol { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 16px; background: var(--md-surface-container-high); }
+.gloss-vol p { margin: 0; }
+.gloss-vol.notice { flex-direction: row; flex-wrap: wrap; align-items: center; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.gloss-vol.notice p { flex: 1; min-width: 160px; }
+.gloss-vol-title { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.gloss-vol-btns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; width: 100%; }
+.gloss-vol-btns .btn { justify-content: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gloss-vol-box:empty, .gloss-folder-bar:empty, .gloss-books:empty { display: none; }
+.gloss-row.quote .gloss-pair { flex-direction: column; align-items: stretch; } .gloss-row.quote .gloss-arrow { transform: rotate(90deg); align-self: center; }
+/* «Names found»: by the file each goes to; each accepted (its rendering changed first) or rejected. */
+.names-panel { display: flex; flex-direction: column; gap: 10px; }
+.names-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.names-list { display: flex; flex-direction: column; gap: 6px; }
+.names-group { display: flex; flex-direction: column; gap: 6px; }
+.names-head { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font: 600 14px var(--font-ui); } .names-head small { color: var(--md-on-surface-variant); font-weight: 400; }
+.names-row { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1.2fr); }
+.names-row-acts { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
+.names-dest { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* (Icons inside the AI sheet's panels at the size of the text beside them.) */
+.ai-panel svg { width: 20px; height: 20px; flex: none; }
+.ai-panel .gloss-head-row > svg { width: 28px; height: 28px; }
+.ai-panel .gloss-file-icon svg { width: 20px; height: 20px; }
+.gloss-file-name { flex: 1 1 auto; min-width: 0; }
+.ai-panel .row { column-gap: 8px; row-gap: 8px; }
+.gloss-places { display: flex; flex-wrap: wrap; gap: 6px; }
+.gloss-empty .row-btns { display: flex; flex-direction: column; align-items: stretch; gap: 8px; } .gloss-empty .row-btns .btn { justify-content: center; }
+.tr-ahead .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

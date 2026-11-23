@@ -229,7 +229,7 @@ export interface VisualSettings {
   /** The translator: the translation in place of the text or under it; the book, the chapter and the lines
    *  before given as context; italics and bold kept; paragraphs already in the target script left; requests at
    *  once; the next chapter translated ahead while this one is read. */
-  aiDisplay?: 'replace' | 'bilingual'; /** Titles: translated with the original beneath, translated only, or left as they are. */ aiTitles?: 'both' | 'translation' | 'original'; /** Names the translator meets put in the book's glossary on their own (off until chosen). */ aiAutoGlossary?: boolean; aiContext?: boolean; aiKeepStyle?: boolean; aiSkipSame?: boolean; aiParallel?: number; aiPrefetch?: boolean;
+  aiDisplay?: 'replace' | 'bilingual'; /** Titles: translated with the original beneath, translated only, or left as they are. */ aiTitles?: 'both' | 'translation' | 'original'; /** Names the translator meets put in the book's glossary on their own (off until chosen). */ aiAutoGlossary?: boolean; /** A new volume with no glossary: its series' glossary taken by itself ('auto', the default), offered ('ask'), or never looked for. */ aiVolGlossary?: 'auto' | 'ask' | 'never'; aiContext?: boolean; aiKeepStyle?: boolean; aiSkipSame?: boolean; aiParallel?: number; aiPrefetch?: boolean;
   furigana: boolean;
   autoReadings: boolean;      // show furigana / pinyin as soon as CJK text is selected          // show ruby readings in Japanese books
   aiTtsModel: string;
@@ -509,7 +509,7 @@ let bookOverrides: Record<string, Partial<VisualSettings>> | null = null;
  *  about how that book is read (its face, size, theme, layout…); these are never kept with one. */
 const GLOBAL_ONLY = new Set<string>([
   // AI services and voices downloaded
-  'aiProvider', 'aiGlossPrompt', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'localTranslateModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
+  'aiProvider', 'aiGlossPrompt', 'aiVolGlossary', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'localTranslateModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
   // sync, accounts, tracking
   'syncProvider', 'syncAuto', 'syncDropboxKey', 'syncDropboxRefresh', 'syncWebdavUrl', 'syncWebdavUser', 'syncWebdavPass', 'syncFolder', 'syncLastAt',
   'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',
