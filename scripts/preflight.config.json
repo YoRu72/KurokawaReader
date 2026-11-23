@@ -49,7 +49,8 @@
       "backpdf.cjs": 600,
       "sweep.cjs": 900,
       "glassperf.cjs": 400,
-      "hunt.cjs": 300
+      "hunt.cjs": 300,
+      "uihunt.cjs": 600
     },
     "budgets": {
       "perfbudget.cjs": {
