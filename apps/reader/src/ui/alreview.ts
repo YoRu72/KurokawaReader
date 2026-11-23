@@ -41,6 +41,7 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
   const scoreIn = h('input', { type: 'text', inputmode: 'numeric', class: 'alr-score-n', dir: 'ltr', 'aria-label': t('alrScore') }) as HTMLInputElement;
   const priv = h('input', { type: 'checkbox', role: 'switch', class: 'alr-private' }) as HTMLInputElement;
   const sumCount = h('span', { class: 'alr-count' }); const bodyCount = h('span', { class: 'alr-count' });
+  const whyLine = h('div', { class: 'alr-why', role: 'status', hidden: true });
   const status = h('div', { class: 'alr-status', role: 'alert', hidden: true });
   const choice = h('div', { class: 'alr-choice', hidden: true });
 
@@ -56,6 +57,9 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
     bodyCount.textContent = t('alrBodyCount', { n: num([...v.body].length) }) + (p.body ? ' · ' + t('alrMissing', { n: num(p.body), min: num(L.bodyMin) }) : ' ✓');
     bodyCount.classList.toggle('bad', !!p.body);
     publish.disabled = !!(p.body || p.summary || p.score) || busy;
+    // (Why Publish is grey, right above it: the count is always in sight, never only down the page.)
+    const why = p.summary ? t('alrNeedSummary', { min: num(L.summaryMin), max: num(L.summaryMax) }) : p.body ? t('alrNeedBody', { n: num(p.body) }) : '';
+    whyLine.textContent = why; whyLine.hidden = !why;
   };
 
   // ---- the draft, kept as typed
@@ -81,10 +85,10 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
     if (wrap && !sel) { const c = a + wrap[0].length; body.setSelectionRange(c, c); }
     body.focus(); changed();
   };
-  const tool = (label: string, title: string, fn: () => void, cls = '') => h('button', { type: 'button', class: 'btn tonal alr-tool ' + cls, title, 'aria-label': title, onclick: fn }, label) as HTMLButtonElement;
+  const tool = (label: string | Node, title: string, fn: () => void, cls = '') => h('button', { type: 'button', class: 'btn tonal alr-tool ' + cls, title, 'aria-label': title, onclick: fn }, label) as HTMLButtonElement;
   const marks = h('div', { class: 'alr-tools' },
-    tool('B', t('alrBold'), () => insert('', ['**', '**']), 'b'), tool('I', t('alrItalic'), () => insert('', ['_', '_']), 'i'),
-    tool('~!', t('alrSpoiler'), () => insert('', ['~!', '!~'])), tool('❝', t('alrQuote'), () => insert('', ['> ', ''])));
+    tool('B', t('alrBold'), () => insert('', ['**', '**']), 'b'), tool(h('i', null, 'I'), t('alrItalic'), () => insert('', ['_', '_']), 'i'),
+    tool(h('bdi', { dir: 'ltr' }, '~!'), t('alrSpoiler'), () => insert('', ['~!', '!~'])), tool(h('bdi', { dir: 'ltr' }, '❝'), t('alrQuote'), () => insert('', ['> ', ''])));
   const helpers = h('div', { class: 'alr-helpers' });
   const factsBtn = h('button', { type: 'button', class: 'btn tonal', onclick: () => {
     const bits: string[] = [];
@@ -148,9 +152,18 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
     } catch (e) { fail(e); await flush(); }
     finally { setBusy(false); }
   }
+  // The app's own sheet instead of the browser's confirm(): Cancel and a danger button of equal width.
+  const confirmDelete = (): Promise<boolean> => new Promise((resolve) => {
+    let yes = false;
+    const c = openSheet(t('alrDelete'), t('close'), { stack: true, onClose: () => resolve(yes) }); c.el.classList.add('alr-confirm');
+    c.body.style.fontFamily = 'var(--font-ui)';
+    c.body.append(h('p', { class: 'alr-confirm-text', dir: 'auto' }, t('alrDeleteConfirm')));
+    c.actions.append(h('button', { type: 'button', class: 'btn tonal alr-confirm-no', onclick: c.close }, t('cancel')),
+      h('button', { type: 'button', class: 'btn danger alr-confirm-yes', onclick: () => { yes = true; c.close(); } }, icon('trash'), t('alrDelete')));
+  });
   async function doDelete(): Promise<void> {
     const id = existing?.id ?? book.track?.reviewId; if (!id) return;
-    if (!confirm(t('alrDeleteConfirm'))) return;
+    if (!await confirmDelete()) return;
     setBusy(true);
     try {
       await al.deleteReview(id); existing = null;
@@ -170,7 +183,7 @@ export function reviewSheet(book: Book, onChange: () => void = () => {}): void {
     h('div', { class: 'field alr-scorebox' }, h('label', { class: 'label' }, t('alrScore')), h('div', { class: 'alr-scorerow' }, slider, scoreIn), h('span', { class: 'hint' }, t('alrScoreHint'))),
     h('label', { class: 'row alr-privrow' }, h('span', { class: 'label' }, t('alrPrivate'), h('small', null, t('alrPrivateHint'))), h('span', { class: 'switch' }, priv, h('i'))),
     status);
-  sh.actions.append(open, del, publish);
+  sh.actions.append(whyLine, open, del, publish);
   refresh();
 
   // ---- what is on the site (the sheet is usable meanwhile; offline it stays a draft)

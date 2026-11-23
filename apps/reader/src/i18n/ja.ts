@@ -741,6 +741,8 @@ export const ja: Partial<Strings> = {
   alrCountOf: "{n} / {max}",
   alrBodyCount: "{n} 文字",
   alrMissing: "あと {n} 文字必要（最小 {min}）",
+  alrNeedBody: "あと {n} 文字必要です",
+  alrNeedSummary: "要約は {min}〜{max} 文字で入力してください",
   alrScore: "スコア（0〜100）",
   alrScoreHint: "AniList のスコアか星の数から始まります。",
   alrPrivate: "非公開",

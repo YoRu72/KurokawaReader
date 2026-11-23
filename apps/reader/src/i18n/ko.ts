@@ -741,6 +741,8 @@ export const ko: Partial<Strings> = {
   alrCountOf: "{n} / {max}",
   alrBodyCount: "{n}자",
   alrMissing: "{n}자 더 필요 (최소 {min}자)",
+  alrNeedBody: "{n}자 더 필요합니다",
+  alrNeedSummary: "요약은 {min}~{max}자여야 합니다",
   alrScore: "점수 (0–100)",
   alrScoreHint: "AniList 점수나 별점에서 시작합니다.",
   alrPrivate: "비공개",

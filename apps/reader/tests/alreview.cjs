@@ -72,6 +72,11 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
     const cnt = await p.locator('.alr-sheet .alr-count').allInnerTexts();
     ok('2: the body count shows what is still missing (2100)', /2100/.test(cnt[1]) && /100/.test(cnt[1]), cnt);
     ok('2: … Publish still disabled (summary under the minimum, body short)', await p.locator('.alr-publish').isDisabled());
+    const whyT = await p.locator('.alr-why').innerText(); const inView = await p.evaluate(() => { const a = document.querySelector('.alr-why').getBoundingClientRect(), b = document.querySelector('.alr-publish').getBoundingClientRect(); return a.bottom <= b.top + 1 && a.top >= 0 && b.bottom <= innerHeight; });
+    ok('2: one line above Publish says why (summary first), visible without scrolling', /20/.test(whyT) && /120/.test(whyT) && inView, whyT);
+    await p.fill('.alr-summary', 'A calm and careful novel'); const why2 = await p.locator('.alr-why').innerText();
+    ok('2: then the missing characters (2100)', /2100/.test(why2), why2);
+    ok('2: the four insert buttons have a title and aria-label', await p.locator('.alr-tool').evaluateAll((els) => els.length === 4 && els.every((e) => e.title && e.getAttribute('aria-label'))));
     await p.fill('.alr-summary', 'A calm and careful novel'); await p.fill('.alr-body', BODY(2200));
     ok('2: valid: Publish enabled', !(await p.locator('.alr-publish').isDisabled()));
     await p.fill('.alr-body', BODY(2199)); ok('2: 2199 characters is still one short', await p.locator('.alr-publish').isDisabled());
@@ -86,8 +91,14 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
     ok('2: «' + S.open + '» points at the review on AniList', (await p.getAttribute('.alr-open', 'href')) === 'https://anilist.co/review/55');
     const bk = await book(p); ok('2: the draft is cleared after publishing and the review id is remembered', !bk.alDraft && bk.track.reviewId === 55, bk.alDraft);
     // 3. Delete: confirmed, sent with the id.
-    p.once('dialog', (dlg) => { ok('3: the confirm says it cannot be undone on the site', LANG === 'ar' ? /التراجع/.test(dlg.message()) : /cannot be undone/.test(dlg.message())); dlg.accept(); });
-    await p.locator('.alr-delete').click(); await p.waitForSelector('.alr-sheet', { state: 'detached', timeout: 5000 });
+    let native = false; p.on('dialog', (dlg) => { native = true; dlg.accept(); });
+    await p.locator('.alr-delete').click(); await p.waitForSelector('.alr-confirm .alr-confirm-yes');
+    const ct = await p.locator('.alr-confirm-text').innerText();
+    ok('3: the app\'s own confirm sheet says it cannot be undone on the site', LANG === 'ar' ? /التراجع/.test(ct) : /cannot be undone/.test(ct), ct);
+    await p.locator('.alr-confirm-no').click(); await p.waitForTimeout(300);
+    ok('3: Cancel sends nothing', srv.deletes.length === 0 && (await p.locator('.alr-sheet').count()) === 1);
+    await p.locator('.alr-delete').click(); await p.locator('.alr-confirm-yes').click(); ok('3: no native dialog was used', !native);
+    await p.waitForSelector('.alr-sheet', { state: 'detached', timeout: 5000 });
     ok('3: Delete sent the review id and the sheet closed', srv.deletes.length === 1 && srv.deletes[0].id === 55, srv.deletes);
     ok('3: the review id is forgotten', !(await book(p)).track.reviewId);
     await ctx.close(); }
@@ -139,6 +150,11 @@ const BODY = (n, w = 'word ') => w.repeat(Math.ceil(n / w.length)).slice(0, n - 
       ok('ar: the page is right-to-left', (await p.evaluate(() => document.documentElement.dir)) === 'rtl');
       ok('ar: no Eastern digits in the sheet', !/[٠-٩]/.test(txt), txt.slice(0, 200));
       ok('ar: counts read «العدد: n»', /العدد: \d+/.test(txt));
+      await p.fill('.alr-summary', 'A made-up summary line');
+      const xs = await p.evaluate(() => { const el = document.querySelector('.alr-sheet .alr-count'); const tn = el.firstChild; const s = tn.textContent; const at = (i, n) => { const r = document.createRange(); r.setStart(tn, i); r.setEnd(tn, i + n); return r.getBoundingClientRect().left; }; const a = s.indexOf('22'), b = s.indexOf('120'); return { s, a: at(a, 2), b: at(b, 3) }; });
+      ok('ar: the summary count reads 22 before 120 (left to right)', xs.a < xs.b, xs);
+      const sp = await p.locator('.alr-tool').nth(2).evaluate((e) => ({ dir: e.querySelector('bdi')?.dir, txt: e.textContent }));
+      ok('ar: the spoiler label is isolated left-to-right as ~!', sp.dir === 'ltr' && sp.txt === '~!', sp);
     } else ok('en: counts shown', /characters/.test(await p.locator('.alr-sheet').innerText()));
     // the tracking sheet's entry too
     await p.keyboard.press('Escape'); await p.waitForSelector('.alr-sheet', { state: 'detached' });

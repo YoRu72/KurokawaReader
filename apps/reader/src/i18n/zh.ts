@@ -741,6 +741,8 @@ export const zh: Partial<Strings> = {
   alrCountOf: "{n} / {max}",
   alrBodyCount: "{n} 个字符",
   alrMissing: "还需 {n} 个（最少 {min}）",
+  alrNeedBody: "还需 {n} 个字符",
+  alrNeedSummary: "摘要需要 {min} 到 {max} 个字符",
   alrScore: "评分（0–100）",
   alrScoreHint: "从你的 AniList 评分或星级开始。",
   alrPrivate: "私密",

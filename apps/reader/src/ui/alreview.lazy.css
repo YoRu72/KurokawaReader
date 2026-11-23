@@ -3,12 +3,18 @@
 .alr-sheet .sheet-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
 .alr-sheet .sheet-actions .btn { min-width: 0; justify-content: center; text-align: center; line-height: 1.2; min-height: 44px; }
 .alr-sheet .sheet-actions [hidden] { display: none; }
+.alr-why { grid-column: 1 / -1; font-size: 13px; line-height: 1.4; color: var(--md-error); text-align: start; }
+.alr-confirm .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.alr-confirm .sheet-actions .btn { min-width: 0; justify-content: center; min-height: 44px; }
+.alr-confirm-text { margin: 0; font-size: 15px; line-height: 1.6; }
+.alr-tool bdi, .alr-tool i { font-style: inherit; }
+.alr-tool.i i { font-style: italic; font-family: Georgia, 'Times New Roman', serif; font-size: 1.1em; }
 .alr-head { display: flex; gap: 12px; align-items: center; }
 .alr-head img { width: 44px; height: 64px; object-fit: cover; border-radius: var(--sh-md); flex: none; }
 .alr-sheet .field { display: flex; flex-direction: column; gap: 8px; }
 .alr-summary { width: 100%; min-height: 44px; box-sizing: border-box; }
 .alr-body { width: 100%; min-height: 260px; box-sizing: border-box; resize: vertical; line-height: 1.6; }
-.alr-count { font-size: 12px; color: var(--md-on-surface-variant); }
+.alr-count { font-size: 13px; unicode-bidi: plaintext; color: var(--md-on-surface-variant); }
 .alr-count.bad { color: var(--md-error); }
 .alr-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .alr-tool { min-height: 44px; padding: 0 8px; }

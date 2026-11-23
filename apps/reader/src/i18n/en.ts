@@ -2565,6 +2565,8 @@ export const en = {
   alrCountOf: "{n} / {max}",
   alrBodyCount: "{n} characters",
   alrMissing: "{n} more needed (the minimum is {min})",
+  alrNeedBody: "{n} more characters needed",
+  alrNeedSummary: "The summary needs {min} to {max} characters",
   alrScore: "Score (0–100)",
   alrScoreHint: "Starts from your AniList score or your stars.",
   alrPrivate: "Private",
