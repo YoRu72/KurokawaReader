@@ -16,7 +16,7 @@ export interface AlDate { year?: number | null; month?: number | null; day?: num
 export interface AlMedia { id: number; title: string; titleNative?: string; cover?: string; format?: string; status?: string; year?: number; score?: number; chapters?: number | null; volumes?: number | null; description?: string; url: string }
 export interface AlEntry { id?: number; status: AlStatus; progress: number; score: number; startedAt?: AlDate; completedAt?: AlDate }
 /** What a book keeps about its AniList entry. */
-export interface Track { service: 'anilist'; media: AlMedia; entry: AlEntry; updatedAt: number }
+export interface Track { service: 'anilist'; media: AlMedia; entry: AlEntry; updatedAt: number; /** The reader's published review of this media, once known. */ reviewId?: number; /** When the site was last asked about it (absent reviewId then means: none). */ reviewCheckedAt?: number }
 
 export const anilistOn = (): boolean => getSettings().anilistEnabled;
 export function token(): string { try { return localStorage.getItem(TOKEN_KEY) ?? ''; } catch { return ''; } }
@@ -42,9 +42,14 @@ async function gql<T>(query: string, variables: Record<string, unknown> = {}, au
   try { r = await localHttp(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }), timeoutMs: 20000 }); }
   catch (e) { throw later(String((e as Error)?.message ?? e)); }
   const busy = r.status === 429 || r.status >= 500 || r.status === 0;
-  let json: { data?: T; errors?: { message: string; status?: number }[] } = {};
-  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`); }
-  if (json.errors?.length) { const e = json.errors[0]; if (e.status === 400 && /invalid token|unauthorized/i.test(e.message) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message) : new Error(e.message); }
+  let json: { data?: T; errors?: { message: string; status?: number; validation?: Record<string, string[]> }[] } = {};
+  try { json = JSON.parse(r.body); } catch { throw Object.assign(busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`), { status: r.status, rate: r.status === 429 }); }
+  if (json.errors?.length) {
+    const e = json.errors[0]; if (e.status === 400 && /invalid token|unauthorized/i.test(e.message) || r.status === 401) unlink();
+    // (`status` and AniList's own `validation` lines ride on the error: the review sheet shows the site's words.)
+    const extra = { status: e.status ?? r.status, validation: e.validation, rate: r.status === 429 || e.status === 429 };
+    throw Object.assign(busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message) : new Error(e.message), extra);
+  }
   if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`) : new Error(`AniList: HTTP ${r.status}`);
   return json.data as T;
 }
@@ -103,3 +108,40 @@ export const scoreStep = (f: ScoreFormat): number => (f === 'POINT_10_DECIMAL' ?
 export const dateOf = (d?: AlDate): string => (d?.year ? `${d.year}-${String(d.month ?? 1).padStart(2, '0')}-${String(d.day ?? 1).padStart(2, '0')}` : '');
 export const toAlDate = (iso: string): AlDate | undefined => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso); return m ? { year: +m[1], month: +m[2], day: +m[3] } : undefined; };
 export const today = (): AlDate => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() }; };
+
+/* ---------- reviews (one place for the site's words: names of fields, limits) ---------- */
+/** What AniList asks of a review, as recalled — the server is the authority and its own message is shown when it refuses. */
+export const REVIEW_LIMITS = { bodyMin: 2200, summaryMin: 20, summaryMax: 120, scoreMin: 0, scoreMax: 100 } as const;
+export interface AlReview { id: number; summary: string; body: string; score: number; private: boolean; siteUrl?: string; updatedAt?: number }
+export interface ReviewIn { id?: number; mediaId: number; summary: string; body: string; score: number; private: boolean }
+const REVIEW_FIELDS = 'id summary body(asHtml: false) score private siteUrl updatedAt';
+/** Why a review cannot be sent yet: the missing characters, if any (empty: fine). */
+export function reviewProblems(r: { summary: string; body: string; score: number }): { body: number; summary: 'short' | 'long' | ''; score: boolean } {
+  const L = REVIEW_LIMITS; const n = [...r.body.trim()].length, s = [...r.summary.trim()].length;
+  return { body: Math.max(0, L.bodyMin - n), summary: s < L.summaryMin ? 'short' : s > L.summaryMax ? 'long' : '', score: !(r.score >= L.scoreMin && r.score <= L.scoreMax) };
+}
+/** The reader's own review of a media, or null (AniList answers «Not Found» when there is none). */
+export async function myReview(mediaId: number): Promise<AlReview | null> {
+  const u = user(); if (!u) return null;
+  try {
+    const d = await gql<{ Review: { id: number; summary: string; body: string; score: number; private: boolean; siteUrl?: string; updatedAt?: number } | null }>(`query ($mediaId: Int, $userId: Int) { Review(mediaId: $mediaId, userId: $userId) { ${REVIEW_FIELDS} } }`, { mediaId, userId: u.id });
+    const r = d.Review; return r ? { id: r.id, summary: r.summary ?? '', body: r.body ?? '', score: r.score ?? 0, private: !!r.private, siteUrl: r.siteUrl, updatedAt: r.updatedAt } : null;
+  } catch (e) { if ((e as { status?: number }).status === 404 || /not found/i.test((e as Error).message)) return null; throw e; }
+}
+/** Publish (or, with an id, change) the review. */
+export async function saveReview(r: ReviewIn): Promise<{ id: number; siteUrl?: string }> {
+  const d = await gql<{ SaveReview: { id: number; siteUrl?: string } }>(
+    'mutation ($id: Int, $mediaId: Int, $body: String, $summary: String, $score: Int, $private: Boolean) { SaveReview(id: $id, mediaId: $mediaId, body: $body, summary: $summary, score: $score, private: $private) { id siteUrl } }',
+    { id: r.id ?? null, mediaId: r.mediaId, body: r.body, summary: r.summary, score: Math.round(r.score), private: r.private });
+  return d.SaveReview;
+}
+/** Delete it from the site (not undoable there). */
+export async function deleteReview(id: number): Promise<void> {
+  await gql('mutation ($id: Int) { DeleteReview(id: $id) { deleted } }', { id });
+}
+/** The site's own refusal words, when it gave field lines (`validation`), else its message. */
+export function refusalText(e: unknown): string {
+  const v = (e as { validation?: Record<string, string[]> })?.validation;
+  const lines = v ? Object.entries(v).flatMap(([k, a]) => (a ?? []).map((m) => `${k}: ${m}`)) : [];
+  return lines.length ? lines.join(' · ') : String((e as Error)?.message ?? e);
+}

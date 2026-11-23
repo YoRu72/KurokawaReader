@@ -45,6 +45,22 @@ const VIEWS = [
   ['book', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-view, .book-page, .view', { timeout: 10000 }); }],
   // The book's «Edit title and author» sheet (src/ui/booknames.ts): with another title to show the rows and the keep switch.
   ['book-edit-names', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(300); await p.evaluate(() => [...document.querySelectorAll('.book-tile')].find((x) => x.querySelector('svg') && /^(Edit|تعديل)/.test(x.textContent.trim())).click()); await p.waitForSelector('.names-shown'); await p.fill('.names-add', 'Another title'); await p.keyboard.press('Enter'); await p.fill('.names-shown', 'A new shown title'); await p.waitForTimeout(250); }],
+  // The AniList review sheet (src/ui/alreview.ts): a made-up linked account and a book matched to a made-up AniList entry (stored locally; the
+  // sheet's one request to AniList is answered «not found» by the route below — nothing leaves the page). Leftover sheets closed first.
+  ['book-alreview', async (p) => {
+    await p.route('https://graphql.anilist.co/**', (r) => r.fulfill({ status: 404, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ errors: [{ message: 'Not Found.', status: 404 }], data: { Review: null } }) }));
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((x) => x.remove()));
+    const id = await idOf(p, /nihongo/);
+    await p.evaluate(async (id) => {
+      localStorage.setItem('kr.anilist.token', 'FAKE'); localStorage.setItem('kr.anilist.user', JSON.stringify({ id: 7, name: 'Reader', scoreFormat: 'POINT_10' }));
+      const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); v.anilistEnabled = true; localStorage.setItem('kr.visual', JSON.stringify(v));
+      await new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const st = r.result.transaction('books', 'readwrite'); const os = st.objectStore('books'); const g = os.get(id); g.onsuccess = () => { const b = g.result; b.track = { service: 'anilist', media: { id: 99, title: 'Made-up novel', url: 'https://anilist.co/manga/99' }, entry: { status: 'CURRENT', progress: 1, score: 8 }, updatedAt: 1 }; b.highlights = [{ id: 'h1', text: 'A made-up line.', color: 'blue', createdAt: 1 }]; os.put(b); }; st.oncomplete = () => res(); }; });
+    }, id);
+    await p.reload(); await p.waitForTimeout(800);
+    await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(400);
+    await p.waitForSelector('.book-tile[data-al-review]', { timeout: 10000 }); await p.click('.book-tile[data-al-review]');
+    await p.waitForSelector('.alr-sheet .alr-body'); await p.fill('.alr-summary', 'A made-up summary line'); await p.fill('.alr-body', 'A made-up review text. '.repeat(30)); await p.waitForTimeout(400);
+  }],
   ['settings', async (p) => { await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('.settings-body .card.collapsed').forEach((c) => c.classList.remove('collapsed'))); }, 'phone'],
   ...Array.from({ length: SETTING_COUNT }, (_, i) => ['settings-' + i, settingsSec(i), 'pc']),
   ['read-epub', openBook(/alice/i, '.reader-flow .kr-content')],
@@ -73,6 +89,7 @@ const ALLOW = [
   ['colour settings', 'reading-theme previews (sepia, candlelight, manuscript) and the highlight colour palette show the colours they stand for'],
   ['colour read-options', 'the same theme previews and highlight palette, inside the options panel'],
   ['stick-out book-edit-names div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
+  ['stick-out book-alreview div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
   ['stick-out book div.book-hero-bg', 'the blurred cover backdrop is bled past the edge on purpose and clipped by the page (no page overflow)'],
 ];
 const allowedBy = {}; const allowed = (key) => { const a = ALLOW.find(([k]) => key.startsWith(k)); if (a) allowedBy[a[0]] = (allowedBy[a[0]] || 0) + 1; return !!a; };
@@ -93,7 +110,8 @@ function hunt({ phone, rtl, lang }) {
   for (const e of all) {
     const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); if (book(e)) continue;
     if (cs.position !== 'fixed' && !inScroller(e) && (r.right > vw + 2 || r.left < -2) && !e.closest('.scrim, .sheet-scrim, [aria-hidden=true], svg, .marquee, .panel:not(.open)')) add('stick-out', e, `${Math.round(r.left)}..${Math.round(r.right)} of ${vw}`);
-    if (['BUTTON', 'LABEL', 'SPAN', 'A', 'H1', 'H2', 'H3', 'SMALL', 'DIV'].includes(e.tagName) && !e.children.length && (e.textContent || '').trim() && /(hidden|clip)/.test(cs.overflowX) && e.scrollWidth > e.clientWidth + 2 && cs.textOverflow !== 'ellipsis') add('clipped', e, `${e.scrollWidth}>${e.clientWidth}`);
+    if (['BUTTON', 'LABEL', 'SPAN', 'A', 'H1', 'H2', 'H3', 'SMALL', 'DIV'].includes(e.tagName) && !e.children.length && (e.textContent || '').trim() && /(hidden|clip)/.test(cs.overflowX) && e.scrollWidth > e.clientWidth + 2 && (cs.textOverflow !== 'ellipsis' || e.closest('.book-tile')) && !(e.closest('.book-tile') && cs.whiteSpace !== 'nowrap' && e.scrollWidth <= e.clientWidth + 2)) add('clipped', e, `${e.scrollWidth}>${e.clientWidth}`);
+    if (e.tagName === 'SPAN' && e.closest('.book-tile')) { const tr = e.closest('.book-tile').getBoundingClientRect(); const rg = document.createRange(); rg.selectNodeContents(e); const q = rg.getBoundingClientRect(); if (q.right > tr.right + 1 || q.left < tr.left - 1 || e.scrollWidth > e.clientWidth + 1 || cs.textOverflow === 'ellipsis') add('clipped', e, `tile label «${e.textContent}» cut or past its tile`); }
     for (const prop of ['color', 'backgroundColor', 'borderTopColor']) {
       const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(cs[prop] || ''); if (!m) continue; if (m[4] !== undefined && +m[4] < 0.3) continue;
       const rr = +m[1] / 255, g = +m[2] / 255, b = +m[3] / 255; const mx = Math.max(rr, g, b), mn = Math.min(rr, g, b), d = mx - mn; if (!d) continue;

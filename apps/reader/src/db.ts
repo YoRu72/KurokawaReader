@@ -137,6 +137,8 @@ export interface Book {
   chaptersAt?: number;
   /** The book's entry on a tracking service (AniList), kept with it. */
   track?: import('./anilist').Track;
+  /** The AniList review being written (kept as typed, cleared once published; carried by backups). */
+  alDraft?: { summary: string; body: string; score: number; private: boolean; at: number };
   /** The publisher's blurb, when the file carries one. */
   description?: string;
   bookmarks: Bookmark[];

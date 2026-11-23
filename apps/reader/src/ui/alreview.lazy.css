@@ -1,0 +1,38 @@
+/* The AniList review sheet (src/ui/alreview.ts). */
+.alr-sheet .sheet-body { display: flex; flex-direction: column; gap: 16px; padding-bottom: 24px; }
+.alr-sheet .sheet-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.alr-sheet .sheet-actions .btn { min-width: 0; justify-content: center; text-align: center; line-height: 1.2; min-height: 44px; }
+.alr-sheet .sheet-actions [hidden] { display: none; }
+.alr-why { grid-column: 1 / -1; font-size: 13px; line-height: 1.4; color: var(--md-error); text-align: start; }
+.alr-confirm .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.alr-confirm .sheet-actions .btn { min-width: 0; justify-content: center; min-height: 44px; }
+.alr-confirm-text { margin: 0; font-size: 15px; line-height: 1.6; }
+.alr-tool bdi, .alr-tool i { font-style: inherit; }
+.alr-tool.i i { font-style: italic; font-family: Georgia, 'Times New Roman', serif; font-size: 1.1em; }
+.alr-head { display: flex; gap: 12px; align-items: center; }
+.alr-head img { width: 44px; height: 64px; object-fit: cover; border-radius: var(--sh-md); flex: none; }
+.alr-sheet .field { display: flex; flex-direction: column; gap: 8px; }
+.alr-summary { width: 100%; min-height: 44px; box-sizing: border-box; }
+.alr-body { width: 100%; min-height: 260px; box-sizing: border-box; resize: vertical; line-height: 1.6; }
+.alr-count { font-size: 13px; unicode-bidi: plaintext; color: var(--md-on-surface-variant); }
+.alr-count.bad { color: var(--md-error); }
+.alr-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.alr-tool { min-height: 44px; padding: 0 8px; }
+.alr-tool.b { font-weight: 800; } .alr-tool.i { font-style: italic; }
+.alr-helpers { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.alr-helpers .btn { min-height: 44px; min-width: 0; white-space: normal; line-height: 1.2; }
+.alr-scorerow { display: grid; grid-template-columns: minmax(0, 1fr) 76px; gap: 12px; align-items: center; }
+.alr-score-n { min-height: 44px; text-align: center; box-sizing: border-box; }
+.alr-privrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.alr-privrow .label { text-transform: none; letter-spacing: 0; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
+.alr-privrow small { font-size: 12px; opacity: .7; font-weight: 400; }
+.alr-status { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: var(--sh-lg); background: var(--md-error-container); color: var(--md-on-error-container); font-size: 14px; line-height: 1.5; }
+.alr-status[hidden], .alr-choice[hidden] { display: none; }
+.alr-status .btn { min-height: 44px; align-self: stretch; }
+.alr-choice { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--sh-lg); background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.alr-choice-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.alr-choice-row .btn { min-height: 44px; min-width: 0; white-space: normal; line-height: 1.2; background: var(--md-surface); }
+.alr-hl { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 6px 0; }
+.alr-hl .label { flex: 1 1 auto; min-width: 0; text-transform: none; letter-spacing: 0; font-size: 14px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.alr-pick .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+html.pc .alr-tool, html.pc .alr-helpers .btn, html.pc .alr-summary, html.pc .alr-score-n { min-height: 40px; }
