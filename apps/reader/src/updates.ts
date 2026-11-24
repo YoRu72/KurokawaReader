@@ -217,7 +217,7 @@ export async function kurokawaInstall(kr: AndroidApk, path: string): Promise<voi
   let info: ApkInfo | null = null;
   try { info = await kr.apkInfo!({ path }); } catch { meta.textContent = t('installerNotApk'); return; }
   const same = info.sameApp;
-  title.replaceChildren(h('b', { dir: 'auto' }, info.label), h('small', { dir: 'ltr' }, ` ${info.installed && info.installedVersion ? `${info.installedVersion} → ` : ''}${info.version}`));
+  title.replaceChildren(h('bdi', { class: 'inst-name' }, h('b', null, info.label)), h('bdi', { class: 'inst-ver', dir: 'ltr' }, h('small', null, `${info.installed && info.installedVersion ? `${info.installedVersion} → ` : ''}${info.version}`)));
   meta.textContent = `${info.package} · ${fmtSize(info.size)}${info.bundle ? ` · ${t('installerBundle', { n: info.parts ?? 0 })}` : ''}`;
   if (info.installed && info.signerMatch === false) { warn.hidden = false; warn.textContent = t('installerSignerMismatch'); }
   else if (!same) { warn.hidden = false; warn.textContent = t('installerOtherApp', { app: info.label }); }

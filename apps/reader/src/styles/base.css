@@ -2156,6 +2156,7 @@ body:has(.lightbox) .job-chip, body:has(.lightbox) .tr-pill, body:has(.lightbox)
 .gloss-auto input[type=checkbox] { flex: none; width: 22px; height: 22px; accent-color: var(--md-primary); }
 .gloss-search { height: 44px; padding: 0 16px; }
 /* The glossary's search: at the top, a clear button inside the field, a chip for every glossary; its results grouped by file. */
+.gloss-panel.searching > :not(.gloss-search-row):not(.gloss-list) { display: none; }
 .gloss-search-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gloss-search-box { position: relative; flex: 1 1 200px; min-width: 0; display: flex; align-items: center; }
 .gloss-search-box .gloss-search { padding-inline-end: 48px; }
@@ -2226,6 +2227,7 @@ body:has(.lightbox) .job-chip, body:has(.lightbox) .tr-pill, body:has(.lightbox)
 /* The Kurokawa Installer's sheet */
 .inst-card { padding: 14px 16px; border-radius: var(--sh-lg); background: var(--md-surface-container); }
 .inst-title b { font-size: 1.1rem; }
+.inst-title { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; }
 .inst-title small { color: var(--md-on-surface-variant); }
 .inst-warn { color: var(--md-error); }
 .inst-status { min-height: 1.4em; }
@@ -2582,3 +2584,23 @@ html.pc .textpic-names input[type="text"] { min-height: 36px; }
 .textpic-remember-row .hint { display: block; font-size: 12px; opacity: .7; }
 .names-row .btn, .names-addrow .btn { white-space: nowrap; }
 html.pc .book-hero-acts .book-tile span { white-space: nowrap; overflow-wrap: normal; }
+
+/* The glossary entry beside a name in the text (src/ui/glosscard.ts) */
+.gloss-card { position: fixed; z-index: 64; box-sizing: border-box; width: max-content; min-width: min(280px, calc(100vw - 16px)); overflow: auto; padding: 8px 14px 14px; border-radius: var(--sh-lg); background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); font-family: var(--font-ui); font-size: 14px; line-height: 1.5; animation: rise var(--dur-med) var(--ease-emph-decel); outline: none; display: flex; flex-direction: column; gap: 8px; }
+.gloss-card .gc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-inline-end: -6px; }
+.gloss-card .gc-kind { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--md-on-surface-variant); }
+.gloss-card .gc-kind svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; }
+.gloss-card .icon-btn { width: 40px; height: 40px; }
+.gloss-card .gc-names { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; font-family: var(--font-read); font-size: 20px; line-height: 1.5; }
+.gloss-card .gc-from { color: var(--md-on-surface-variant); }
+.gloss-card .gc-to { font-weight: 700; color: var(--md-on-surface); }
+.gloss-card .gc-arrow svg { width: 18px; height: 18px; fill: none; stroke: var(--md-on-surface-variant); stroke-width: 2; display: block; }
+html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
+.gloss-card .gc-row { display: grid; gap: 2px; }
+.gloss-card .gc-label { font-size: 12px; font-weight: 600; color: var(--md-on-surface-variant); }
+.gloss-card .gc-note { margin: 0; color: var(--md-on-surface-variant); }
+.gloss-card .gc-folder { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--md-on-surface-variant); }
+.gloss-card .gc-folder svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.9; }
+.gloss-card .gc-actions { display: flex; gap: 8px; margin-top: 2px; }
+.gloss-card .gc-actions .btn { flex: 1 1 0; min-width: 0; min-height: 44px; justify-content: center; white-space: normal; }
+.gloss-card .gc-actions .btn[hidden] { display: none; }

@@ -32,6 +32,12 @@ export function normKind(raw?: unknown): BuiltinKind {
 export interface Term { id: string; from: string; to: string; /** a book's id, or every book when absent */ book?: string; /** a glossary folder's id (then for the books using that folder) */ folder?: string; /** the language it renders into (ar, en…): used only when translating into it */ lang?: string; /** what it names (characters, places…) */ kind?: TermKind; /** added by the translator on its own */ auto?: boolean; /** other renderings of the same name in that language (a repeat merged into this entry keeps its rendering here) */ alts?: string[]; /** a note on the term */ note?: string }
 
 const KEY = 'kr.glossary';
+/* The glossary's version: one more each time its terms, folders or links are written (the reader's marks of its names are made again). */
+let version = 0; const watchers = new Set<() => void>();
+const changed = (): void => { version++; for (const f of [...watchers]) { try { f(); } catch { /* a watcher's own fault */ } } };
+export const glossaryVersion = (): number => version;
+/** `fn` is called after the glossary changed (any write); returns how to stop. */
+export function onGlossaryChange(fn: () => void): () => void { watchers.add(fn); return () => { watchers.delete(fn); }; }
 let cache: Term[] | null = null;
 const lower = (s: string) => s.toLocaleLowerCase().trim();
 /* ---------- one key for «the same name»: every repeat is found, and every search matches, through it ---------- */
@@ -41,6 +47,8 @@ const AR_MARKS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u0
 const AR_LETTERS: Record<string, string> = { 'أ': 'ا', 'إ': 'ا', 'آ': 'ا', 'ٱ': 'ا', 'ى': 'ي', 'ئ': 'ي', 'ؤ': 'و', 'ة': 'ه', 'ی': 'ي', 'ک': 'ك' };
 const foldStr = (s: string): string => s.normalize('NFKC').toLowerCase().replace(AR_MARKS, '').replace(/[أإآٱىئؤةیک]/g, (c) => AR_LETTERS[c]).replace(/[\u30a1-\u30f6]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
 const GAP = /[\s\p{P}\p{S}]+/gu;
+/** One letter with its marks folded as the key of a name folds it (spaces and punctuation gone): for the text's own pass. */
+export const foldCluster = (s: string): string => foldStr(s).replace(GAP, '');
 /** The key of a name: `loose` takes out spaces and punctuation altogether (search); else they are one space (the key
  *  of «the same name»). A name of marks alone keeps its own letters. */
 export function foldKey(s: string, loose = false): string {
@@ -104,7 +112,7 @@ export function terms(): Term[] {
   try { legacyLang(); const raw = (JSON.parse(localStorage.getItem(KEY) ?? '[]') as Term[]).filter((x) => x && x.from && x.to); const d = dedupe(raw); const x = crossRepeats(d); cache = x.size ? d.filter((t0) => !x.has(t0.id)) : d; if (cache.length !== raw.length) saveTerms(cache); } catch { cache = []; }
   return cache;
 }
-export function saveTerms(list: Term[]): void { legacyKnown = false; cache = dedupe(list.filter((x) => x.from.trim() && x.to.trim())); try { if (cache.length) localStorage.setItem(KEY, JSON.stringify(cache)); else localStorage.removeItem(KEY); } catch { /* full */ } }
+export function saveTerms(list: Term[]): void { legacyKnown = false; cache = dedupe(list.filter((x) => x.from.trim() && x.to.trim())); changed(); try { if (cache.length) localStorage.setItem(KEY, JSON.stringify(cache)); else localStorage.removeItem(KEY); } catch { /* full */ } }
 /** Terms added without doubling any (the same name in the same place — or a book's name its folder, or every book,
  *  already holds as it is — is not added again); how many were new. A different rendering of a name already there is
  *  not dropped: it is kept as an alternative of that entry (an entry only the translator had put gives way to the
@@ -151,12 +159,12 @@ export function parseTerms(text: string): { from: string; to: string; kind?: Ter
 export interface Folder { id: string; name: string }
 const FKEY = 'kr.glossaryFolders', LKEY = 'kr.glossaryLinks';
 const read = <T>(k: string, d: T): T => { try { return JSON.parse(localStorage.getItem(k) ?? '') as T; } catch { return d; } };
-const write = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full */ } };
+const write = (k: string, v: unknown) => { changed(); try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full */ } };
 export const folders = (): Folder[] => read<Folder[]>(FKEY, []);
 export function addFolder(name: string): Folder { const f = { id: Math.random().toString(36).slice(2, 10), name: name.trim() }; write(FKEY, [...folders(), f]); return f; }
 export function renameFolder(id: string, name: string): void { write(FKEY, folders().map((f) => (f.id === id ? { ...f, name: name.trim() } : f))); }
 /** A map kept as it is, or no key at all when it is empty (nothing is left of what was deleted). */
-const put = (k: string, v: Record<string, unknown> | unknown[]): void => { if (Array.isArray(v) ? v.length : Object.keys(v).length) write(k, v); else try { localStorage.removeItem(k); } catch { /* full */ } };
+const put = (k: string, v: Record<string, unknown> | unknown[]): void => { if (Array.isArray(v) ? v.length : Object.keys(v).length) write(k, v); else { changed(); try { localStorage.removeItem(k); } catch { /* full */ } } };
 /** The whole glossary as stored (terms, folders, which books use which, where each book's new names go, each book's
  *  choice about a former volume's glossary) — taken before something is deleted, written back by its Undo. */
 export interface GlossarySnapshot { terms: Term[]; folders: Folder[]; links: Record<string, string[]>; dest?: Record<string, Dest>; vol?: Record<string, VolChoice> }

@@ -2628,6 +2628,13 @@ export const en = {
   alrNeedLink: "Your AniList sign-in is no longer valid. Your draft is kept.",
   alrRelink: "Link AniList again",
   alrRefused: "AniList refused the review: {m}",
+  glossCardDict: "Dictionary",
+  glossCardLabel: "Glossary entry",
+  glossCardOther: "In other languages",
+  glossCardFrom: "From: {x}",
+  glossCardIn: "In the glossary: {x}",
+  glossMarkNames: "Mark the glossary's names in the text",
+  glossTapNames: "Tap a name to see its entry",
 };
 
 export type Strings = typeof en;

@@ -837,3 +837,8 @@ html[dir='rtl'] .reader-view.immersive .pdf-bar[data-layout='side'][data-side='e
 /* A finger needs 40 px (tests/uihunt.cjs): the PDF bar's page box on the side layout, and its buttons. */
 html:not(.pc) .pdf-bar[data-layout='side'] input[type='number'] { height: 40px; }
 html:not(.pc) .pdf-bar .icon-btn, html:not(.pc) .pdf-bar form button { min-height: 40px; }
+
+/* The glossary's names in the text (src/ui/glossmarks.ts): a thin dotted underline in the page theme's quiet colour —
+   a line, never a background, so it is not taken for the reader's own highlights. (Where the Highlight API is missing
+   nothing is drawn; the tap still works.) */
+::highlight(kr-gloss) { text-decoration: underline dotted 1px; text-decoration-color: var(--r-dim, currentColor); text-underline-offset: .2em; }

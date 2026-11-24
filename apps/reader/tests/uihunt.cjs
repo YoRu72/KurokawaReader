@@ -79,6 +79,29 @@ const VIEWS = [
     await p.evaluate(() => { const e = [...document.querySelectorAll('.kr-content > section')].find((x) => x.getClientRects().length && x.textContent.trim().length > 40); if (!e) throw new Error('no chapter on screen'); const r = document.createRange(); r.selectNodeContents(e); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }); await p.waitForTimeout(500); await p.evaluate(() => document.dispatchEvent(new Event('selectionchange'))); await p.waitForTimeout(500);
     await p.evaluate(() => { const b = [...document.querySelectorAll('.sel-toolbar button')].find((x) => /Text as image|صوِّر النص/.test(x.textContent)); if (!b) throw new Error('no Text as image button'); b.click(); }); await p.waitForSelector('.snap-sheet .snap-preview', { timeout: 8000 }).catch(async () => { throw new Error('no card: ' + await p.evaluate(() => [...document.querySelectorAll('.sheet,.toast')].map((x) => x.className + ':' + x.textContent.slice(0, 60)).join(' | '))); }); await p.waitForSelector('.snap-sheet .textpic-author', { timeout: 3000, state: 'attached' }); if (!(await p.isVisible('.snap-sheet .textpic-author'))) { await p.evaluate(() => document.querySelector('.snap-sheet .sheet-actions button').click()); await p.waitForSelector('.snap-sheet .textpic-author', { timeout: 8000 }); } await p.waitForTimeout(600);
     await p.evaluate(() => { const b = document.querySelector('.snap-sheet .sheet-body'); b.scrollTop = b.scrollHeight; }); await p.waitForTimeout(300); }],
+  // A glossary name's card in the text (src/ui/glosscard.ts): a made-up glossary for «Alice» (every book), the name clicked where it is marked.
+  ['read-gloss-card', async (p) => {
+    await p.evaluate(() => { localStorage.setItem('kr.glossary', JSON.stringify([{ id: 'g1', from: 'Alice', to: 'أليس', lang: 'ar', kind: 'person', alts: ['أليسة'], note: 'A made-up note' }, { id: 'g2', from: 'Alice', to: 'アリス', lang: 'ja', kind: 'person' }])); });
+    await p.reload(); await p.waitForSelector('.library-view', { timeout: 15000 });
+    await openBook(/alice/i, '.reader-flow .kr-content')(p);
+    await p.waitForFunction(() => (CSS.highlights?.get('kr-gloss')?.size ?? 0) > 0, null, { timeout: 15000 });
+    const at = await p.evaluate(async () => { const first = [...CSS.highlights.get('kr-gloss')][0]; first.startContainer.parentElement.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 400)); const sr = document.querySelector('.reader-scroll').getBoundingClientRect(); for (const r of CSS.highlights.get('kr-gloss')) { const q = r.getClientRects()[0]; if (q && q.top > sr.top + 40 && q.bottom < sr.bottom - 300) return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; } return null; });
+    if (!at) throw new Error('no name on the screen ' + JSON.stringify(await p.evaluate(() => { const sr = document.querySelector('.reader-scroll').getBoundingClientRect(); return { n: CSS.highlights.get('kr-gloss').size, sr: [sr.top, sr.bottom], rects: [...CSS.highlights.get('kr-gloss')].slice(0, 5).map((r) => { const q = r.getClientRects()[0]; return q && [Math.round(q.top), Math.round(q.bottom)]; }) }; }))); await p.mouse.click(at.x, at.y); await p.waitForSelector('.gloss-card', { timeout: 6000 }); await p.waitForTimeout(500); }],
+  // The Kurokawa Installer's sheet (src/updates.ts), Android faked (no native part): the update sheet's button, the sheet read at rest.
+  ['installer-sheet', async (p) => {
+    await p.route('https://api.github.com/**', (r) => r.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify([{ tag_name: 'v0.99.0', name: 'v0.99.0', body: '- A made-up change', html_url: 'https://example.invalid/r', published_at: '2026-11-20T10:00:00Z', prerelease: false, draft: false, assets: [{ name: 'KurokawaReader-0.99.0-universal.apk', size: 31457280, browser_download_url: 'https://example.invalid/a.apk', digest: '' }] }]) }));
+    await p.evaluate(() => {
+      const L = {}; const mock = { getPlatform: () => 'android', isNativePlatform: () => true, Plugins: { Filesystem: {}, Kurokawa: {
+        deviceInfo: async () => ({ abis: ['arm64-v8a'] }), installerAvailable: async () => ({ canInstall: true }), canInstall: async () => ({ granted: true }), cachedFile: async () => ({}), downloadFile: async () => ({ path: '/x/a.apk', size: 1 }), cancelDownload: async () => undefined,
+        addListener: async (ev, fn) => { (L[ev] = L[ev] || []).push(fn); return { remove() {} }; }, installApk: async () => undefined,
+        apkInfo: async () => ({ label: 'KurokawaReader', package: 'com.example.reader', version: '0.99.0', versionCode: 99, size: 31457280, sameApp: true, installed: true, installedVersion: '0.66.0', signerMatch: true, minSdk: 24 }),
+        apkInstall: async () => ({ id: 'x' }) } } };
+      window.__fakeAndroid = true; Object.defineProperty(window, 'Capacitor', { configurable: true, get: () => (window.__fakeAndroid ? mock : undefined) });
+    });
+    await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('.settings-body .card.collapsed').forEach((c) => c.classList.remove('collapsed')));
+    await p.evaluate(() => { const bt = [...document.querySelectorAll('.settings-body button')].find((x) => x.querySelector('svg') && /Check for updates|التحقّق|التحقق/i.test(x.textContent)); if (!bt) throw new Error('no check button'); bt.scrollIntoView(); bt.click(); });
+    await p.waitForSelector('.update-sheet .upd-go', { timeout: 10000 }); await p.click('.update-sheet .upd-go'); await p.waitForSelector('.inst-go:not([disabled])', { timeout: 10000 });
+    await p.evaluate(() => { window.__fakeAndroid = false; }); await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 5000 }).catch(() => undefined); }, 'phone'],
   ['read-pdf', openBook(/pages/i, '.pdf-bar, .pdf-view, .pdf-pages')],
   ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
   ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
@@ -86,6 +109,7 @@ const VIEWS = [
 
 // kind|view|selector-ish key -> reason. A key is `${kind} ${view} ${what}` prefix-matched (view without the device).
 const ALLOW = [
+  ['colour installer-sheet', 'the settings page behind the sheet holds the reading-theme previews and the highlight palette (allowed on the settings view itself)'],
   ['colour settings', 'reading-theme previews (sepia, candlelight, manuscript) and the highlight colour palette show the colours they stand for'],
   ['colour read-options', 'the same theme previews and highlight palette, inside the options panel'],
   ['stick-out book-edit-names div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],

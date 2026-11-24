@@ -73,13 +73,13 @@ function onSearchKey(e: KeyboardEvent): void {
 }
 
 /** The «Glossary» tab. `book`: the open book (else every book's glossary and the list of books' glossaries). */
-export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?: (folder?: string) => void; toNames?: () => void } = {}): { el: HTMLElement; actions: HTMLElement[]; addFrom(text: string): void; refresh(): void } {
+export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?: (folder?: string) => void; toNames?: () => void } = {}): { el: HTMLElement; actions: HTMLElement[]; addFrom(text: string): void; openTerm(id: string): void; refresh(): void } {
   let book = book0; const root = h('div', { class: 'gloss-panel' });
   // (Where: 'book' — this book's own and what it uses —, 'all' — for every book —, or a folder's id. The file open,
   // or none: the folder's files listed.)
   let where = book ? 'book' : 'all'; let file: TermKind | null = null; let q = '';
   // (The search: every glossary or the folder shown; how many results are drawn; a result opened — its row then scrolled to.)
-  let allScope = false; let maxShown = 60; let focusId: string | null = null;
+  let allScope = false; let maxShown = 60; let focusId: string | null = null; let focusHold: { id: string; until: number } | null = null;
   const inc = new Set<string>(), exc = new Set<string>();
   const langOf = (x: Term) => termLang(x) || '-';
   const langName = (c: string) => (c === '-' ? t('glossLangUnset') : langLabel(c));
@@ -99,6 +99,9 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
   const list = h('div', { class: 'gloss-list' }); const retrBar = h('div', { class: 'gloss-retr-bar' }); const fileBar = h('div', { class: 'gloss-file-bar' });
   const opts = h('details', { class: 'gloss-opts' }, h('summary', null, icon('settings'), t('glossOptions')),
     h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('glossAuto'), h('small', { class: 'hint' }, t('glossAutoHint'))), h('span', { class: 'switch' }, autoCb, h('i'))),
+    // (In the text: the names marked with a dotted line, and a tap on one opening its entry — independent: with the marks off a tap still works.)
+    h('label', { class: 'row tr-opt gloss-marks' }, h('span', { class: 'label' }, t('glossMarkNames')), h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: getSettings().glossMarks !== false, onchange: (e: Event) => updateSettings({ glossMarks: (e.target as HTMLInputElement).checked }) }), h('i'))),
+    h('label', { class: 'row tr-opt gloss-tap' }, h('span', { class: 'label' }, t('glossTapNames')), h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: getSettings().glossTap !== false, onchange: (e: Event) => updateSettings({ glossTap: (e.target as HTMLInputElement).checked }) }), h('i'))),
     volModeField(), destBox());
   root.append(searchRow, vol, head, places, folderBar, bookList, opts, fileBar, langs, retrBar, list);
 
@@ -262,6 +265,7 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
       (() => { const b = iconButton('trash', t('glossDelFile'), () => void deleteFileFlow(file!)); b.classList.add('gloss-del-file'); return b; })());
   }
   function draw(): void {
+    root.classList.toggle('searching', !!q); // (While searching, only the field and the results show: the folder's controls come back when it is cleared.)
     drawVol(); drawHead(); drawPlaces(); drawFileBar();
     const here = terms().filter(inWhere);
     const listing = !file && !q;
@@ -280,7 +284,10 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
     shownNow = shown; for (const id of [...picked]) if (!shown.some((x) => x.id === id)) picked.delete(id);
     drawRetr();
     // (A search result opened: its row in view, marked for a moment.)
-    if (focusId) { const r = [...list.querySelectorAll<HTMLElement>('.gloss-row')].find((e) => e.dataset.id === focusId); focusId = null; if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('flash'); setTimeout(() => r.classList.remove('flash'), 1800); } }
+    // (Held for a moment: the panel draws itself again as the books' titles arrive, and the row must still be the one focused.)
+    if (focusId) focusHold = { id: focusId, until: Date.now() + 1500 };
+    const fid = focusId ?? (focusHold && Date.now() < focusHold.until ? focusHold.id : null);
+    if (fid) { const r = [...list.querySelectorAll<HTMLElement>('.gloss-row')].find((e) => e.dataset.id === fid); focusId = null; if (r) { r.scrollIntoView({ block: 'center' }); r.tabIndex = -1; try { r.focus({ preventScroll: true }); } catch { /* old engines */ } r.classList.add('flash'); setTimeout(() => r.classList.remove('flash'), 1800); } }
   }
   /* Retranslate: one entry (its row's button), the ones ticked, or every one shown; the instructions asked for first. */
   let shownNow: Term[] = [];
@@ -470,6 +477,12 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
   return {
     el: root, actions: [filesBtn, addBtn],
     // (A word picked in the book: its file — Characters by default — open, a new line filled with it.)
+    // (A term opened where it lives — from its card in the text: its file in its folder, the row in view and marked.)
+    openTerm: (id: string) => {
+      const x = terms().find((y) => y.id === id); if (!x) return;
+      if (x.folder) where = book && linkedFolders(book.id).includes(x.folder) ? 'book' : x.folder; else if (x.book) { if (x.book !== book?.id) { book = { id: x.book, title: titleOf(x.book, x.book) }; (destEl as HTMLElement & { redraw?: () => void }).redraw?.(); } where = 'book'; } else where = 'all';
+      file = kindOf(x); focusId = x.id; q = ''; search.value = ''; clearBtn.hidden = true; allScope = false; scopeChip.classList.remove('on'); scopeChip.setAttribute('aria-pressed', 'false'); draw();
+    },
     addFrom: (text: string) => { where = book ? 'book' : 'all'; q = ''; search.value = ''; clearBtn.hidden = true; if (!file) file = 'person'; draw(); addRow(text.trim().slice(0, 120)); },
     refresh: () => { if (root.isConnected) draw(); },
   };
