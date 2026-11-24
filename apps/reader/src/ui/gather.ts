@@ -2,7 +2,7 @@
 // characters, places and terms) so that each gets one rendering throughout. This file holds the answer kept for each book
 // (ask / gather by itself / never: kept with the book, so a backup carries it), the choice of starting by itself (per book:
 // follow the setting / always / never), what was asked in this session, and the small sheet that asks.
-import { h, openSheet } from './dom';
+import { h, openSheet, stackWhenCramped } from './dom';
 import { t } from '../i18n';
 import { db } from '../db';
 import { getSettings } from '../settings';
@@ -88,11 +88,12 @@ export function askGather(o: GatherAsk): Promise<GatherAnswer> {
       ...(o.volume ? [h('p', { class: 'gather-volume', role: 'status' }, t('gatherVolumeInUse', { title: iso(o.volume) }))] : []),
       ...(o.both ? [seg] : []), cost);
     sh.actions.classList.add('gather-actions');
-    sh.actions.append(
-      h('div', { class: 'gather-acts-row' },
+    const actsRow = h('div', { class: 'gather-acts-row' },
         h('button', { type: 'button', class: 'btn primary gather-go', onclick: () => void gather() }, o.volume ? t('gatherCheckVolume') : t('gatherGo')),
-        h('button', { type: 'button', class: 'btn tonal gather-skip', onclick: () => finish('skip') }, t('gatherSkip'))),
+        h('button', { type: 'button', class: 'btn tonal gather-skip', onclick: () => finish('skip') }, t('gatherSkip')));
+    sh.actions.append(actsRow,
       h('button', { type: 'button', class: 'btn text gather-never', onclick: () => finish('never') }, t('gatherNever')));
+    stackWhenCramped(actsRow);
   });
 }
 

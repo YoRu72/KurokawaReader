@@ -208,6 +208,25 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   if (opts.at && document.documentElement.classList.contains('pc')) placeMenu(el, scrim, opts.at);
   return { body, actions, close, el };
 }
+/** A row of buttons that stay side by side (equal widths) while every label fits inside its button on at most two lines, and
+ *  otherwise stack one under another at full width (the first stays on top). Looks again when the row's width changes. */
+export function stackWhenCramped(row: HTMLElement): void {
+  let ro: ResizeObserver | undefined;
+  const run = (): void => {
+    if (!row.isConnected) { ro?.disconnect(); return; }
+    row.classList.remove('stack');
+    const bs = [...row.querySelectorAll<HTMLElement>(':scope > button')];
+    if (bs.length < 2 || !row.clientWidth) return;
+    const cramped = bs.some((b) => {
+      if (b.scrollWidth > b.clientWidth + 1) return true;
+      const cs = getComputedStyle(b); const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.25;
+      const r = document.createRange(); r.selectNodeContents(b); return r.getBoundingClientRect().height > lh * 2.6;
+    });
+    row.classList.toggle('stack', cramped);
+  };
+  requestAnimationFrame(run); void document.fonts?.ready.then(run);
+  if (typeof ResizeObserver !== 'undefined') { let w = 0; ro = new ResizeObserver(() => { if (row.clientWidth !== w) { w = row.clientWidth; run(); } }); ro.observe(row); }
+}
 /** A sheet as a computer's menu: beside the pointer (or under the button that opened it), kept on the screen. */
 function placeMenu(el: HTMLElement, scrim: HTMLElement, at: { x: number; y: number } | Event): void {
   el.classList.add('as-menu'); scrim.classList.add('menu-scrim');

@@ -29,10 +29,10 @@ export interface TranslatorHost {
   bookInfo?(bookId: string): { language?: string; format?: string } | undefined;
 }
 /** The formats that are text laid out by the reader (not pages, pictures, tables or sound): what may start translating by itself. */
-const REFLOWABLE = new Set(['epub', 'docx', 'txt', 'md', 'html', 'fb2', 'odt', 'mobi', 'shamela', 'webnovel']);
+export const REFLOWABLE = new Set(['epub', 'docx', 'txt', 'md', 'html', 'fb2', 'odt', 'mobi', 'shamela', 'webnovel']);
 
-const SKIP = new Set(['IMG', 'FIGURE', 'TABLE', 'HR', 'SVG', 'VIDEO', 'AUDIO', 'PRE', 'CODE']);
-const KEEP = new Set(['I', 'EM', 'B', 'STRONG', 'U', 'SUP', 'SUB', 'A']);
+export const SKIP = new Set(['IMG', 'FIGURE', 'TABLE', 'HR', 'SVG', 'VIDEO', 'AUDIO', 'PRE', 'CODE']);
+export const KEEP = new Set(['I', 'EM', 'B', 'STRONG', 'U', 'SUP', 'SUB', 'A']);
 /** A heading or a title (what is translated with its original beneath, when chosen). */
 export const isTitle = (el: Element): boolean => /^H[1-6]$/.test(el.tagName) || /(^|[\s_-])(title|heading|chapter-?name)([\s_-]|$)/i.test(el.className || '');
 const escText = (x: string) => x.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
@@ -81,6 +81,22 @@ export function inTargetScript(text: string, target: string): boolean {
 // background after its reader was closed writes into the same record a reader opened again reads and saves.)
 const caches = new Map<string, Record<string, string>>();   // bookId → key → translation
 const bySource = new Map<string, Record<string, string>>();
+/** What is kept of a book's translations, in hand and in the library: by key (the paragraph, the model, the language…) and by the
+ *  original's text alone (the contents' titles) — read by the export of the translation (src/translatedepub.ts). */
+export async function savedTranslations(bookId: string): Promise<{ tr: Record<string, string>; src: Record<string, string> }> {
+  const tr = { ...((await db.getMeta<Record<string, string>>(`tr:${bookId}`)) ?? {}), ...(caches.get(bookId) ?? {}) };
+  const src = { ...((await db.getMeta<Record<string, string>>(`trs:${bookId}`)) ?? {}), ...(bySource.get(bookId) ?? {}) };
+  return { tr, src };
+}
+/** The key a title is kept under in the second record (the contents' titles). */
+export const sourceKeyOf = (plain: string): string => hash(plain.replace(/\s+/g, ' ').trim());
+/** The languages a book was translated into (noted when a translation is kept; older ones are found only for the language set now). */
+export async function savedLanguages(bookId: string): Promise<string[]> { return Object.keys((await db.getMeta<Record<string, number>>(`trLangs:${bookId}`)) ?? {}); }
+const langNoted = new Set<string>();
+function noteLanguage(bookId: string, lang: string): void {
+  const k = `${bookId}:${lang}`; if (!lang || langNoted.has(k)) return; langNoted.add(k);
+  void db.updateMeta<Record<string, number>>(`trLangs:${bookId}`, (cur) => ({ ...(cur ?? {}), [lang]: Date.now() })).catch(() => langNoted.delete(k));
+}
 /** The whole-book translations going on, by book: one at a time for a book, whichever reader started it. */
 const aheadJobs = new Map<string, { cancel(): void; done: number; total: number; bookId: string; label: string; from: number; to: number }>();
 /** The paragraphs a job is translating right now (by key): another job — this chapter beside the whole book — leaves
@@ -136,7 +152,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
   const srcKey = (plain: string) => hash(plain.replace(/\s+/g, ' ').trim());
   const plainOfText = (x: string) => { const d = document.createElement('div'); d.innerHTML = x; return (d.textContent ?? '').replace(/\s+/g, ' ').trim(); };
   async function remember(bookId: string, key: string, sourceText: string, tr: string) {
-    const c = await cache(bookId); c[key] = tr;
+    const c = await cache(bookId); c[key] = tr; if (!furi()) noteLanguage(bookId, getSettings().aiTarget);
     (await sourceIndex(bookId))[srcKey(plainOfText(sourceText))] = tr;
     scheduleSave(bookId);
   }
@@ -611,6 +627,12 @@ export function attachTranslator(host: TranslatorHost): Translator {
     cacheCount: async () => { let n = 0; for (const id of new Set([firstBook(), ...host.blocks().map((b) => b.bookId)].filter(Boolean))) n += Object.keys({ ...((await db.getMeta<Record<string, string>>(`tr:${id}`)) ?? {}), ...(caches.get(id) ?? {}) }).length; return n; },
     clearCache: () => clearCache(), isKept, setKept: (v) => { void setKept(v); markSaved(v); if (v) void navigator.storage?.persist?.().catch(() => undefined); if (v && !on) setOn(true); toast(v ? t('trKept') : t('trNotKept')); },
     options: () => h('div', null, optionControls(), aheadControls()), added: () => { if (on) void run(); },
+    // (The export's «Translate them first»: the whole book, through the same question about the names as any start by hand.)
+    translateWhole: () => {
+      if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
+      const last = host.chapters().length - 1; if (last < 0) return;
+      void (async () => { const r = await beforeTranslate(0, last, true); if (r === 'cancel' || disposed) return; void translateAhead(0, last, null, null, () => undefined); if (r === 'go') toast(t('trInBackground'), 'info', 3000); })();
+    },
   } as AiHooks);
   /** A former volume's glossary, once, when the translation is first turned on for a book with none: taken by itself
    *  (the same series, «Automatically»: a notice with Undo), or offered in the Glossary tab. */

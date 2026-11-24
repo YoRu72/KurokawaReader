@@ -626,6 +626,8 @@ export function libraryView(): HTMLElement {
         h('button', { class: 'btn danger small', onclick: async () => { if (await askDelete([book])) await refresh(); } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
+      // (A book with translations kept: «Save the translation as EPUB», before «Delete».)
+      void import('../ui/trepubsheet').then(async (m) => { if (!(await m.canSaveTranslation(book.id)) || !s.el.isConnected) return; const del = s.actions.querySelector('.btn.danger'); const b = h('button', { class: 'btn small', onclick: () => { s.close(); m.translatedEpubSheet(book); } }, icon('books'), t('teAction')); if (del) s.actions.insertBefore(b, del); else s.actions.append(b); });
     });
   }
 

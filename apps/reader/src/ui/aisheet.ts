@@ -5,6 +5,7 @@
 import { h, icon, openSheet } from './dom';
 import { t, localDigits } from '../i18n';
 import type { Found } from '../ai';
+import { db } from '../db';
 
 export type AiTab = 'translation' | 'glossary' | 'names' | 'saved';
 export const AI_TABS: AiTab[] = ['translation', 'glossary', 'names', 'saved'];
@@ -23,6 +24,8 @@ export interface AiHooks {
   options(): HTMLElement;
   /** Names accepted: the chapter translated again with them. */
   added(): void;
+  /** The whole book translated (asking about the names first, as any start by hand does). */
+  translateWhole(): void;
 }
 let hooks: AiHooks | null = null;
 export const setAiHooks = (x: AiHooks | null): void => { hooks = x; };
@@ -118,6 +121,14 @@ export function aiSheet(o: AiSheetOpts = {}): void {
     p.append(h('div', { class: 'ai-saved' }, icon('download'), count),
       h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('trKeepBook'), h('small', { class: 'hint' }, t('trKeepBookHint'))), h('span', { class: 'switch' }, cb, h('i'))),
       h('button', { type: 'button', class: 'btn tonal small ai-clear', onclick: () => { hk.clearCache(); setTimeout(paint, 600); } }, icon('trash'), t('clearTranslationCache')));
+    // «Save the translation as EPUB» — for a book the reader lays out (not a PDF or a picture book); with nothing saved it is there but off, with one line why.
+    void (async () => {
+      const b = await db.getBook(hk.bookId); const { exportable } = await import('../translatedepub'); if (!b || !exportable(b) || !p.isConnected) return;
+      const n = await hk.cacheCount();
+      const why = h('p', { class: 'hint ai-epub-why', hidden: n > 0 }, t('teNone'));
+      const btn = h('button', { type: 'button', class: 'btn tonal small ai-epub', disabled: n === 0, onclick: () => { void import('./trepubsheet').then((m) => m.translatedEpubSheet(b, { translateWhole: () => hk.translateWhole() })); } }, icon('books'), t('teAction')) as HTMLButtonElement;
+      p.append(btn, why);
+    })();
     paint();
   }
 }

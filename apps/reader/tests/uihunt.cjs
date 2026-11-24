@@ -108,6 +108,26 @@ const VIEWS = [
     await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'translate' }))); await p.waitForSelector('.gather-sheet .gather-go', { timeout: 10000 });
     await p.evaluate(() => document.querySelector('.tr-pill')?.remove()); // (the bar behind the sheet squeezes its buttons in Arabic — a fault of the bar's own, not of the question)
     await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 4000 }).catch(() => undefined); }],
+  // The same question for a book whose former volume's glossary is in use (the long primary label), at 360 and 412 wide: the label stays
+  // inside its button; when the two labels do not fit side by side the buttons stack at full width (src/ui/dom.ts stackWhenCramped).
+  ...[360, 412].map((w) => ['translate-question-volume-' + w, async (p) => {
+    await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'translate' }))); await p.waitForSelector('.gather-sheet .gather-go', { timeout: 10000 });
+    await p.evaluate(() => document.querySelector('.tr-pill')?.remove());
+    await p.evaluate(() => { const ar = document.documentElement.dir === 'rtl'; const s = document.querySelector('.gather-sheet'); s.querySelector('.gather-go').textContent = ar ? 'البحث في هذا المجلد عن أسماء جديدة' : 'Check this volume for new names'; const line = document.createElement('p'); line.className = 'gather-volume'; line.setAttribute('role', 'status'); line.textContent = ar ? 'يُستعمل مسرد «⁨Gate Story Vol. 1⁩»' : 'The glossary of Gate Story Vol. 1 is in use'; s.querySelector('.gather-why').after(line); });
+    await p.setViewportSize({ width: w - 1, height: 915 }); await p.waitForTimeout(150); await p.setViewportSize({ width: w, height: 915 });
+    await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 4000 }).catch(() => undefined); await p.waitForTimeout(300); }, 'phone']),
+  // «Save the translation as EPUB» (src/ui/trepubsheet.ts): the sheet over a book with something kept that matches nothing now (the one line saying so);
+  // its form with real saved translations is read in tests/translatedepub.cjs. Nothing is sent. (Phone only: it is a sheet.)
+  ['translate-export', async (p) => {
+    await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p);
+    await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 10000 });
+    await p.click('.ai-tab[data-tab="saved"]'); await p.waitForSelector('.ai-epub', { timeout: 8000 });
+    const id = await idOf(p, /nihongo/);
+    await p.evaluate((id) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('meta', 'readwrite'); tx.objectStore('meta').put({ x: 'y' }, 'tr:' + id); tx.oncomplete = () => res(1); }; }), id);
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => (e.__close ? e.__close() : e.remove())));
+    await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 10000 });
+    await p.click('.ai-tab[data-tab="saved"]'); await p.waitForSelector('.ai-epub:not([disabled])', { timeout: 8000 }); await p.click('.ai-epub'); await p.waitForSelector('.tre-sheet .tre-status:not([hidden]), .tre-sheet .tre-form:not([hidden])', { timeout: 20000 }); await p.waitForTimeout(500);
+  }, 'phone'],
   ['ai-translation-auto', async (p) => {
     await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 10000 });
     await p.click('.ai-sheet .ai-tab[data-tab="translation"]'); await p.waitForSelector('.tr-auto-book button', { timeout: 8000 }); await p.click('.tr-auto-start'); await p.locator('.tr-auto-book').scrollIntoViewIfNeeded(); await p.waitForTimeout(400); }],
@@ -147,6 +167,8 @@ function hunt({ phone, rtl, lang }) {
     const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); if (book(e)) continue;
     if (cs.position !== 'fixed' && !inScroller(e) && (r.right > vw + 2 || r.left < -2) && !e.closest('.scrim, .sheet-scrim, [aria-hidden=true], svg, .marquee, .panel:not(.open)')) add('stick-out', e, `${Math.round(r.left)}..${Math.round(r.right)} of ${vw}`);
     if (['BUTTON', 'LABEL', 'SPAN', 'A', 'H1', 'H2', 'H3', 'SMALL', 'DIV'].includes(e.tagName) && !e.children.length && (e.textContent || '').trim() && /(hidden|clip)/.test(cs.overflowX) && e.scrollWidth > e.clientWidth + 2 && (cs.textOverflow !== 'ellipsis' || e.closest('.book-tile')) && !(e.closest('.book-tile') && cs.whiteSpace !== 'nowrap' && e.scrollWidth <= e.clientWidth + 2)) add('clipped', e, `${e.scrollWidth}>${e.clientWidth}`);
+    // A label wider than its button (centred text spills out on both sides, so no overflow:hidden clipping shows it).
+    if (e.tagName === 'BUTTON' && (e.textContent || '').trim() && !e.closest('svg, .scrim, [aria-hidden=true], .panel:not(.open)')) { const rg0 = document.createRange(); rg0.selectNodeContents(e); const q0 = rg0.getBoundingClientRect(); if (q0.width && (q0.right > r.right + 1.5 || q0.left < r.left - 1.5 || e.scrollWidth > e.clientWidth + 1)) add('label-leaves-button', e, `text ${Math.round(q0.left)}..${Math.round(q0.right)} in button ${Math.round(r.left)}..${Math.round(r.right)}`); }
     if (e.tagName === 'SPAN' && e.closest('.book-tile')) { const tr = e.closest('.book-tile').getBoundingClientRect(); const rg = document.createRange(); rg.selectNodeContents(e); const q = rg.getBoundingClientRect(); if (q.right > tr.right + 1 || q.left < tr.left - 1 || e.scrollWidth > e.clientWidth + 1 || cs.textOverflow === 'ellipsis') add('clipped', e, `tile label «${e.textContent}» cut or past its tile`); }
     for (const prop of ['color', 'backgroundColor', 'borderTopColor']) {
       const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(cs[prop] || ''); if (!m) continue; if (m[4] !== undefined && +m[4] < 0.3) continue;
@@ -219,6 +241,7 @@ function hunt({ phone, rtl, lang }) {
       if (ONLY && name !== ONLY) continue; if (only === 'phone' && !phone) continue; if (only === 'pc' && phone) continue;
       try {
         await p.evaluate(() => { location.hash = '#/'; }); await p.keyboard.press('Escape'); await p.waitForTimeout(250);
+        if (phone) await p.setViewportSize({ width: 412, height: 915 });
         await act(p); await p.waitForTimeout(350);
         const faults = await p.evaluate(hunt, { phone, rtl: lang === 'ar', lang });
         const seen = new Set();

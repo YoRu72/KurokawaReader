@@ -3,7 +3,7 @@
 // each with how many it holds; a file opened shows its terms, each changed where it stands; the search looks through
 // the whole folder. Also: every book's glossary and other folders; a former volume's glossary offered (shared,
 // copied, or not); the files written out (one text file per kind, in a folder named after the book) and read back.
-import { h, iconButton, openSheet, toast, icon, pickButton, askText, debounce } from './dom';
+import { h, iconButton, openSheet, toast, icon, pickButton, askText, debounce, stackWhenCramped } from './dom';
 import { fits } from '../platform';
 import { t, localDigits } from '../i18n';
 import type { Strings } from '../i18n/en';
@@ -51,6 +51,7 @@ export function confirmSheet(o: { title: string; lines: string[]; ok: string; ca
     sh.el.classList.add('confirm-sheet'); sh.body.style.fontFamily = 'var(--font-ui)';
     sh.body.append(...o.lines.map((l) => h('p', { class: 'confirm-line', dir: 'auto' }, l)));
     sh.actions.append(h('button', { type: 'button', class: 'btn text confirm-cancel', onclick: () => sh.close() }, o.cancel), h('button', { type: 'button', class: 'btn danger confirm-ok', onclick: () => { yes = true; sh.close(); } }, icon('trash'), o.ok));
+    stackWhenCramped(sh.actions);
   });
 }
 /** `text` with the part matching `qf` (a query folded: foldKey(q, true)) marked. */

@@ -61,7 +61,7 @@ export async function listBooks(): Promise<Book[]> {
 /** Every meta key a book's own data is kept under, as `<kind>:<book id>` (translations, the whole-book mark, the
  *  translator kept on, names scanned for, PDF crop boxes, Anki progress, audiobook place and chapters). A new
  *  kind of per-book data is added HERE, so deleting a book takes it and the clean-up below finds it. */
-export const BOOK_META = ['tr', 'trs', 'trWhole', 'trKeep', 'trGather', 'trAuto', 'glossScan', 'crop', 'anki', 'audio', 'audioch'] as const;
+export const BOOK_META = ['tr', 'trs', 'trLangs', 'trWhole', 'trKeep', 'trGather', 'trAuto', 'glossScan', 'crop', 'anki', 'audio', 'audioch'] as const;
 
 export async function removeBooks(ids: string[]): Promise<void> {
   for (const id of ids) await db.deleteBook(id);

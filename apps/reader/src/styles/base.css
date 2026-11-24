@@ -2619,7 +2619,12 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .gather-sheet .gather-scope { margin: 2px 0; }
 .gather-sheet .sheet-actions.gather-actions { flex-direction: column; align-items: stretch; gap: 10px; }
 .gather-acts-row { display: flex; gap: 10px; }
-.gather-acts-row .btn { flex: 1 1 0; min-width: 0; padding-inline: 12px; text-align: center; line-height: 1.2; height: auto; min-height: 48px; }
+.gather-sheet .gather-acts-row .btn { flex: 1 1 0; min-width: 0; padding-inline: 12px; text-align: center; line-height: 1.2; height: auto; min-height: 48px; white-space: normal; overflow-wrap: normal; }
+/* (Labels that do not fit side by side: src/ui/dom.ts stackWhenCramped puts the buttons one under another, the first on top.) */
+.gather-sheet .gather-acts-row.stack { flex-direction: column; }
+.gather-sheet .gather-acts-row.stack .btn { flex: none; width: 100%; }
+.confirm-sheet .sheet-actions.stack { flex-direction: column-reverse; flex-wrap: nowrap; }
+.confirm-sheet .sheet-actions.stack .btn { flex: none; width: 100%; min-height: 48px; height: auto; }
 .gather-actions .gather-never { width: 100%; height: auto; min-height: 44px; line-height: 1.25; }
 /* The translator's new options (the AI settings, the glossary options): a three-way choice under its label. */
 .tr-three { display: grid; gap: 8px; margin-top: 4px; }
@@ -2629,3 +2634,19 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .tr-auto .tr-opt > .switch { flex: none; }
 .tr-auto .tr-opt > .label { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 500; color: var(--md-on-surface); }
 .tr-auto .tr-opt > .label .hint { text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 400; color: var(--md-on-surface-variant); }
+
+/* «Save the translation as EPUB» (src/ui/trepubsheet.ts): the choices as segmented rows whose labels may take two lines, the switches, two actions as wide as each other. */
+.tre-sheet .sheet-body { display: grid; gap: 14px; }
+.tre-form { display: grid; gap: 14px; }
+.tre-form .field { display: grid; gap: 8px; }
+.tre-sheet .tre-seg button { white-space: normal; height: auto; min-height: 48px; padding: 8px 12px; line-height: 1.25; overflow-wrap: normal; }
+.tre-sheet .tre-lang { margin: 0; padding: 12px 14px; border-radius: var(--sh-md); background: var(--md-surface-container-high); }
+.tre-sheet .tre-first { justify-self: stretch; height: auto; min-height: 48px; white-space: normal; text-align: center; }
+.tre-sheet .tre-status { margin: 0; }
+.ai-epub-why { margin: 0; }
+.ai-panel .ai-epub { align-self: stretch; }
+.tre-sheet .tr-opt { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.tre-sheet .tr-opt > .label { flex: 1 1 0; min-width: 0; text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 500; color: var(--md-on-surface); }
+.tre-sheet .tr-opt > .switch { flex: none; }
+.tre-sheet .tre-missing > .label { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--md-on-surface); }
+.tre-sheet .sheet-body { overflow-y: auto; }

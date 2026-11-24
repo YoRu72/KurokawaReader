@@ -21,9 +21,13 @@ import { isRtlText } from './i18n';
 export const convertible = (f: Book['format']) => !['image', 'cbz', 'anki', 'audio', 'unknown'].includes(f);
 
 export type Target = 'epub' | 'kindle' | 'docx' | 'pdf' | 'html' | 'md' | 'txt' | 'fb2' | 'odt' | 'rtf' | 'cbz';
-export interface Chapter { title: string; html: string; rtl: boolean }
+export interface Chapter { title: string; html: string; rtl: boolean; /** The chapter's own language, when it is not the document's (a translated book with a chapter left in the original). */ lang?: string }
 export interface ConvDoc {
   title: string; author?: string; lang?: string; rtl: boolean;
+  /** Other titles of the book, written beside the first (a translated book: the original's). */
+  titles?: string[];
+  /** A line of description for the file's metadata. */
+  description?: string;
   chapters: Chapter[];
   images: Map<string, Blob>;              // url used in html → data
   fonts: Map<string, { blob: Blob; ext: string }>;   // css family → font file
@@ -250,7 +254,7 @@ function fixArabicLine(line: string): string {
 
 const XHTML_NS = 'http://www.w3.org/1999/xhtml';
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
-const slug = (s: string) => s.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'book';
+export const slug = (s: string) => s.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'book';
 
 /** HTML fragment → well-formed XHTML (EPUB needs XML). */
 function toXhtml(html: string): string {
@@ -275,7 +279,7 @@ export async function buildEpub(d: ConvDoc, progress: Progress): Promise<Blob> {
     zip.file(`OEBPS/${name}`, blob); manifest.push(`<item id="img${n}" href="${name}" media-type="${blob.type || 'image/png'}"/>`);
   }
   // Fonts carried over from the source
-  let css = `body{line-height:1.6;margin:0 5%}p{margin:0 0 .8em}h1,h2,h3{line-height:1.3}img{max-width:100%;height:auto}[dir=rtl]{text-align:right}\n`;
+  let css = `body{line-height:1.6;margin:0 5%}p{margin:0 0 .8em}h1,h2,h3{line-height:1.3}img{max-width:100%;height:auto}[dir=rtl]{text-align:right}.kr-tr-line,.kr-tr-orig{display:block}.kr-tr-orig{font-size:.85em;opacity:.7}.kr-tr-sub{display:block;font-size:.6em;font-weight:400;opacity:.7}\n`;
   let fi = 0;
   for (const [family, f] of d.fonts) {
     const name = `fonts/f${++fi}.${f.ext}`; zip.file(`OEBPS/${name}`, f.blob);
@@ -290,15 +294,15 @@ export async function buildEpub(d: ConvDoc, progress: Progress): Promise<Blob> {
     let html = toXhtml(ch.html);
     for (const [url, name] of imgNames) html = html.split(`src="${esc(url)}"`).join(`src="${name}"`).split(`src="${url}"`).join(`src="${name}"`);
     const file = `ch${i + 1}.xhtml`;
-    zip.file(`OEBPS/${file}`, `<?xml version="1.0" encoding="UTF-8"?>\n<html xmlns="${XHTML_NS}" xmlns:epub="http://www.idpf.org/2007/ops"${d.lang ? ` xml:lang="${esc(d.lang)}" lang="${esc(d.lang)}"` : ''}${ch.rtl ? ' dir="rtl"' : ''}><head><title>${esc(ch.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head><body${ch.rtl ? ' dir="rtl"' : ''}>${html}</body></html>`);
+    zip.file(`OEBPS/${file}`, `<?xml version="1.0" encoding="UTF-8"?>\n<html xmlns="${XHTML_NS}" xmlns:epub="http://www.idpf.org/2007/ops"${(ch.lang ?? d.lang) ? ` xml:lang="${esc(ch.lang ?? d.lang!)}" lang="${esc(ch.lang ?? d.lang!)}"` : ''}${ch.rtl ? ' dir="rtl"' : ch.lang ? ' dir="ltr"' : ''}><head><title>${esc(ch.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head><body${ch.rtl ? ' dir="rtl"' : ''}>${html}</body></html>`);
     manifest.push(`<item id="ch${i + 1}" href="${file}" media-type="application/xhtml+xml"/>`);
     spine.push(`<itemref idref="ch${i + 1}"/>`);
     nav.push(`<li><a href="${file}">${esc(ch.title)}</a></li>`);
   });
-  zip.file('OEBPS/nav.xhtml', `<?xml version="1.0" encoding="UTF-8"?>\n<html xmlns="${XHTML_NS}" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>${esc(d.title)}</title></head><body><nav epub:type="toc" id="toc"><h1>${esc(d.title)}</h1><ol>${nav.join('')}</ol></nav></body></html>`);
+  zip.file('OEBPS/nav.xhtml', `<?xml version="1.0" encoding="UTF-8"?>\n<html xmlns="${XHTML_NS}" xmlns:epub="http://www.idpf.org/2007/ops"${d.lang ? ` xml:lang="${esc(d.lang)}" lang="${esc(d.lang)}"` : ''}${d.rtl && d.lang ? ' dir="rtl"' : ''}><head><title>${esc(d.title)}</title></head><body><nav epub:type="toc" id="toc"><h1>${esc(d.title)}</h1><ol>${nav.join('')}</ol></nav></body></html>`);
   const uid = 'urn:uuid:' + crypto.randomUUID();
   zip.file('OEBPS/content.opf', `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid"${d.rtl ? ' dir="rtl"' : ''}>
-<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">${uid}</dc:identifier><dc:title>${esc(d.title)}</dc:title>${d.author ? `<dc:creator>${esc(d.author)}</dc:creator>` : ''}<dc:language>${esc(d.lang || (d.rtl ? 'ar' : 'en'))}</dc:language><meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta></metadata>
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">${uid}</dc:identifier><dc:title>${esc(d.title)}</dc:title>${(d.titles ?? []).filter((x) => x && x !== d.title).map((x) => `<dc:title>${esc(x)}</dc:title>`).join('')}${d.author ? `<dc:creator>${esc(d.author)}</dc:creator>` : ''}<dc:language>${esc(d.lang || (d.rtl ? 'ar' : 'en'))}</dc:language>${d.description ? `<dc:description>${esc(d.description)}</dc:description>` : ''}<meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta></metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>${manifest.join('')}</manifest>
 <spine${d.rtl ? ' page-progression-direction="rtl"' : ''}>${spine.join('')}</spine></package>`);
   return zipOut(zip as unknown as ZipLike, 'application/epub+zip', 'mimetype');
