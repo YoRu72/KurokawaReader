@@ -212,8 +212,8 @@ export async function kurokawaInstall(kr: AndroidApk, path: string): Promise<voi
   const title = h('div', { class: 'inst-title' }, h('b', null, '…')); const meta = h('p', { class: 'hint', dir: 'auto' }, t('installerReading'));
   const bar = h('div', { class: 'wave-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('i')); const setP = (pct: number) => { bar.style.setProperty('--p', `${pct}%`); bar.setAttribute('aria-valuenow', String(pct)); };
   const status = h('p', { class: 'hint inst-status', dir: 'auto' }); const warn = h('p', { class: 'hint inst-warn', dir: 'auto', hidden: true });
-  const go = h('button', { type: 'button', class: 'btn primary', disabled: true }, icon('check'), t('install')) as HTMLButtonElement;
-  sh.body.append(h('div', { class: 'inst-card' }, title, meta, warn), bar, status, h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px', marginTop: '10px' } }, go));
+  const go = h('button', { type: 'button', class: 'btn primary inst-go', disabled: true }, t('install')) as HTMLButtonElement;
+  sh.body.append(h('div', { class: 'inst-card' }, title, meta, warn), bar, status, h('div', { class: 'inst-actions' }, go));
   let info: ApkInfo | null = null;
   try { info = await kr.apkInfo!({ path }); } catch { meta.textContent = t('installerNotApk'); return; }
   const same = info.sameApp;

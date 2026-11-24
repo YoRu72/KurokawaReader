@@ -1052,6 +1052,18 @@ html[dir='rtl'] .upd-hero h2 { letter-spacing: 0; }
 .upd-go { height: 52px; padding: 0 26px; font-size: 15px; border-radius: var(--sh-lg); }
 .upd-go:hover:not([disabled]) { border-radius: var(--sh-full); }
 .upd-major .btn.outlined { height: 52px; border-radius: var(--sh-full); }
+/* A label never leaves its button: it wraps to a second line (the button grows), and on a narrow screen the buttons stack, each full width. */
+.sheet .upd-actions .btn, .sheet .inst-go { white-space: normal; overflow-wrap: anywhere; text-align: center; line-height: 1.25; height: auto; min-height: 44px; padding-block: 8px; max-width: 100%; }
+.sheet .upd-actions .btn.upd-go, .sheet .upd-major .btn.outlined { min-height: 52px; }
+.inst-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.inst-actions .inst-go { min-width: 120px; min-height: 48px; }
+@media (max-width: 480px) {
+  .upd-actions { flex-direction: column-reverse; align-items: stretch; }
+  .upd-major { flex-direction: column; align-items: stretch; margin-inline-start: 0; }
+  .upd-major .btn { width: 100%; }
+  .upd-minor { justify-content: center; }
+  .inst-actions .inst-go { width: 100%; }
+}
 
 /* Wavy linear progress (M3 Expressive): the done part a moving wave, the rest a flat track after a gap. */
 .wave-progress { --p: 0%; position: relative; height: 12px; margin: 14px 0 2px; }
@@ -2143,6 +2155,34 @@ body:has(.lightbox) .job-chip, body:has(.lightbox) .tr-pill, body:has(.lightbox)
 .gloss-auto .label .hint { font: 400 13px/1.45 var(--font-ui); text-transform: none; letter-spacing: normal; color: var(--md-on-surface-variant); }
 .gloss-auto input[type=checkbox] { flex: none; width: 22px; height: 22px; accent-color: var(--md-primary); }
 .gloss-search { height: 44px; padding: 0 16px; }
+/* The glossary's search: at the top, a clear button inside the field, a chip for every glossary; its results grouped by file. */
+.gloss-search-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gloss-search-box { position: relative; flex: 1 1 200px; min-width: 0; display: flex; align-items: center; }
+.gloss-search-box .gloss-search { padding-inline-end: 48px; }
+.gloss-search-clear { position: absolute; inset-inline-end: 2px; top: 50%; translate: 0 -50%; width: 40px; height: 40px; }
+.gloss-search-clear[hidden] { display: none; }
+.gloss-scope { min-height: 40px; flex: none; }
+.gloss-hit-group { display: flex; flex-direction: column; gap: 6px; }
+.gloss-hit { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-height: 48px; padding: 10px 14px; border: 0; border-radius: 14px; text-align: start; background: var(--md-surface-container); color: var(--md-on-surface); font: inherit; cursor: pointer; }
+.gloss-hit:hover { background: var(--md-surface-container-high); }
+.gloss-hit-pair { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.gloss-hit-from, .gloss-hit-to { min-width: 0; overflow-wrap: anywhere; }
+.gloss-hit small { color: var(--md-on-surface-variant); font-size: 12.5px; overflow-wrap: anywhere; }
+.gloss-hit-place { font-weight: 600; }
+.gloss-mark { background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: 4px; padding: 0 2px; }
+.gloss-total { margin: 0; }
+.gloss-more { align-self: center; min-height: 40px; }
+.gloss-row.flash { outline: 2px solid var(--md-primary); transition: outline-color .6s; }
+.gloss-alts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gloss-alt { display: inline-flex; align-items: center; gap: 4px; }
+.gloss-alt .chip { min-height: 40px; }
+.gloss-alt .icon-btn { width: 40px; height: 40px; }
+.gloss-head-more { flex: none; }
+.gloss-file-bar .gloss-del-file { margin-inline-start: auto; flex: none; }
+.dest-row.danger, .dest-row.danger svg { color: var(--md-error); }
+.confirm-sheet .confirm-line { margin: 0 0 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.confirm-sheet .sheet-actions .btn { flex: 1 1 0; padding-inline: 14px; box-sizing: border-box; min-width: 0; justify-content: center; white-space: normal; text-align: center; }
+
 .tr-titles .label { text-transform: none; letter-spacing: normal; }
 .gloss-sheet .gloss-search { min-height: 44px; flex: none; }
 /* Linking AniList: the steps, numbered. */

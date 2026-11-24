@@ -29,43 +29,105 @@ export function normKind(raw?: unknown): BuiltinKind {
   for (const [re, v] of SYN) if (re.test(k)) return v;
   return 'term';
 }
-export interface Term { id: string; from: string; to: string; /** a book's id, or every book when absent */ book?: string; /** a glossary folder's id (then for the books using that folder) */ folder?: string; /** the language it renders into (ar, en…): used only when translating into it */ lang?: string; /** what it names (characters, places…) */ kind?: TermKind; /** added by the translator on its own */ auto?: boolean }
+export interface Term { id: string; from: string; to: string; /** a book's id, or every book when absent */ book?: string; /** a glossary folder's id (then for the books using that folder) */ folder?: string; /** the language it renders into (ar, en…): used only when translating into it */ lang?: string; /** what it names (characters, places…) */ kind?: TermKind; /** added by the translator on its own */ auto?: boolean; /** other renderings of the same name in that language (a repeat merged into this entry keeps its rendering here) */ alts?: string[]; /** a note on the term */ note?: string }
 
 const KEY = 'kr.glossary';
 let cache: Term[] | null = null;
 const lower = (s: string) => s.toLocaleLowerCase().trim();
+/* ---------- one key for «the same name»: every repeat is found, and every search matches, through it ---------- */
+// (Case, width and compatibility forms (NFKC), the marks of Arabic (vowel signs, the dagger alef, tatweel), the
+// hamza and alef forms, ى/ي, ة/ه, Persian ی/ک, katakana as hiragana; punctuation and spaces loosened.)
+const AR_MARKS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED\u08D3-\u08FF\u0640]/g;
+const AR_LETTERS: Record<string, string> = { 'أ': 'ا', 'إ': 'ا', 'آ': 'ا', 'ٱ': 'ا', 'ى': 'ي', 'ئ': 'ي', 'ؤ': 'و', 'ة': 'ه', 'ی': 'ي', 'ک': 'ك' };
+const foldStr = (s: string): string => s.normalize('NFKC').toLowerCase().replace(AR_MARKS, '').replace(/[أإآٱىئؤةیک]/g, (c) => AR_LETTERS[c]).replace(/[\u30a1-\u30f6]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+const GAP = /[\s\p{P}\p{S}]+/gu;
+/** The key of a name: `loose` takes out spaces and punctuation altogether (search); else they are one space (the key
+ *  of «the same name»). A name of marks alone keeps its own letters. */
+export function foldKey(s: string, loose = false): string {
+  const f = foldStr(s).replace(GAP, loose ? '' : ' ').trim();
+  return f || s.normalize('NFKC').toLowerCase().trim();
+}
+export const termKey = (s: string): string => foldKey(s, false);
+const CLUSTER = /\P{M}\p{M}*|\p{M}+/gu;
+/** A text folded as `foldKey(s, true)` does, with where each folded letter stood in the text (its start and end), to
+ *  show what matched. */
+export function foldMap(s: string): { f: string; from: number[]; to: number[] } {
+  let f = ''; const from: number[] = [], to: number[] = [];
+  for (const m of s.matchAll(CLUSTER)) {
+    const x = foldStr(m[0]).replace(GAP, ''); const a = m.index!, b = a + m[0].length;
+    for (const ch of x) for (let i = 0; i < ch.length; i++) { f += ch[i]; from.push(a); to.push(b); }
+  }
+  return { f, from, to };
+}
 // (A place and a language: the same name may be kept for Arabic and for English renderings side by side.)
 // (Kept apart by language, not by script: an English and a French rendering of one name, or an Arabic and a Persian
 // one, are two terms — the one made later no longer takes the other's place.)
 const scopeOf = (x: Term) => `${x.folder ? `f:${x.folder}` : x.book ? `b:${x.book}` : 'all'}|${termLang(x) || `script:${scriptOf(x.to)}`}`;
-/** One term for each name in each place (a book, a folder, every book): the one written by hand kept over one the
- *  translator added, else the latest. */
+const MAX_ALTS = 8;
+/** Two entries of one name in one place made one: `a` kept, `b`'s rendering (and its other renderings) put beside its
+ *  own as alternatives — nothing is lost —, its kind and language taken where `a` has none. */
+function mergeTerms(a: Term, b: Term): Term {
+  const out: Term = { ...a }; const have = new Set([termKey(a.to), ...(a.alts ?? []).map(termKey)]); const alts = [...(a.alts ?? [])];
+  for (const x of [b.to, ...(b.alts ?? [])]) { const k = termKey(x); if (k && !have.has(k)) { have.add(k); alts.push(x); } }
+  if (alts.length) out.alts = alts.slice(0, MAX_ALTS); else delete out.alts;
+  if (b.note && termKey(b.note) !== termKey(a.note ?? '')) out.note = a.note ? `${a.note} · ${b.note}` : b.note;
+  if ((!a.kind || a.kind === 'term') && b.kind && b.kind !== 'term') out.kind = b.kind;
+  if (!a.lang && b.lang) out.lang = b.lang;
+  return out;
+}
+/** One term for each name in each place (a book, a folder, every book): written by hand over added by the translator,
+ *  else the earlier; the other's rendering kept as an alternative. */
 export function dedupe(list: Term[]): Term[] {
   const at = new Map<string, number>(); const out: Term[] = [];
   for (const x of list) {
-    const k = `${scopeOf(x)}|${lower(x.from)}`; const i = at.get(k);
+    const k = `${scopeOf(x)}|${termKey(x.from)}`; const i = at.get(k);
     if (i === undefined) { at.set(k, out.length); out.push(x); continue; }
-    const had = out[i]; if (had.auto && !x.auto) out[i] = x; else if (!!had.auto === !!x.auto) out[i] = x;
+    const had = out[i]; out[i] = had.auto && !x.auto ? mergeTerms(x, had) : mergeTerms(had, x);
   }
   return out;
 }
+/** A book's own terms that a folder it uses holds as they are (the same name, language and rendering): redundant. */
+function crossRepeats(list: Term[]): Set<string> {
+  const lk = read<Record<string, string[]>>(LKEY, {}); const inF = new Map<string, Set<string>>(); const gone = new Set<string>();
+  for (const x of list) if (x.folder) { const k = `${x.folder}|${termLang(x)}|${termKey(x.from)}`; (inF.get(k) ?? inF.set(k, new Set()).get(k)!).add(termKey(x.to)); }
+  if (!inF.size) return gone;
+  for (const x of list) if (x.book && !x.folder) for (const f of lk[x.book] ?? []) if (inF.get(`${f}|${termLang(x)}|${termKey(x.from)}`)?.has(termKey(x.to))) { gone.add(x.id); break; }
+  return gone;
+}
+/** Every repeat made one (also a book's own term its folder holds as it is); how many were merged. */
+export function mergeRepeats(): number {
+  const before = terms(); const d = dedupe(before); const x = crossRepeats(d); const out = d.filter((t0) => !x.has(t0.id));
+  const n = before.length - out.length; if (n > 0) saveTerms(out); return n;
+}
 export function terms(): Term[] {
   if (cache) return cache;
-  try { legacyLang(); const raw = (JSON.parse(localStorage.getItem(KEY) ?? '[]') as Term[]).filter((x) => x && x.from && x.to); cache = dedupe(raw); if (cache.length !== raw.length) saveTerms(cache); } catch { cache = []; }
+  try { legacyLang(); const raw = (JSON.parse(localStorage.getItem(KEY) ?? '[]') as Term[]).filter((x) => x && x.from && x.to); const d = dedupe(raw); const x = crossRepeats(d); cache = x.size ? d.filter((t0) => !x.has(t0.id)) : d; if (cache.length !== raw.length) saveTerms(cache); } catch { cache = []; }
   return cache;
 }
-export function saveTerms(list: Term[]): void { cache = dedupe(list.filter((x) => x.from.trim() && x.to.trim())); try { if (cache.length) localStorage.setItem(KEY, JSON.stringify(cache)); else localStorage.removeItem(KEY); } catch { /* full */ } }
-/** Terms added without doubling any (a name already there for the same place is left as it is, unless only the
- *  translator had put it); how many were new. */
+export function saveTerms(list: Term[]): void { legacyKnown = false; cache = dedupe(list.filter((x) => x.from.trim() && x.to.trim())); try { if (cache.length) localStorage.setItem(KEY, JSON.stringify(cache)); else localStorage.removeItem(KEY); } catch { /* full */ } }
+/** Terms added without doubling any (the same name in the same place — or a book's name its folder, or every book,
+ *  already holds as it is — is not added again); how many were new. A different rendering of a name already there is
+ *  not dropped: it is kept as an alternative of that entry (an entry only the translator had put gives way to the
+ *  one written by hand, its rendering kept beside). */
 export function addTerms(add: Omit<Term, 'id'>[]): number {
-  const list = terms().slice(); const have = new Map(list.map((x, i) => [`${scopeOf(x)}|${lower(x.from)}`, i])); let n = 0;
+  const list = terms().slice(); const have = new Map(list.map((x, i) => [`${scopeOf(x)}|${termKey(x.from)}`, i])); let n = 0;
+  // (What a place already holds, for the names that could be a repeat of one in a folder or in every book.)
+  const wide = new Map<string, Set<string>>();
+  for (const y of list) if (y.folder || (!y.book)) { const k = `${y.folder ?? ''}|${termLang(y)}|${termKey(y.from)}`; (wide.get(k) ?? wide.set(k, new Set()).get(k)!).add(termKey(y.to)); }
+  const linked = new Map<string, string[]>();
+  const heldWide = (x: Term): boolean => {
+    if (!wide.size || (!x.book && !x.folder) || (x.folder && x.book)) return false;
+    const places = x.book ? ['', ...(linked.get(x.book) ?? linked.set(x.book, linkedFolders(x.book)).get(x.book)!)] : [''];
+    return places.some((pl) => wide.get(`${pl}|${termLang(x)}|${termKey(x.from)}`)?.has(termKey(x.to)));
+  };
   for (const a of add) {
-    const x = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, ...a } as Term; const k = `${scopeOf(x)}|${lower(x.from)}`; const i = have.get(k);
-    if (i === undefined) { have.set(k, list.length); list.push(x); n++; }
-    else if (list[i].auto && !x.auto) list[i] = { ...list[i], to: x.to, kind: x.kind ?? list[i].kind, auto: undefined };
+    const x = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, ...a } as Term; const k = `${scopeOf(x)}|${termKey(x.from)}`; const i = have.get(k);
+    if (i === undefined) { if (heldWide(x)) continue; have.set(k, list.length); list.push(x); n++; }
+    else if (list[i].auto && !x.auto) list[i] = mergeTerms({ ...x, id: list[i].id, kind: x.kind ?? list[i].kind }, list[i]);
     // (One the translator had put in the wrong script for its language — «Keyaru» kept as Arabic — made right by a
     // rendering that is in it; one written by hand is left as it is.)
     else if (list[i].auto && misScripted(list[i]) && !misScripted(x)) { list[i] = { ...list[i], to: x.to, kind: x.kind ?? list[i].kind }; n++; }
+    else list[i] = mergeTerms(list[i], x);
   }
   saveTerms(list); return n;
 }
@@ -93,12 +155,51 @@ const write = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.st
 export const folders = (): Folder[] => read<Folder[]>(FKEY, []);
 export function addFolder(name: string): Folder { const f = { id: Math.random().toString(36).slice(2, 10), name: name.trim() }; write(FKEY, [...folders(), f]); return f; }
 export function renameFolder(id: string, name: string): void { write(FKEY, folders().map((f) => (f.id === id ? { ...f, name: name.trim() } : f))); }
-export function removeFolder(id: string): void { write(FKEY, folders().filter((f) => f.id !== id)); saveTerms(terms().filter((x) => x.folder !== id)); const l = read<Record<string, string[]>>(LKEY, {}); for (const k of Object.keys(l)) l[k] = l[k].filter((x) => x !== id); write(LKEY, l); }
-/** The whole glossary as stored (terms, folders, which books use which) — taken before a folder is deleted, written
- *  back by its Undo (src/ui/glossarysheet.ts). */
-export interface GlossarySnapshot { terms: Term[]; folders: Folder[]; links: Record<string, string[]> }
-export const glossarySnapshot = (): GlossarySnapshot => JSON.parse(JSON.stringify({ terms: terms(), folders: folders(), links: read<Record<string, string[]>>(LKEY, {}) })) as GlossarySnapshot;
-export function glossaryRestore(s: GlossarySnapshot): void { write(FKEY, s.folders); saveTerms(s.terms); write(LKEY, s.links); }
+/** A map kept as it is, or no key at all when it is empty (nothing is left of what was deleted). */
+const put = (k: string, v: Record<string, unknown> | unknown[]): void => { if (Array.isArray(v) ? v.length : Object.keys(v).length) write(k, v); else try { localStorage.removeItem(k); } catch { /* full */ } };
+/** The whole glossary as stored (terms, folders, which books use which, where each book's new names go, each book's
+ *  choice about a former volume's glossary) — taken before something is deleted, written back by its Undo. */
+export interface GlossarySnapshot { terms: Term[]; folders: Folder[]; links: Record<string, string[]>; dest?: Record<string, Dest>; vol?: Record<string, VolChoice> }
+export const glossarySnapshot = (): GlossarySnapshot => JSON.parse(JSON.stringify({ terms: terms(), folders: folders(), links: read<Record<string, string[]>>(LKEY, {}), dest: read<Record<string, Dest>>(DKEY, {}), vol: read<Record<string, VolChoice>>(VKEY, {}) })) as GlossarySnapshot;
+export function glossaryRestore(s: GlossarySnapshot): void {
+  put(FKEY, s.folders); saveTerms(s.terms); put(LKEY, s.links);
+  if (s.dest) put(DKEY, s.dest); if (s.vol) put(VKEY, s.vol);
+}
+/** What a folder holds, for the question before it is deleted: its files, terms and citations, and the books using it. */
+export interface GlossaryStats { files: number; terms: number; quotes: number; books: string[] }
+export function statsOf(list: Term[], books: string[] = []): GlossaryStats { return { files: new Set(list.map((x) => kindOf(x))).size, terms: list.length, quotes: list.filter((x) => kindOf(x) === 'quote').length, books }; }
+export const folderStats = (id: string): GlossaryStats => statsOf(terms().filter((x) => x.folder === id), folderBooks(id));
+/** A book that has lost its glossary is not given a former volume's by itself the next time it is opened (it is made
+ *  again only when a term is added, the names are found, or the reader takes a former volume's). */
+function holdVolChoice(bookIds: Iterable<string>): void {
+  const v = read<Record<string, VolChoice>>(VKEY, {}); let any = false;
+  for (const b of bookIds) if (b !== '*' && !v[b] && !hasGlossary(b)) { v[b] = { choice: 'empty' }; any = true; }
+  if (any) put(VKEY, v);
+}
+/** A folder removed whole: its files of every kind (the reader's own too), its citations, every book's link to it, the
+ *  destination any book had set to it. The books that used it simply have no glossary afterwards. */
+export function removeFolder(id: string): void {
+  const users = folderBooks(id);
+  put(FKEY, folders().filter((f) => f.id !== id)); saveTerms(terms().filter((x) => x.folder !== id));
+  const l = read<Record<string, string[]>>(LKEY, {}); for (const k of Object.keys(l)) { l[k] = l[k].filter((x) => x !== id); if (!l[k].length) delete l[k]; } put(LKEY, l);
+  const d = read<Record<string, Dest>>(DKEY, {}); let dd = false; for (const k of Object.keys(d)) if (d[k].to === id) { delete d[k]; dd = true; } if (dd) put(DKEY, d);
+  holdVolChoice(users);
+}
+/** A book's own glossary removed whole: its own terms and every folder it uses (those folders are removed for the
+ *  other volumes too — a glossary shared is one glossary). */
+export function removeBookGlossary(bookId: string): void {
+  for (const f of linkedFolders(bookId)) removeFolder(f);
+  saveTerms(terms().filter((x) => !(x.book === bookId && !x.folder)));
+  holdVolChoice([bookId]);
+}
+/** One file of a glossary removed whole (every term of that kind among those given by `inPlace`); how many went. */
+export function removeFile(kind: TermKind, inPlace: (x: Term) => boolean): number {
+  const before = terms(); const keep = before.filter((x) => !(kindOf(x) === kind && inPlace(x))); saveTerms(keep); return before.length - keep.length;
+}
+/** Every glossary removed: every term, folder, link, destination and choice about a former volume. */
+export function removeAllGlossaries(): void {
+  saveTerms([]); for (const k of [FKEY, LKEY, DKEY, VKEY]) try { localStorage.removeItem(k); } catch { /* full */ }
+}
 /** Books taken out of the library: their own terms, folder links and destination let go (a folder's terms and
  *  every book's stay — other books use them). */
 export function forgetBooks(ids: Iterable<string>): void {
@@ -162,9 +263,10 @@ export function langFromScript(text: string): string {
    uses; else it is not known — the term is then used for no language and shown as «language not set», for the
    reader to set. */
 const LEGACY = 'kr.glossaryLegacyLang';
-let legacy: string | undefined;
+let legacy: string | undefined; let legacyKnown = false;
 export function legacyLang(): string {
   if (legacy) return legacy;
+  if (legacyKnown) return '';   // (looked for, none: not read again for each term until the terms change)
   try {
     const kept = localStorage.getItem(LEGACY); if (kept) return (legacy = kept);
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]') as Term[];
@@ -172,11 +274,12 @@ export function legacyLang(): string {
       let tg = 'ar'; try { tg = (JSON.parse(localStorage.getItem('kr.visual') ?? '{}') as { aiTarget?: string }).aiTarget || 'ar'; } catch { /* the default */ }
       legacy = base(tg); localStorage.setItem(LEGACY, legacy); return legacy;
     }
+    legacyKnown = true;
   } catch { /* storage unreadable */ }
   return '';
 }
 /** (Tests: the kept language read again.) */
-export const _forgetLegacy = (): void => { legacy = undefined; };
+export const _forgetLegacy = (): void => { legacy = undefined; legacyKnown = false; };
 /** The language a term renders into: its own; for one made before languages were kept, the one it can be known
  *  to have been made for; else ''. */
 export function termLang(x: Pick<Term, 'lang' | 'to'>): string {
@@ -203,7 +306,15 @@ export function fitsTarget(x: Term, target?: string): boolean {
  *  general ones (one per name). */
 export function termsFor(bookId?: string, target?: string): Term[] {
   const all = terms().filter((x) => fitsTarget(x, target)); const linked = new Set(linkedFolders(bookId)); const seen = new Set<string>(); const out: Term[] = [];
-  for (const x of [...all.filter((t) => !t.folder && t.book && t.book === bookId), ...all.filter((t) => t.folder && linked.has(t.folder)), ...all.filter((t) => !t.book && !t.folder)]) { const k = lower(x.from); if (seen.has(k)) continue; seen.add(k); out.push(x); }
+  for (const x of [...all.filter((t) => !t.folder && t.book && t.book === bookId), ...all.filter((t) => t.folder && linked.has(t.folder)), ...all.filter((t) => !t.book && !t.folder)]) { const k = termKey(x.from); if (seen.has(k)) continue; seen.add(k); out.push(x); }
+  return out;
+}
+
+/** The names found, less those the glossary already holds for this book (in the language translated into, by the one key of
+ *  a name) and the repeats among the names themselves: each name once. */
+export function newNames<T extends { from: string }>(found: T[], bookId?: string, target?: string): T[] {
+  const have = new Set(termsFor(bookId, target).map((x) => termKey(x.from))); const out: T[] = [];
+  for (const f of found) { const k = termKey(f.from); if (!k || have.has(k)) continue; have.add(k); out.push(f); }
   return out;
 }
 
@@ -442,8 +553,10 @@ export function copyGlossary(bookId: string, cand: VolCandidate): () => void {
 }
 /** No longer sharing a folder: its terms kept as this book's own copy, the folder left to the other volumes. */
 export function stopSharing(bookId: string, folderId: string): void {
-  addTerms(terms().filter((x) => x.folder === folderId).map(({ id: _i, folder: _f, ...x }) => { void _i; void _f; return { ...x, book: bookId }; }));
+  // (Unlinked first: a copy of what the folder holds is not taken for a repeat of the folder's own.)
+  const copy = terms().filter((x) => x.folder === folderId).map(({ id: _i, folder: _f, ...x }) => { void _i; void _f; return { ...x, book: bookId }; });
   setLinked(bookId, linkedFolders(bookId).filter((f) => f !== folderId));
+  addTerms(copy);
   if (destOf(bookId).to === folderId) setDest(bookId, { to: 'book', addNew: true });
   setVolChoice(bookId, { choice: 'copy', from: volChoice(bookId)?.from });
 }

@@ -3,15 +3,17 @@
 // each with how many it holds; a file opened shows its terms, each changed where it stands; the search looks through
 // the whole folder. Also: every book's glossary and other folders; a former volume's glossary offered (shared,
 // copied, or not); the files written out (one text file per kind, in a folder named after the book) and read back.
-import { h, iconButton, openSheet, toast, icon, pickButton, askText } from './dom';
+import { h, iconButton, openSheet, toast, icon, pickButton, askText, debounce } from './dom';
+import { fits } from '../platform';
 import { t, localDigits } from '../i18n';
 import type { Strings } from '../i18n/en';
-import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, termLang, misScripted, langForNew, scriptVerdict, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, linkedFolders, setLinked, glossarySnapshot, glossaryRestore, kindOf, kindOrder, KINDS, glossaryFiles, parseKindFile, kindFromFileName, safeName, volDecision, volCandidates, shareGlossary, copyGlossary, stopSharing, setVolChoice, folderBooks, volumeStem, type Term, type TermKind, type BuiltinKind, type BookRef, type VolCandidate } from '../glossary';
+import { terms, saveTerms, addTerms, termLine, termsText, parseTerms, termLang, misScripted, langForNew, scriptVerdict, destOf, setDest, seriesOf, folders, addFolder, renameFolder, removeFolder, removeBookGlossary, removeFile, removeAllGlossaries, mergeRepeats, folderStats, statsOf, foldKey, foldMap, linkedFolders, setLinked, glossarySnapshot, glossaryRestore, kindOf, kindOrder, KINDS, glossaryFiles, parseKindFile, kindFromFileName, safeName, volDecision, volCandidates, shareGlossary, copyGlossary, stopSharing, setVolChoice, folderBooks, bookTerms, volumeStem, type Term, type TermKind, type BuiltinKind, type BookRef, type VolCandidate } from '../glossary';
 import { offerUndo } from './undo';
 import { getSettings, updateSettings } from '../settings';
 import { aiReady, retranslateTerms } from '../ai';
 import { copyText, downloadBlob } from './share';
 import { pendingKinds } from './namespanel';
+import { buildIndex, searchIndex, type Ent, type Hit } from '../glosssearch';
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 // (The last retranslation's Undo: kept for the session — the sheet closed and opened again still offers it.)
@@ -40,12 +42,44 @@ async function allBooks(fresh = false): Promise<BookInfo[]> {
   return booksCache;
 }
 
+/** The app's own question before something is deleted: what goes (one line each), then «Delete» (or the other word)
+ *  and cancel, side by side and as wide as each other. Resolves to whether it was said yes. */
+export function confirmSheet(o: { title: string; lines: string[]; ok: string; cancel: string }): Promise<boolean> {
+  return new Promise((resolve) => {
+    let yes = false; const sh = openSheet(o.title, o.cancel, { stack: true, onClose: () => resolve(yes) });
+    sh.el.classList.add('confirm-sheet'); sh.body.style.fontFamily = 'var(--font-ui)';
+    sh.body.append(...o.lines.map((l) => h('p', { class: 'confirm-line', dir: 'auto' }, l)));
+    sh.actions.append(h('button', { type: 'button', class: 'btn text confirm-cancel', onclick: () => sh.close() }, o.cancel), h('button', { type: 'button', class: 'btn danger confirm-ok', onclick: () => { yes = true; sh.close(); } }, icon('trash'), o.ok));
+  });
+}
+/** `text` with the part matching `qf` (a query folded: foldKey(q, true)) marked. */
+function marked(text: string, qf: string): (string | Node)[] {
+  if (!qf) return [text];
+  const m = foldMap(text); const i = m.f.indexOf(qf); if (i < 0) return [text];
+  const a = m.from[i], b = m.to[i + qf.length - 1];
+  return [text.slice(0, a), h('mark', { class: 'gloss-mark' }, text.slice(a, b)), text.slice(b)];
+}
+// (One keydown listener for every glossary panel open: «/» or Ctrl+F on a computer focuses the panel's search while
+// its tab is the one shown and no sheet lies over it.)
+const panels = new Set<{ root: HTMLElement; focus(): void }>();
+function onSearchKey(e: KeyboardEvent): void {
+  for (const p of panels) if (!p.root.isConnected) panels.delete(p);
+  if (!panels.size) { window.removeEventListener('keydown', onSearchKey, true); return; }
+  const tg = e.target as HTMLElement | null; const typing = !!tg && (/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName) || tg.isContentEditable);
+  const slash = e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !typing; const find = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f';
+  if ((!slash && !find) || !fits('computer')) return;
+  const top = [...document.querySelectorAll('.sheet')].pop();
+  for (const p of panels) { if (!top || !top.contains(p.root) || p.root.closest('[hidden]')) continue; e.preventDefault(); e.stopPropagation(); p.focus(); return; }
+}
+
 /** The «Glossary» tab. `book`: the open book (else every book's glossary and the list of books' glossaries). */
 export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?: (folder?: string) => void; toNames?: () => void } = {}): { el: HTMLElement; actions: HTMLElement[]; addFrom(text: string): void; refresh(): void } {
   let book = book0; const root = h('div', { class: 'gloss-panel' });
   // (Where: 'book' — this book's own and what it uses —, 'all' — for every book —, or a folder's id. The file open,
   // or none: the folder's files listed.)
   let where = book ? 'book' : 'all'; let file: TermKind | null = null; let q = '';
+  // (The search: every glossary or the folder shown; how many results are drawn; a result opened — its row then scrolled to.)
+  let allScope = false; let maxShown = 60; let focusId: string | null = null;
   const inc = new Set<string>(), exc = new Set<string>();
   const langOf = (x: Term) => termLang(x) || '-';
   const langName = (c: string) => (c === '-' ? t('glossLangUnset') : langLabel(c));
@@ -55,13 +89,18 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
   const vol = h('div', { class: 'gloss-vol-box' }); const head = h('div', { class: 'gloss-head' });
   const places = h('div', { class: 'chip-row gloss-places' }); const folderBar = h('div', { class: 'gloss-folder-bar' }); const bookList = h('div', { class: 'gloss-books' });
   const langs = h('div', { class: 'chip-row gloss-langs' });
-  const search = h('input', { type: 'search', class: 'gloss-search', placeholder: t('glossSearch'), oninput: (e: Event) => { q = (e.target as HTMLInputElement).value.trim().toLowerCase(); draw(); } }) as HTMLInputElement;
+  const clearBtn = iconButton('close', t('glossSearchClear'), () => { search.value = ''; applyQ(); search.focus(); }); clearBtn.classList.add('gloss-search-clear'); clearBtn.hidden = true;
+  const applyQ = () => { const v = search.value.trim(); clearBtn.hidden = !search.value; if (v === q) return; q = v; maxShown = 60; draw(); };
+  const typed = debounce(applyQ, 120);
+  const search = h('input', { type: 'text', inputmode: 'search', enterkeyhint: 'search', autocomplete: 'off', class: 'gloss-search', placeholder: t('glossSearch'), 'aria-label': t('glossSearch'), oninput: () => { clearBtn.hidden = !search.value; if (!search.value.trim()) applyQ(); else typed(); } }) as HTMLInputElement;
+  const scopeChip = h('button', { type: 'button', class: 'chip small gloss-scope', 'aria-pressed': 'false', onclick: () => { allScope = !allScope; scopeChip.classList.toggle('on', allScope); scopeChip.setAttribute('aria-pressed', String(allScope)); maxShown = 60; if (q) draw(); } }, icon('globe'), t('glossSearchAll'));
+  const searchRow = h('div', { class: 'gloss-search-row' }, h('div', { class: 'gloss-search-box' }, search, clearBtn), scopeChip);
   const autoCb = h('input', { type: 'checkbox', checked: !!getSettings().aiAutoGlossary, onchange: (e: Event) => updateSettings({ aiAutoGlossary: (e.target as HTMLInputElement).checked }) }) as HTMLInputElement;
   const list = h('div', { class: 'gloss-list' }); const retrBar = h('div', { class: 'gloss-retr-bar' }); const fileBar = h('div', { class: 'gloss-file-bar' });
   const opts = h('details', { class: 'gloss-opts' }, h('summary', null, icon('settings'), t('glossOptions')),
     h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('glossAuto'), h('small', { class: 'hint' }, t('glossAutoHint'))), h('span', { class: 'switch' }, autoCb, h('i'))),
     volModeField(), destBox());
-  root.append(vol, head, places, folderBar, bookList, opts, search, fileBar, langs, retrBar, list);
+  root.append(searchRow, vol, head, places, folderBar, bookList, opts, fileBar, langs, retrBar, list);
 
   // (Where the names the translator finds go, for this book: its own list, a folder made by itself for its series,
   // or a folder chosen — new names added there, or the folder only used.)
@@ -130,13 +169,13 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
       const vols = (f: string) => folderBooks(f).filter((id) => titles.has(id)).map((id) => ({ id, v: volumeStem(titleOf(id)).vol })).sort((a, b) => (a.v ?? 0) - (b.v ?? 0));
       head.replaceChildren(h('div', { class: 'gloss-head-row' }, icon('folder'), h('div', { class: 'grow' },
         h('h4', { class: 'gloss-title', dir: 'auto' }, shared.length ? shared[0].name : titleOf(book.id, book.title)),
-        ...(shared.length ? [h('small', { class: 'hint gloss-vols' }, t('glossVolumes', { list: vols(shared[0].f).map((x) => iso(x.v !== null ? String(x.v) : titleOf(x.id))).join(listSep()) }))] : []))),
+        ...(shared.length ? [h('small', { class: 'hint gloss-vols' }, t('glossVolumes', { list: vols(shared[0].f).map((x) => iso(x.v !== null ? String(x.v) : titleOf(x.id))).join(listSep()) }))] : [])), headMore()),
         ...shared.map((s) => h('div', { class: 'gloss-shared' }, h('span', { class: 'grow' }, t('glossSharedWith', { list: s.others.map((id) => nameQ(titleOf(id))).join(listSep()) })),
           h('button', { type: 'button', class: 'btn text small gloss-stop-share', onclick: () => { if (!confirm(t('glossStopShareAsk'))) return; const before = glossarySnapshot(); stopSharing(book!.id, s.f); draw(); offerUndo(t('glossStopped'), () => { glossaryRestore(before); if (root.isConnected) draw(); }); } }, icon('close'), t('glossStopShare')))));
     } else if (where !== 'all' && folders().some((f) => f.id === where)) {
       const f = folders().find((x) => x.id === where)!; const users = folderBooks(f.id).filter((id) => titles.has(id));
       head.replaceChildren(h('div', { class: 'gloss-head-row' }, icon('folder'), h('div', { class: 'grow' }, h('h4', { class: 'gloss-title', dir: 'auto' }, f.name),
-        ...(users.length ? [h('small', { class: 'hint' }, t('glossUsedBy', { list: users.map((id) => nameQ(titleOf(id))).join(listSep()) }))] : []))));
+        ...(users.length ? [h('small', { class: 'hint' }, t('glossUsedBy', { list: users.map((id) => nameQ(titleOf(id))).join(listSep()) }))] : [])), headMore()));
     } else head.replaceChildren(h('div', { class: 'gloss-head-row' }, icon('globe'), h('h4', { class: 'gloss-title grow' }, t('glossEveryBook'))));
   }
 
@@ -146,7 +185,7 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
     const from = h('input', { type: 'text', dir: 'auto', value: x.from, placeholder: t('glossaryFrom'), class: 'gloss-from' }) as HTMLInputElement;
     const to = h('input', { type: 'text', dir: 'auto', value: x.to, placeholder: t('glossaryTo'), class: 'gloss-to' }) as HTMLInputElement;
     const kind = h('select', { class: 'gloss-kind', 'aria-label': t('glossKind') }, ...kindsHere().map((k) => h('option', { value: k, selected: kindOf(x) === k }, kindLabel(k)))) as HTMLSelectElement;
-    const commit = () => { const f = from.value.trim(), v = to.value.trim(); if (!f || !v) return; const moved = kindOf(x) !== kind.value; x = { ...x, from: f, to: v, kind: kind.value as TermKind, auto: x.auto && f === x.from && v === x.to ? x.auto : undefined }; save(x); el.classList.remove('fresh'); if (moved && !fresh) draw(); else drawFileBar(); };
+    const commit = () => { const f = from.value.trim(), v = to.value.trim(); if (!f || !v) return; const moved = kindOf(x) !== kind.value; x = { ...x, from: f, to: v, kind: kind.value as TermKind, auto: x.auto && f === x.from && v === x.to ? x.auto : undefined }; save(x); el.classList.remove('fresh'); if ((moved && !fresh) || !terms().some((y) => y.id === x.id)) draw(); else drawFileBar(); };
     from.addEventListener('change', commit); to.addEventListener('change', commit); kind.addEventListener('change', commit);
     // (Moved: to this book, every book, or a folder.)
     const moveTo = pickButton(t('glossMove'), [['book', book ? titleOf(book.id, book.title) : t('textRuleOneBook')], ['all', t('textRuleAllBooks')], ...folders().map((f) => [`f:${f.id}`, `📁 ${f.name}`] as [string, string])].filter(([k]) => k !== 'book' || !!book) as [string, string][], x.folder ? `f:${x.folder}` : x.book ? 'book' : 'all', (v) => { const { book: _b, folder: _f, ...rest } = x; void _b; void _f; x = { ...rest, ...(v === 'book' && book ? { book: book.id } : v.startsWith('f:') ? { folder: v.slice(2) } : {}) } as Term; if (x.from && x.to) { save(x); draw(); } }, t('close'));
@@ -159,6 +198,10 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
     const el = h('div', { class: 'gloss-row' + (fresh ? ' fresh' : '') + (wrong ? ' wrong' : '') + (kindOf(x) === 'quote' ? ' quote' : ''), 'data-id': x.id },
       h('div', { class: 'gloss-pair' }, from, h('span', { class: 'gloss-arrow' }, '→'), to),
       ...(wrong ? [h('p', { class: 'gloss-warn' }, icon('info'), t('glossWrongScript', { lang: langLabel(termLang(x)) }))] : []),
+      // (Other renderings of the name — a repeat merged into this entry keeps its rendering here: one tapped is used, one removed.)
+      ...(x.alts?.length ? [h('div', { class: 'gloss-alts' }, h('small', { class: 'hint' }, t('glossAlts')), ...x.alts.map((a) => h('span', { class: 'gloss-alt' },
+        h('button', { type: 'button', class: 'chip small gloss-alt-use', title: t('glossAltUse'), dir: 'auto', onclick: () => { x = { ...x, to: a, alts: [x.to, ...x.alts!.filter((y) => y !== a)], auto: undefined }; save(x); draw(); } }, a),
+        iconButton('close', t('glossAltRemove'), () => { const l = x.alts!.filter((y) => y !== a); const { alts: _a, ...rest } = x; void _a; x = l.length ? { ...x, alts: l } : rest; save(x); draw(); }))))] : []),
       h('div', { class: 'gloss-meta' }, ...(fresh ? [] : [sel]), kind, lang, x.auto ? h('span', { class: 'gloss-badge' }, t('glossAutoBadge')) : null, moveTo,
         ...(fresh ? [] : [iconButton('rotate', t('glossRetrOne'), () => { const now = terms().find((y) => y.id === x.id); if (now) retranslate([now]); })]),
         iconButton('copy', t('copy'), () => void copyText(termLine({ from: from.value, to: to.value }, false))),
@@ -179,9 +222,7 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
       const useCb = h('input', { type: 'checkbox', checked: used, onchange: (e: Event) => { const v = (e.target as HTMLInputElement).checked; setLinked(book!.id, v ? [...linkedFolders(book!.id), f.id] : linkedFolders(book!.id).filter((x) => x !== f.id)); toast(v ? t('glossFolderOn') : t('glossFolderOff')); } }) as HTMLInputElement;
       folderBar.replaceChildren(...(book ? [h('label', { class: 'row gloss-use' }, h('span', null, t('glossUseFolder', { book: titleOf(book.id, book.title) })), h('span', { class: 'switch' }, useCb, h('i')))] : []),
         h('div', { class: 'row-btns' }, h('button', { type: 'button', class: 'btn text small', onclick: async () => { const n = (await askText({ title: t('glossRename'), label: t('glossFolderName'), value: f.name, ok: t('save'), cancel: t('cancel') }))?.trim(); if (n) { renameFolder(f.id, n); draw(); } } }, icon('pen'), t('glossRename')),
-          h('button', { type: 'button', class: 'btn text small danger', onclick: () => { if (!confirm(t('glossFolderDeleteAsk', { name: f.name }))) return; const before = glossarySnapshot(); removeFolder(f.id); const after = glossarySnapshot(); where = book ? 'book' : 'all'; draw();
-            // (Undo: the folder back whole — its terms, the books that used it.)
-            offerUndo(t('glossFolderDeleted', { name: f.name }), () => { glossaryRestore(before); if (root.isConnected) draw(); }, () => { glossaryRestore(after); if (root.isConnected) draw(); }); } }, icon('trash'), t('delete'))));
+          h('button', { type: 'button', class: 'btn text small danger', onclick: () => void deleteFolderFlow() }, icon('trash'), t('delete'))));
     } else if (where === 'book' && book && terms().some((x) => !x.folder && x.book === book!.id)) {
       folderBar.replaceChildren(h('button', { type: 'button', class: 'btn text small', onclick: async () => { const name = (await askText({ title: t('glossBookToFolder'), label: t('glossFolderName'), value: titleOf(book!.id, book!.title), ok: t('create'), cancel: t('cancel') }))?.trim(); if (!name) return; const nf = addFolder(name); saveTerms(terms().map((x) => (!x.folder && x.book === book!.id ? { ...x, book: undefined, folder: nf.id } : x))); setLinked(book!.id, [...linkedFolders(book!.id), nf.id]); where = nf.id; draw(); toast(t('glossFolderMade', { name })); } }, icon('folderPlus'), t('glossBookToFolder')));
     } else folderBar.replaceChildren();
@@ -217,26 +258,29 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
     if (!file || q) { fileBar.replaceChildren(); return; }
     const n = terms().filter((x) => inWhere(x) && kindOf(x) === file).length;
     fileBar.replaceChildren(h('button', { type: 'button', class: 'btn text small gloss-back', onclick: () => { file = null; freshRow = null; draw(); } }, icon(document.documentElement.dir === 'rtl' ? 'chevronRight' : 'chevronLeft'), t('glossAllFiles')),
-      h('span', { class: 'gloss-file-now' }, icon(kindIcon(file)), h('b', { dir: 'auto' }, kindLabel(file)), h('small', null, t('glossCount', { n: localDigits(n) }))));
+      h('span', { class: 'gloss-file-now' }, icon(kindIcon(file)), h('b', { dir: 'auto' }, kindLabel(file)), h('small', null, t('glossCount', { n: localDigits(n) }))),
+      (() => { const b = iconButton('trash', t('glossDelFile'), () => void deleteFileFlow(file!)); b.classList.add('gloss-del-file'); return b; })());
   }
   function draw(): void {
     drawVol(); drawHead(); drawPlaces(); drawFileBar();
     const here = terms().filter(inWhere);
     const listing = !file && !q;
-    langs.hidden = true; retrBar.hidden = listing;
+    langs.hidden = true; retrBar.hidden = listing || !!q;
+    if (q) { drawSearch(); return; }
     if (listing) { drawFiles(here); shownNow = []; return; }
     const present = [...new Set(here.map(langOf).filter(Boolean))];
     langs.hidden = present.length < 2;
     langs.replaceChildren(...present.map((c) => h('button', { type: 'button', class: 'chip small' + (inc.has(c) ? ' on' : exc.has(c) ? ' off' : ''), onclick: () => { if (inc.has(c)) { inc.delete(c); exc.add(c); } else if (exc.has(c)) exc.delete(c); else inc.add(c); draw(); } }, exc.has(c) ? '− ' : '', langName(c))));
     const langOk = (x: Term) => { const c = langOf(x); return (!inc.size || inc.has(c)) && !exc.has(c); };
-    // (The search looks through the whole folder, whatever file is open.)
-    const shown = here.filter((x) => langOk(x) && (q ? x.from.toLowerCase().includes(q) || x.to.toLowerCase().includes(q) : kindOf(x) === file)).sort((a, b) => a.from.localeCompare(b.from));
-    list.replaceChildren(...(shown.length ? shown.map((x) => row(x)) : [h('p', { class: 'src' }, q ? t('glossNoMatch') : t('glossFileEmpty'))]));
+    const shown = here.filter((x) => langOk(x) && kindOf(x) === file).sort((a, b) => a.from.localeCompare(b.from));
+    list.replaceChildren(...(shown.length ? shown.map((x) => row(x)) : [h('p', { class: 'src' }, t('glossFileEmpty'))]));
     // (A new line being filled in stays at the top when the list is drawn again — the books' titles come, say.)
     if (freshRow && !freshRow.classList.contains('fresh')) freshRow = null;
     if (freshRow) { list.querySelector(':scope > .src')?.remove(); list.prepend(freshRow); }
     shownNow = shown; for (const id of [...picked]) if (!shown.some((x) => x.id === id)) picked.delete(id);
     drawRetr();
+    // (A search result opened: its row in view, marked for a moment.)
+    if (focusId) { const r = [...list.querySelectorAll<HTMLElement>('.gloss-row')].find((e) => e.dataset.id === focusId); focusId = null; if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('flash'); setTimeout(() => r.classList.remove('flash'), 1800); } }
   }
   /* Retranslate: one entry (its row's button), the ones ticked, or every one shown; the instructions asked for first. */
   let shownNow: Term[] = [];
@@ -260,6 +304,119 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
     const r = row(x, true); freshRow = r; list.prepend(r); (r.querySelector(from ? '.gloss-to' : '.gloss-from') as HTMLInputElement).focus();
   }
   let freshRow: HTMLElement | null = null;
+
+  /* ---------- the search: the whole folder (or every glossary), in every language kept for a name ---------- */
+  // (The index is made once for the terms as they are, and again when they change; a key typed only filters it.)
+  let ixMade: { src: Term[]; sig: string; ix: Ent[] } | null = null;
+  function indexFor(): Ent[] {
+    const src = terms(); const sig = `${allScope ? '*' : `${where}|${book?.id ?? ''}|${linkedFolders(book?.id).join(',')}`}|${document.documentElement.lang}`;
+    if (ixMade && ixMade.src === src && ixMade.sig === sig) return ixMade.ix;
+    const pool = (allScope ? src : src.filter(inWhere)).slice().sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+    ixMade = { src, sig, ix: buildIndex(pool, kindLabel) }; return ixMade.ix;
+  }
+  // (Japanese readings, when the reading helper is already loaded: a name written in kanji found by its kana. Never loaded for this.)
+  const readings = new Map<string, string>(); let readingBusy = false;
+  function warmReadings(ix: Ent[]): void {
+    if (readingBusy || !/[぀-ヿ]/.test(q)) return;
+    void import('../furigana').then(async (m) => {
+      if (!m.furiganaReady() || readingBusy) return; readingBusy = true;
+      try {
+        const tk = await m.ensureTokenizer(); const todo = ix.map((e) => e.members[0].from).filter((f) => /[一-鿿]/.test(f) && !readings.has(f));
+        for (let i = 0; i < todo.length; i += 200) { for (const f of todo.slice(i, i + 200)) readings.set(f, foldKey(tk.tokenize(f).map((x) => x.reading ?? x.surface_form).join(''), true)); await new Promise((r) => setTimeout(r, 0)); if (!root.isConnected) return; }
+        if (todo.length && q) draw();
+      } catch { /* no reading: the other fields still match */ } finally { readingBusy = false; }
+    }, () => undefined);
+  }
+  const placeName = (pl: string): string => (pl === 'all' ? t('glossEveryBook') : pl.startsWith('f:') ? `📁 ${folders().find((f) => f.id === pl.slice(2))?.name ?? ''}` : titleOf(pl.slice(2), ''));
+  function hitRow(x: Hit, qf: string): HTMLElement {
+    const t0 = x.shown;
+    return h('button', { type: 'button', class: 'gloss-hit', dataset: { id: t0.id, kind: kindOf(t0) }, onclick: () => openHit(x) },
+      h('span', { class: 'gloss-hit-pair' }, h('span', { class: 'gloss-hit-from', dir: 'auto' }, ...marked(t0.from, qf)), h('span', { class: 'gloss-arrow' }, '→'), h('span', { class: 'gloss-hit-to', dir: 'auto' }, ...marked(t0.to, qf))),
+      ...(allScope ? [h('small', { class: 'gloss-hit-place', dir: 'auto' }, placeName(x.ent.place))] : []),
+      ...x.also.map((a) => h('small', { class: 'gloss-hit-also', dir: 'auto' }, a.field === 'to' ? t('glossAlso', { lang: iso(langName(langOf(a.term))) }) : a.field === 'alt' ? t('glossAlsoAlt') : t('glossAlsoNote'), ' ', h('span', { dir: 'auto' }, ...marked(a.text, qf)))));
+  }
+  function drawSearch(): void {
+    shownNow = []; retrBar.hidden = true; langs.hidden = true;
+    const ix = indexFor(); const qf = foldKey(q, true);
+    const { hits, total } = searchIndex(ix, q, { target: getSettings().aiTarget, limit: maxShown, reading: readings.size ? (f) => readings.get(f) : undefined });
+    warmReadings(ix);
+    if (!hits.length) { list.replaceChildren(h('p', { class: 'src gloss-nomatch' }, t('glossNoMatch'))); return; }
+    const by = new Map<TermKind, Hit[]>(); for (const x of hits) { const k = kindOf(x.shown); by.set(k, [...(by.get(k) ?? []), x]); }
+    list.replaceChildren(h('p', { class: 'hint gloss-total' }, t('glossSearchTotal', { n: localDigits(total) })),
+      ...kindOrder(by.keys()).map((k) => h('section', { class: 'gloss-hit-group', dataset: { kind: k } }, h('h4', { class: 'names-head' }, icon(kindIcon(k)), h('span', { dir: 'auto' }, kindLabel(k)), h('small', null, t('glossCount', { n: localDigits(by.get(k)!.length) }))), ...by.get(k)!.map((x) => hitRow(x, qf)))),
+      ...(total > hits.length ? [h('button', { type: 'button', class: 'btn tonal small gloss-more', onclick: () => { maxShown += 60; draw(); } }, t('glossSearchMore'))] : []));
+  }
+  /** A result opened where it lives: its file in its folder, the search cleared, the row in view. */
+  function openHit(x: Hit): void {
+    const pl = x.ent.place; const t0 = x.shown;
+    if (pl === 'all') where = 'all'; else if (pl.startsWith('f:')) { const id = pl.slice(2); where = where === id ? id : book && linkedFolders(book.id).includes(id) ? 'book' : id; }
+    else { const b = pl.slice(2); if (b !== book?.id) { book = { id: b, title: titleOf(b, b) }; (destEl as HTMLElement & { redraw?: () => void }).redraw?.(); } where = 'book'; }
+    file = kindOf(t0); focusId = t0.id; q = ''; search.value = ''; clearBtn.hidden = true; allScope = false; scopeChip.classList.remove('on'); scopeChip.setAttribute('aria-pressed', 'false'); draw();
+  }
+
+  /* ---------- deleting a folder, a file, every glossary: asked in the app's own sheet, Undo offered ---------- */
+  // (The chapters read for names are marked per book: a book whose glossary is gone is read again, and Undo marks them again.)
+  const scanKeys = (ids: string[]) => { const l = baseLang(getSettings().aiTarget); return ids.flatMap((id) => [`glossScan:${id}:${l}`, `glossScan:${id}`]); };
+  async function takeScans(ids: string[]): Promise<Map<string, unknown>> {
+    const kept = new Map<string, unknown>();
+    try { const { db } = await import('../db'); for (const k of scanKeys(ids)) { const v = await db.getMeta(k); if (v !== undefined) { kept.set(k, v); await db.deleteMeta(k); } } } catch { /* no store: nothing to forget */ }
+    return kept;
+  }
+  async function putScans(m: Map<string, unknown>): Promise<void> { if (!m.size) return; try { const { db } = await import('../db'); for (const [k, v] of m) await db.setMeta(k, v); } catch { /* left */ } }
+  /** `doIt` done, then the Undo (and its Redo) that put everything back as it was. */
+  function removeWith(label: string, ids: string[], doIt: () => void): void {
+    const before = glossarySnapshot(); doIt(); const after = glossarySnapshot(); let scans = takeScans(ids);
+    file = null; freshRow = null; draw();
+    offerUndo(label, async () => { glossaryRestore(before); await putScans(await scans); if (root.isConnected) draw(); }, async () => { glossaryRestore(after); scans = takeScans(ids); if (root.isConnected) draw(); });
+  }
+  const countLines = (st: { files: number; terms: number; quotes: number }) => [t('glossDelFiles', { n: localDigits(st.files) }), t('glossDelTerms', { n: localDigits(st.terms) }), t('glossDelQuotes', { n: localDigits(st.quotes) })];
+  /** What «Delete folder» would remove from here: a folder's, or the open book's glossary (its own terms and the folders it uses). */
+  function folderTarget(): { name: string; stats: ReturnType<typeof statsOf>; others: string[]; ids: string[]; run(): void; title: 'folder' | 'book' } | null {
+    if (where !== 'all' && where !== 'book') {
+      const f = folders().find((x) => x.id === where); if (!f) return null; const users = folderBooks(f.id);
+      return { name: f.name, stats: folderStats(f.id), others: users.filter((id) => id !== book?.id && titles.has(id)), ids: [...new Set([...users, ...(book ? [book.id] : [])])], run: () => removeFolder(f.id), title: 'folder' };
+    }
+    if (where === 'book' && book) {
+      const b = book; const own = bookTerms(b.id); const fs = linkedFolders(b.id).filter((f) => folders().some((x) => x.id === f)); if (!own.length && !fs.length) return null;
+      const users = fs.flatMap((f) => folderBooks(f)); const shared = fs.length ? folders().find((x) => x.id === fs[0])?.name : undefined;
+      return { name: shared ?? titleOf(b.id, b.title), stats: statsOf(own), others: [...new Set(users)].filter((id) => id !== b.id && titles.has(id)), ids: [...new Set([b.id, ...users])], run: () => removeBookGlossary(b.id), title: 'book' };
+    }
+    return null;
+  }
+  async function deleteFolderFlow(): Promise<void> {
+    const x = folderTarget(); if (!x) { toast(t('glossaryNone')); return; }
+    const ok = await confirmSheet({ title: t(x.title === 'book' ? 'glossDelBookTitle' : 'glossDelFolderTitle', { name: iso(x.name) }), lines: [t('glossDelBody'), ...countLines(x.stats), ...(x.others.length ? [t('glossDelShared', { list: x.others.map((id) => nameQ(titleOf(id))).join(listSep()) })] : [])], ok: t('delete'), cancel: t('cancel') });
+    if (!ok) return;
+    where = book ? 'book' : 'all'; removeWith(t('glossFolderDeleted', { name: x.name }), x.ids, x.run);
+  }
+  async function deleteFileFlow(k: TermKind): Promise<void> {
+    const n = terms().filter((y) => inWhere(y) && kindOf(y) === k).length;
+    const ok = await confirmSheet({ title: t('glossDelFileTitle', { name: iso(kindLabel(k)) }), lines: [t('glossDelFileBody'), t('glossDelTerms', { n: localDigits(n) })], ok: t('delete'), cancel: t('cancel') });
+    if (!ok) return;
+    made.delete(k); removeWith(t('glossFileDeleted', { name: kindLabel(k) }), [], () => { removeFile(k, inWhere); });
+  }
+  async function deleteAllFlow(): Promise<void> {
+    const all = terms(); const ok = await confirmSheet({ title: t('glossDelAllTitle'), lines: [t('glossDelAllBody'), ...countLines({ ...statsOf(all), files: new Set(all.map((y) => kindOf(y))).size })], ok: t('delete'), cancel: t('cancel') });
+    if (!ok) return;
+    made.clear(); where = book ? 'book' : 'all'; removeWith(t('glossAllDeleted'), [...(book ? [book.id] : []), ...books.map((b) => b.id)], removeAllGlossaries);
+  }
+  function mergeFlow(): void {
+    const before = glossarySnapshot(); const n = mergeRepeats();
+    if (!n) { toast(t('glossMergeNone')); return; }
+    draw(); offerUndo(t('glossMerged', { n: localDigits(n) }), () => { glossaryRestore(before); if (root.isConnected) draw(); }, () => { mergeRepeats(); if (root.isConnected) draw(); });
+  }
+  /** The folder's own menu (beside its name): rename, merge repeats, delete. */
+  function headMore(): HTMLElement {
+    const b = iconButton('more', t('glossMore'), (ev) => {
+      const f = folders().find((x) => x.id === where); const sh = openSheet(t('glossMore'), t('close'), { stack: true, at: ev }); sh.body.style.fontFamily = 'var(--font-ui)';
+      const item = (ic: string, label: string, fn: () => void, cls = '') => h('button', { type: 'button', class: 'dest-row ' + cls, onclick: () => { sh.close(); fn(); } }, icon(ic), h('span', { class: 'grow' }, label));
+      sh.body.append(h('div', { class: 'dest-list' },
+        ...(f ? [item('pen', t('glossRename'), () => void (async () => { const n = (await askText({ title: t('glossRename'), label: t('glossFolderName'), value: f.name, ok: t('save'), cancel: t('cancel') }))?.trim(); if (n) { renameFolder(f.id, n); draw(); } })(), 'gloss-rename')] : []),
+        item('copy', t('glossMerge'), () => mergeFlow(), 'gloss-merge'),
+        ...(folderTarget() ? [item('trash', t('glossDelFolder'), () => void deleteFolderFlow(), 'gloss-del-folder danger')] : [])));
+    });
+    b.classList.add('gloss-head-more'); return b;
+  }
   const folderName = () => (where === 'book' && book ? titleOf(book.id, book.title) : where === 'all' ? t('glossEveryBook') : folders().find((f) => f.id === where)?.name ?? 'glossary');
 
   /* ---------- the files: written out (a folder of text files, one per kind; or one text file), read back ---------- */
@@ -271,7 +428,10 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
       item('download', t('glossExportTxt'), () => exportTxt(), 'gloss-export-txt'),
       item('import', t('glossImportFiles'), () => importFiles(), 'gloss-import'),
       item('import', t('paste'), () => void paste(), 'gloss-paste'),
-      item('copy', t('glossCopyAll'), () => void copyText(termsText(terms().filter(inWhere).sort((a, b) => a.from.localeCompare(b.from)))), 'gloss-copy-all')));
+      item('copy', t('glossCopyAll'), () => void copyText(termsText(terms().filter(inWhere).sort((a, b) => a.from.localeCompare(b.from)))), 'gloss-copy-all'),
+      item('copy', t('glossMerge'), () => mergeFlow(), 'gloss-merge'),
+      ...(folderTarget() ? [item('trash', t('glossDelFolder'), () => void deleteFolderFlow(), 'gloss-del-folder danger')] : []),
+      item('trash', t('glossDelAll'), () => void deleteAllFlow(), 'gloss-del-all danger')));
   }
   async function exportZip(): Promise<void> {
     const here = terms().filter(inWhere); if (!here.length) { toast(t('glossaryNone')); return; }
@@ -302,14 +462,15 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
     const n = addTerms(got); draw(); toast(t('glossPasted', { n: localDigits(n) }) + (other ? ` · ${t('glossPastedOther', { lang: langLabel(tl), n: localDigits(other) })}` : ''), 'info', other ? 5000 : 2200);
   }
   const filesBtn = h('button', { type: 'button', class: 'btn small tonal gloss-files-btn', onclick: (e: Event) => filesMenu(e) }, icon('folder'), t('glossFiles'));
-  const addBtn = h('button', { type: 'button', class: 'btn small tonal gloss-add', onclick: () => { if (!file && !q) { file = 'person'; draw(); } addRow(); } }, icon('plus'), t('glossaryAdd'));
+  const addBtn = h('button', { type: 'button', class: 'btn small tonal gloss-add', onclick: () => { if (q) { search.value = ''; applyQ(); } if (!file) { file = 'person'; draw(); } addRow(); } }, icon('plus'), t('glossaryAdd'));
 
+  { const me = { root, focus: () => { search.focus(); search.select(); } }; if (!panels.size) window.addEventListener('keydown', onSearchKey, true); panels.add(me); }
   void allBooks(true).then((l) => { books = l; titles = new Map(l.map((b) => [b.id, b.title])); if (root.isConnected || true) draw(); });
   draw(); void checkVol();
   return {
     el: root, actions: [filesBtn, addBtn],
     // (A word picked in the book: its file — Characters by default — open, a new line filled with it.)
-    addFrom: (text: string) => { where = book ? 'book' : 'all'; q = ''; search.value = ''; if (!file) file = 'person'; draw(); addRow(text.trim().slice(0, 120)); },
+    addFrom: (text: string) => { where = book ? 'book' : 'all'; q = ''; search.value = ''; clearBtn.hidden = true; if (!file) file = 'person'; draw(); addRow(text.trim().slice(0, 120)); },
     refresh: () => { if (root.isConnected) draw(); },
   };
 }

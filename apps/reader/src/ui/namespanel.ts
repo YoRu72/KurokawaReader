@@ -4,7 +4,7 @@
 import { h, icon, iconButton, pickButton, toast } from './dom';
 import { t, localDigits } from '../i18n';
 import { getSettings } from '../settings';
-import { addTerms, folders, linkedFolders, setLinked, namesTarget, kindOf, kindOrder, KINDS, type TermKind } from '../glossary';
+import { addTerms, newNames, termKey, folders, linkedFolders, setLinked, namesTarget, kindOf, kindOrder, KINDS, type TermKind } from '../glossary';
 import { aiHooks } from './aisheet';
 import { kindLabel, kindIcon, langLabel } from './glossarysheet';
 import type { Found } from '../ai';
@@ -35,9 +35,11 @@ export function namesPanel(book: { id: string; title: string } | undefined, chan
     try {
       const found = await x.findNames();
       if (!el.isConnected) return;
-      const had = waiting.get(book!.id) ?? []; const seen = new Set(had.map((y) => y.from.toLowerCase()));
-      waiting.set(book!.id, [...had, ...found.filter((y) => !seen.has(y.from.toLowerCase()))]);
-      status.textContent = found.length ? '' : t('trSuggestNone');
+      // (Names the glossary already has, and a name found more than once, are not listed again.)
+      const had = waiting.get(book!.id) ?? []; const seen = new Set(had.map((y) => termKey(y.from)));
+      const fresh = newNames(found, book!.id, target()).filter((y) => !seen.has(termKey(y.from)));
+      waiting.set(book!.id, [...had, ...fresh]);
+      status.textContent = fresh.length ? '' : t('trSuggestNone');
       if (found.refused) status.textContent = t('glossRefused', { n: localDigits(found.refused), lang: langLabel(target()) });
       draw(); changed();
     } catch (e) { status.textContent = String((e as Error).message ?? e); }
@@ -46,12 +48,13 @@ export function namesPanel(book: { id: string; title: string } | undefined, chan
   const accept = (items: Found[]) => {
     if (!items.length) return;
     const n = addTerms(items.map((f) => ({ from: f.from, to: f.to, kind: kindOf(f.kind), lang: target(), ...scopeOf() })));
-    const gone = new Set(items.map((f) => f.from.toLowerCase())); waiting.set(book.id, (waiting.get(book.id) ?? []).filter((f) => !gone.has(f.from.toLowerCase())));
+    const gone = new Set(items.map((f) => termKey(f.from))); waiting.set(book.id, (waiting.get(book.id) ?? []).filter((f) => !gone.has(termKey(f.from))));
     toast(t('trTermsAdded', { n: localDigits(n) })); draw(); changed(); hk()?.added();
   };
-  const reject = (items: Found[]) => { const gone = new Set(items.map((f) => f.from.toLowerCase())); waiting.set(book.id, (waiting.get(book.id) ?? []).filter((f) => !gone.has(f.from.toLowerCase()))); draw(); changed(); };
+  const reject = (items: Found[]) => { const gone = new Set(items.map((f) => termKey(f.from))); waiting.set(book.id, (waiting.get(book.id) ?? []).filter((f) => !gone.has(termKey(f.from)))); draw(); changed(); };
   function draw(): void {
-    const all = waiting.get(book!.id) ?? [];
+    // (A name that has since come into the glossary — by hand, or from another volume — is no longer waiting.)
+    const all = newNames(waiting.get(book!.id) ?? [], book!.id, target()); waiting.set(book!.id, all);
     if (!all.length) { list.replaceChildren(h('p', { class: 'src ai-empty' }, t('namesNone'))); acceptAll.disabled = true; rejectAll.disabled = true; return; }
     acceptAll.disabled = false; rejectAll.disabled = false;
     const by = new Map<TermKind, Found[]>(); for (const f of all) { const k = kindOf(f.kind); by.set(k, [...(by.get(k) ?? []), f]); }
@@ -72,4 +75,4 @@ export function namesPanel(book: { id: string; title: string } | undefined, chan
   return { el, actions: [rejectAll, acceptAll] };
 }
 /** Proposals put in the waiting list from elsewhere (the translator, when names are not added on their own). */
-export function addWaiting(bookId: string, found: Found[]): void { const had = waiting.get(bookId) ?? []; const seen = new Set(had.map((y) => y.from.toLowerCase())); waiting.set(bookId, [...had, ...found.filter((y) => !seen.has(y.from.toLowerCase()))]); }
+export function addWaiting(bookId: string, found: Found[]): void { const had = waiting.get(bookId) ?? []; const seen = new Set(had.map((y) => termKey(y.from))); waiting.set(bookId, [...had, ...newNames(found, bookId, getSettings().aiTarget).filter((y) => !seen.has(termKey(y.from)))]); }

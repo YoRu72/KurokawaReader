@@ -108,9 +108,11 @@ const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: 
   await p.click('.gloss-file[data-kind="person"]'); await p.waitForSelector('.gloss-row');
   const rows = await p.$$eval('.gloss-row .gloss-from', (e) => e.map((x) => x.value)); ok('a file opened: its terms', rows.join() === 'Lin Feng,Wen Yu', rows);
   await shot(p, 'R8-file-characters.png');
-  await p.fill('.gloss-search', 'palm'); await p.waitForTimeout(200);
-  ok('the search looks through the whole folder', (await p.$$eval('.gloss-row .gloss-from', (e) => e.map((x) => x.value))).join() === 'Iron Palm');
-  await p.fill('.gloss-search', ''); await p.click('.gloss-back'); await p.waitForSelector('.gloss-files');
+  await p.fill('.gloss-search', 'palm'); await p.waitForSelector('.gloss-hit', { timeout: 4000 });
+  ok('the search looks through the whole folder (results by file; the match marked)', (await p.$$eval('.gloss-hit .gloss-hit-from', (e) => e.map((x) => x.textContent))).join() === 'Iron Palm' && (await p.$eval('.gloss-hit .gloss-mark', (e) => e.textContent)) === 'Palm');
+  await p.click('.gloss-hit'); await p.waitForSelector('.gloss-row .gloss-from');
+  ok('a result tapped opens its file for editing, the search cleared', (await p.$eval('.gloss-search', (e) => e.value)) === '' && (await p.$eval('.gloss-file-now b', (e) => e.textContent)) === 'Skills' && (await p.$$eval('.gloss-row .gloss-from', (e) => e.map((x) => x.value))).includes('Iron Palm'));
+  await p.click('.gloss-back'); await p.waitForSelector('.gloss-files');
 
   // Tabs: switched without closing the sheet; each keeps its state; arrow keys; the row fits the phone.
   await p.evaluate(() => { document.querySelector('.ai-sheet').__mark = 1; });

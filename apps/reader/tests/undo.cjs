@@ -553,8 +553,8 @@ async function listsSection() {
     // The folder, with its term.
     await p.evaluate(() => [...document.querySelectorAll('.gloss-places .chip')].find((c) => /Saga/.test(c.textContent)).click());
     const snap = await p.evaluate(() => [localStorage.getItem('kr.glossary'), localStorage.getItem('kr.glossaryFolders')]);
-    p.once('dialog', (d) => d.accept());
     await p.evaluate(() => [...document.querySelectorAll('.gloss-folder-bar button')].find((b) => /Delete/.test(b.textContent)).click());
+    await p.waitForSelector('.confirm-sheet .confirm-ok', { timeout: 5000 }); await p.click('.confirm-sheet .confirm-ok');   // (the app's own question)
     await snack(p);
     ok(tag + 'a glossary folder deleted (its term with it)', !(await p.evaluate(() => localStorage.getItem('kr.glossary') ?? '')).includes('"g2"'));
     await snack(p, true);
