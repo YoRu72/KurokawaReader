@@ -2117,7 +2117,9 @@ html[dir='rtl'] .tr-term .upd-arrow svg { transform: scaleX(-1); }
 .tr-pill { max-width: calc(100vw - 20px); box-sizing: border-box; }
 .tr-pill > button { flex: none; }
 .tr-pill .tr-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 420px) { .tr-pill button { width: 36px; height: 36px; } .tr-pill .tr-status { padding: 0 6px; font-size: 13px; } }
+/* On a narrow phone the status takes a row of its own above the buttons: the buttons keep their 40 px and a gap (they are never shrunk). */
+.tr-pill { gap: 4px; }
+@media (max-width: 420px) { .tr-pill { flex-wrap: wrap; justify-content: center; row-gap: 2px; width: max-content; } .tr-pill .tr-status { order: -1; flex: 1 0 100%; padding: 0 6px; text-align: center; } .tr-pill .tr-status:empty { display: none; } body:has(.tr-pill:not([hidden]) .tr-status:not(:empty)) .job-chip { bottom: calc(34px + var(--safe-bottom) + 72px + 86px); } }
 /* The translation bar folded away: a small button at the side keeps the translation and brings the bar back. */
 .tr-pill[hidden] { display: none; }
 .tr-mini { position: fixed; inset-inline-end: 14px; bottom: calc(34px + var(--safe-bottom) + 76px); z-index: 41; width: 48px; height: 48px; border-radius: 16px; display: inline-flex; align-items: center; justify-content: center; background: var(--md-surface-container-high); color: var(--md-on-surface); box-shadow: var(--el-3); animation: pop2 var(--dur-med) var(--ease-spring); }
@@ -2151,7 +2153,6 @@ body:has(.tr-pill:not([hidden])) .job-chip { bottom: calc(34px + var(--safe-bott
 .gloss-badge { font: 600 11px var(--font-ui); padding: 2px 8px; border-radius: 999px; background: var(--md-tertiary-container, var(--md-secondary-container)); color: var(--md-on-tertiary-container, var(--md-on-secondary-container)); }
 .tr-titles .segmented { margin-top: 6px; }
 .tr-pill .tr-save.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
-@media (max-width: 420px) { .tr-pill button { width: 36px; height: 36px; } .tr-pill .tr-status { padding: 0 6px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; } }
 /* The image viewer's bar fits a phone: its buttons share the width (the close one stayed outside it). */
 .lightbox .lb-bar { justify-content: space-between; overflow: hidden; box-sizing: border-box; max-width: calc(100vw - 24px); }
 .lightbox .lb-bar > * { flex: 0 1 auto; min-width: 0; }
@@ -2510,6 +2511,9 @@ html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
 .ai-sheet .sheet-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
 .ai-tab-acts { display: contents; }
 .ai-sheet .sheet-actions .btn { min-width: 0; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Three equal columns: a label and its icon must fit inside the button (less side padding; on a narrow phone the icon goes, the label stays whole). */
+.ai-sheet .sheet-actions .btn { padding-inline: 12px; }
+@media (max-width: 380px) { .ai-sheet .sheet-actions .btn svg { display: none; } }
 .ai-input-row { display: flex; gap: 8px; align-items: center; } .ai-input-row > input { flex: 1 1 auto; min-width: 0; width: auto; } .ai-input-row > .btn { flex: none; white-space: nowrap; }
 .ai-prompt-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .ai-prompt-tools > .icon-btn { margin-inline-start: auto; }
 .ai-empty { padding: 18px 4px; text-align: center; }

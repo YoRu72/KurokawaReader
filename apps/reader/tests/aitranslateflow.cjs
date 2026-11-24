@@ -1,9 +1,9 @@
 // node tests/aitranslateflow.cjs [en|ar]: the AI translator's two new ways in (src/ui/gather.ts, src/ui/translator.ts) on a phone
 // (412×915, dark), against a stand-in provider answered here — no real service is ever reached.
-//  A «Gather the names first?»: the question appears once and not again in the session; closed unanswered it starts nothing;
+//  A «Would you like to gather the terms?»: the question appears once and not again in the session; closed unanswered it starts nothing;
 //    «Translate without», «Gather, then translate» and «Don't ask again for this book» each do what they say; the last one persists
 //    across reopening the book and is undone in Glossary options; the glossary of a former volume is named, the primary action
-//    reads «Check this volume for new names», only the NEW names are added (3 found, 2 held already → 1) and said with a counted
+//    reads «Check this volume for new terms», only the NEW names are added (3 found, 2 held already → 1) and said with a counted
 //    message and a «Show» that opens the Glossary tab; nothing new is said too; a failing gather still lets the translation run.
 //  B Starting by itself: off by default → no request when a book opens; on → one translation request for the chapter shown, none when
 //    its translation is saved, none when the book's language is the target; the book's own «Never» wins, its «Always» wins over an
@@ -28,7 +28,7 @@ const BOOKS = [['Gate Story Vol. 1', 'v1', 'en'], ['Gate Story Vol. 2', 'v2', 'e
 const files = BOOKS.map(([title, ident, lang]) => { const f = path.join(out, `${ident}.epub`); execFileSync('python3', ['-c', MAKE, f, title, ident, lang]); return f; });
 let fails = 0; const ok = (n, c, x) => { console.log((c ? 'ok   ' : 'FAIL ') + n + (c || x === undefined ? '' : '  ' + JSON.stringify(x))); if (!c) fails++; };
 const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 4000 }).catch(() => undefined); await p.waitForTimeout(250); await p.screenshot({ path: path.join(SHOTS, name) }); } };
-const T = { title: AR ? 'هل تُجمَع الأسماء أولًا؟' : 'Gather the names first?', go: AR ? 'جمع الأسماء ثم الترجمة' : 'Gather, then translate', check: AR ? 'البحث في هذا المجلد عن أسماء جديدة' : 'Check this volume for new names', skip: AR ? 'الترجمة بلا جمع' : 'Translate without', never: AR ? 'عدم السؤال ثانيةً عن هذا الكتاب' : "Don't ask again for this book", newTerms: AR ? 'أُضيفت مصطلحات جديدة. العدد: 1' : 'New terms added. Count: 1', noNew: AR ? 'لا أسماء جديدة: المسرد يشمل هذا الجزء' : 'No new names: the glossary already covers this part', failed: AR ? 'تعذّر جمع الأسماء' : 'could not be gathered', inUse: AR ? 'قيد الاستعمال' : 'is in use' };
+const T = { title: AR ? 'أتودّ جمع المصطلحات؟' : 'Would you like to gather the terms?', go: AR ? 'جمع المصطلحات ثم الترجمة' : 'Gather, then translate', check: AR ? 'فحص المجلد بحثًا عن مصطلحات جديدة' : 'Check this volume for new terms', skip: AR ? 'الترجمة بلا جمع' : 'Translate without', never: AR ? 'عدم السؤال ثانيةً عن هذا الكتاب' : "Don't ask again for this book", newTerms: AR ? 'أُضيفت مصطلحات جديدة. العدد: 1' : 'New terms added. Count: 1', noNew: AR ? 'لا مصطلحات جديدة: المسرد يشمل هذا الجزء' : 'No new terms: the glossary already covers this part', failed: AR ? 'تعذّر جمع المصطلحات' : 'could not be gathered', inUse: AR ? 'قيد الاستعمال' : 'is in use' };
 (async () => {
   await new Promise((r) => server.listen(0, r)); const port = server.address().port;
   const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], viewport: { width: 412, height: 915 }, colorScheme: 'dark', locale: LANG }); const p = await ctx.newPage();
@@ -72,7 +72,7 @@ const T = { title: AR ? 'هل تُجمَع الأسماء أولًا؟' : 'Gathe
   const q = await p.evaluate(() => { const s = document.querySelector('.gather-sheet'); const r = (e) => e.getBoundingClientRect(); const row = [...s.querySelectorAll('.gather-acts-row .btn')]; const nv = s.querySelector('.gather-never'); const seg = [...s.querySelectorAll('.gather-scope button')];
     return { title: s.querySelector('.sheet-head h3').textContent, btns: row.map((x) => [Math.round(r(x).width), Math.round(r(x).height), x.textContent]), never: [Math.round(r(nv).width), Math.round(r(nv).height), nv.textContent], scope: seg.map((x) => [x.textContent, x.getAttribute('aria-pressed'), Math.round(r(x).height)]), cost: s.querySelector('.gather-cost').textContent, why: s.querySelector('.gather-why').textContent, over: s.scrollWidth > s.clientWidth + 1, order: [...s.querySelectorAll('.sheet-actions button')].map((x) => x.className.match(/gather-(go|skip|never)/)?.[1]), vol: !!s.querySelector('.gather-volume') }; });
   console.log('question:', JSON.stringify(q));
-  ok('titled «Gather the names first?», one line why', q.title === T.title && q.why.length > 10);
+  ok('titled «Would you like to gather the terms?», one line why', q.title === T.title && q.why.length > 10);
   ok('the three actions in their order: gather, translate without, don\'t ask again', q.order.join() === 'go,skip,never' && q.btns[0][2] === T.go && q.btns[1][2] === T.skip && q.never[2] === T.never, q);
   ok('the two buttons as wide as each other, every target at least 40 px high', Math.abs(q.btns[0][0] - q.btns[1][0]) <= 1 && q.btns.every((x) => x[1] >= 40) && q.never[1] >= 40 && q.scope.every((x) => x[2] >= 40), q);
   ok('the scope: this chapter chosen first, the whole book offered; the cost said plainly (the AI service, requests)', q.scope.length === 2 && q.scope[0][1] === 'true' && q.scope[1][1] === 'false' && /\d/.test(q.cost) && !q.over, q.cost);
@@ -129,7 +129,7 @@ const T = { title: AR ? 'هل تُجمَع الأسماء أولًا؟' : 'Gathe
   const v = await p.evaluate(() => ({ line: document.querySelector('.gather-volume')?.textContent ?? '', go: document.querySelector('.gather-go').textContent, skip: document.querySelector('.gather-skip').textContent }));
   console.log('volume:', JSON.stringify(v));
   ok('the former volume\'s glossary is named', v.line.includes('Gate Story Vol. 1') && v.line.includes(T.inUse), v);
-  ok('the primary action reads «Check this volume for new names»', v.go === T.check, v);
+  ok('the primary action reads «Check this volume for new terms»', v.go === T.check, v);
   if (!AR) await shot(p, 'S3-gather-volume.png');
   await p.click('.gather-go'); await p.waitForSelector('.toast.has-action', { timeout: 25000 });
   const msg = await p.$eval('.toast .toast-text', (e) => e.textContent); console.log('toast:', msg);

@@ -4,7 +4,7 @@
 // button), moving with them while it is shown; a sheet opened over it hides it (its time standing still).
 
 /** What may lie along the bottom: the pill rides above whichever of these it would cover. */
-const BOTTOM = '.fab, .selection-bar, .float-toolbar, .pdf-bar, .ink-bar, .read-status';
+const BOTTOM = '.fab, .selection-bar, .float-toolbar, .pdf-bar, .ink-bar, .read-status, .tr-pill, .tr-mini';
 const seen = (b: HTMLElement): boolean => { if (b.hidden || !b.getClientRects().length) return false; const cs = getComputedStyle(b); return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0'; };
 /** The pill placed above the bottom's bars and buttons it would cover (its own CSS place when nothing is in the way). */
 export function placePill(el: HTMLElement): void {
@@ -52,7 +52,7 @@ export function swipeAway(el: HTMLElement, close: () => void): void {
 
 /** What the reader operates by, that a notice must never lie over: the page buttons at a chapter's end, the toolbar, the bars, a
  *  computer's page-turn arrows. */
-const CONTROLS = '.chapter-nav .cn-btn, .page-arrow, .float-toolbar, .selection-bar, .pdf-bar, .ink-bar, .read-status, .fab';
+const CONTROLS = '.chapter-nav .cn-btn, .page-arrow, .float-toolbar, .selection-bar, .pdf-bar, .ink-bar, .read-status, .fab, .tr-pill, .tr-mini';
 /** A notice (the reading dictionary's offer…) put above whatever of the reading controls it would cover, from its own CSS place
  *  upward — never over them. Called again as the page scrolls or turns; with nothing in the way it is back at its CSS place. */
 export function placeNotice(el: HTMLElement): void {
