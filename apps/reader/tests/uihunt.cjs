@@ -37,6 +37,24 @@ const waitNotice = async (p) => { await p.evaluate(() => document.querySelector(
 let seeded = false;
 const aiClear = async (p) => { await p.evaluate(() => new Promise((res) => { localStorage.setItem('kr.visual', JSON.stringify({ furigana: true })); sessionStorage.clear(); const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('meta', 'readwrite'); const st = tx.objectStore('meta'); st.getAllKeys().onsuccess = (e) => { for (const k of e.target.result) if (/^tr/.test(String(k))) st.delete(k); }; tx.oncomplete = () => res(1); }; })); await p.reload(); await p.waitForSelector('.library-view', { timeout: 15000 }); await p.waitForTimeout(300); };
 const aiSeed = async (p) => { seeded = true; await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, { aiProvider: 'custom', aiBaseUrl: 'https://ai.test/v1', aiKey: 'k', aiModel: 'm', aiTarget: 'ar', aiTask: 'translate', aiPrefetch: false }); localStorage.setItem('kr.visual', JSON.stringify(v)); }); await p.reload(); await p.waitForSelector('.library-view', { timeout: 15000 }); await p.waitForTimeout(400); };
+// The library helpers' views (0.67): they seed settings (aiClear puts them back and reloads) and, for the notes and the yearly goal, made-up
+// highlights and finished marks (dataClear takes them out of every book again) — so no view after them sees anything of it.
+let dataSeeded = false;
+const dataClear = async (p) => { await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { for (const b of e.target.result) { b.highlights = []; b.bookmarks = []; delete b.done; delete b.doneAt; delete b.titles; delete b.series; st.put(b); } }; tx.oncomplete = () => res(1); }; })); };
+const visual = (p, patch) => p.evaluate((patch) => { const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, patch); localStorage.setItem('kr.visual', JSON.stringify(v)); }, patch);
+const reloadLib = async (p) => { await p.reload(); await p.waitForSelector('.library-view .book-card', { timeout: 20000 }); await p.waitForTimeout(500); };
+const DETAILS = { en: 'Edit details', ar: 'تحرير التفاصيل' };
+const bulkOpen = async (p) => {
+  seeded = true;
+  await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view .book-card[data-book]', { timeout: 15000 });
+  await p.click('.library-view .tool-btn[aria-pressed]'); await p.waitForSelector('.sel-head');
+  const ids = await p.$$eval('.book-card[data-book]', (e) => e.slice(0, 3).map((x) => x.dataset.book));
+  for (const id of ids) { await p.click(`.book-card[data-book="${id}"]`); await p.waitForTimeout(80); }
+  const label = DETAILS[await p.evaluate(() => localStorage.getItem('kr.lang'))] || DETAILS.en;
+  const direct = await p.evaluate((l) => { const x = [...document.querySelectorAll('.sel-actions .sel-act')].find((e) => e.getAttribute('aria-label') === l); if (x) { x.click(); return true; } return false; }, label);
+  if (!direct) { await p.evaluate(() => [...document.querySelectorAll('.sel-actions .sel-act')].pop().click()); await p.waitForSelector('.sheet .dest-row'); await p.evaluate((l) => [...document.querySelectorAll('.sheet .dest-row')].find((e) => e.textContent.trim() === l).click(), label); }
+  await p.waitForSelector('.bulk-sheet .bulk-author', { timeout: 8000 });
+};
 const wake = async (p) => { await p.evaluate(() => { document.querySelector('.reader-view')?.classList.remove('immersive'); }); await p.waitForTimeout(300); };
 const settingsSec = (i) => async (p) => {
   await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached', timeout: 15000 });
@@ -145,6 +163,25 @@ const VIEWS = [
   ['ai-glossary-options', async (p) => {
     await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .gloss-opts summary', { timeout: 10000 });
     await p.click('.ai-sheet .gloss-opts summary'); await p.waitForSelector('.gloss-gather-mode button', { timeout: 8000 }); await p.locator('.gloss-gather-mode').scrollIntoViewIfNeeded(); await p.waitForTimeout(400); }],
+  // «Edit details» for several books (src/ui/bulkdetails.ts): three chosen, an author and a series typed, numbering in the order chosen (the preview list).
+  ['library-bulk-details', async (p) => { await bulkOpen(p); await p.fill('.bulk-author', 'A Made-up Author'); await p.fill('.bulk-series', 'A Made-up Series'); await p.evaluate(() => { const i = [...document.querySelectorAll('.bulk-sheet .bulk-switch input')][1]; i.checked = true; i.dispatchEvent(new Event('change', { bubbles: true })); }); await p.waitForTimeout(300); }],
+  // The language chips (the sample books are in English and Arabic, the others carry none) with one of them chosen.
+  ['library-language', async (p) => { seeded = true; await visual(p, { languageFilter: ['en'] }); await reloadLib(p); await p.waitForSelector('.lang-chip', { timeout: 8000 }); }],
+  // The notes page's search (src/views/notes.ts): made-up highlights with notes on two books, a word typed.
+  ['notes-search', async (p) => {
+    seeded = true; dataSeeded = true;
+    await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { let k = 0; for (const b of e.target.result.filter((x) => /nihongo|pages/i.test(x.fileName))) { b.highlights = [{ id: 'hh' + k, text: 'The lanterns along the harbour glowed', note: 'a made-up note about the harbour', color: 'sky', createdAt: 1 + k }, { id: 'hi' + k, text: 'Another passage', note: 'something else', color: 'rose', createdAt: 2 + k }]; b.bookmarks = [{ id: 'bm' + k, label: 'Chapter harbour', locator: { bookId: b.id, pct: 0.1 }, createdAt: 3 + k }]; st.put(b); k++; } }; tx.oncomplete = () => res(1); }; }));
+    await p.evaluate(() => { location.hash = '#/notes'; }); await p.reload(); await p.waitForSelector('.notes-book', { timeout: 15000 });
+    await p.fill('.ns-search', 'harbour'); await p.waitForTimeout(500);
+  }],
+  // The yearly goal in the statistics (src/ui/stats.ts): two books marked done today and a goal of six.
+  ['stats-year-goal', async (p) => {
+    seeded = true; dataSeeded = true;
+    await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { for (const b of e.target.result.slice(0, 2)) { b.done = true; b.doneAt = Date.now(); st.put(b); } }; tx.oncomplete = () => res(1); }; }));
+    await visual(p, { yearGoalBooks: 6 }); await reloadLib(p);
+    await p.evaluate((w) => { [...document.querySelectorAll('.library-view .topbar button')].find((x) => x.getAttribute('aria-label') === w).click(); }, (await p.evaluate(() => localStorage.getItem('kr.lang'))) === 'ar' ? 'إحصاءات القراءة' : 'Reading statistics');
+    await p.waitForSelector('.year-goal .yg-ring', { timeout: 8000 }); await p.waitForTimeout(300);
+  }],
   ['read-pdf', openBook(/pages/i, '.pdf-bar, .pdf-view, .pdf-pages')],
   ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
   ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
@@ -157,6 +194,7 @@ const ALLOW = [
   ['colour read-options', 'the same theme previews and highlight palette, inside the options panel'],
   ['stick-out book-edit-names div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
   ['stick-out book-alreview div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
+  ['touching notes-search button.icon-btn.ns-clear', "the clear (×) button lies inside the search field's end padding, as the glossary's search has it"],
   ['stick-out book div.book-hero-bg', 'the blurred cover backdrop is bled past the edge on purpose and clipped by the page (no page overflow)'],
 ];
 const allowedBy = {}; const allowed = (key) => { const a = ALLOW.find(([k]) => key.startsWith(k)); if (a) allowedBy[a[0]] = (allowedBy[a[0]] || 0) + 1; return !!a; };
@@ -268,7 +306,7 @@ function hunt({ phone, rtl, lang }) {
         }
         if (SHOTS) await p.screenshot({ path: path.join(SHOTS, `hunt-${name}-${dev}-${lang}.png`) });
       } catch (e) { if (e.message === 'SKIP') continue; console.log(`ERR   ${lang} ${dev} ${name}: ${String(e.message).split('\n')[0]}`); fails++; }
-      finally { if (seeded) { seeded = false; await aiClear(p).catch(() => undefined); } }
+      finally { if (dataSeeded) { dataSeeded = false; await dataClear(p).catch(() => undefined); } if (seeded) { seeded = false; await aiClear(p).catch(() => undefined); } }
     }
     if (phone && (!ONLY || ONLY === 'narrowcards')) { // narrow cards: 2-5 columns at 360 / 390 / 412 px: the marks sit inside the cover and never overlap, the stars stay in the card, nothing is clipped
       try {

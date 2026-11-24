@@ -568,6 +568,23 @@ export function stopSharing(bookId: string, folderId: string): void {
   if (destOf(bookId).to === folderId) setDest(bookId, { to: 'book', addNew: true });
   setVolChoice(bookId, { choice: 'copy', from: volChoice(bookId)?.from });
 }
+/** Books given a new series name together (the library's «Edit details»): a glossary folder named after the series they
+ *  had — `was`: each book's former series name and the stem its title gives — and used by these books alone is renamed to
+ *  the new name, so a folder that followed the series goes on following it; any other folder is left where it is.
+ *  Returns what it renamed (to put back on Undo). */
+export function followSeries(was: { id: string; names: string[] }[], to: string): { id: string; from: string; to: string }[] {
+  const out: { id: string; from: string; to: string }[] = []; const ids = new Set(was.map((x) => x.id));
+  const used = read<Record<string, string[]>>(LKEY, {});
+  for (const f of folders()) {
+    const users = Object.entries(used).filter(([, v]) => v.includes(f.id)).map(([k]) => k);
+    if (!users.length || !users.every((u) => ids.has(u))) continue;
+    if (!was.some((x) => users.includes(x.id) && x.names.includes(f.name)) || f.name === to) continue;
+    renameFolder(f.id, to); out.push({ id: f.id, from: f.name, to });
+  }
+  return out;
+}
+/** A renaming of `followSeries` put back. */
+export function unfollowSeries(list: { id: string; from: string; to: string }[]): void { for (const x of list) if (folders().some((f) => f.id === x.id && f.name === x.to)) renameFolder(x.id, x.from); }
 /** The books using a folder. */
 export const folderBooks = (folderId: string): string[] => Object.entries(read<Record<string, string[]>>(LKEY, {})).filter(([, v]) => v.includes(folderId)).map(([k]) => k);
 

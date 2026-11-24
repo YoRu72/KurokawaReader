@@ -174,12 +174,14 @@ export interface VisualSettings {
   invertLineArt: boolean;
   snapFolder: string;
   formatFilter: string[];
-  shelves: { id: string; name: string; formats: string[]; statuses: string[]; tag: string | null }[]; // saved filter sets
+  shelves: { id: string; name: string; formats: string[]; statuses: string[]; tag: string | null; /** the languages chosen (none or missing: any) */ languages?: string[] }[]; // saved filter sets
   showProgress: boolean;      // a book's progress on its cover
   showDone: boolean;          // the 'read' mark on its cover
   doneMark: 'beside' | 'below' | 'topLeft' | 'bottom';   // where that mark sits
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
+  languageFilter: string[];   // the library's language filter: base language codes, 'unknown' for books without one (none: any)
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
+  yearGoalBooks: number;      // books to finish this year, 0 = no goal
   calendar: 'gregory' | 'hijri' | 'both';
   /** The interface's style (src/readertheme/, over the shared src/theme/): 'classic' (the app as it always was), or a frosted-glass style's id;
    *  and how much it blurs ('auto': as this device can afford — src/theme/themes.ts resolveBlur). */
@@ -381,7 +383,9 @@ export const DEFAULTS: VisualSettings = {
   showDone: true,
   doneMark: 'beside',
   statusFilter: [],
+  languageFilter: [],
   readingGoalMinutes: 0,
+  yearGoalBooks: 0,
   calendar: 'gregory',
   darkTone: 'dim',
   uiStyle: 'classic',
@@ -520,7 +524,7 @@ const GLOBAL_ONLY = new Set<string>([
   // the device's keys and gestures while reading
   'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library
-  'uiStyle', 'glassBlur', 'pageFollowsStyle', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
+  'uiStyle', 'glassBlur', 'pageFollowsStyle', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'languageFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes', 'yearGoalBooks',
   // lists the reader builds up for every book
   'myThemes', 'systemFonts', 'shortcuts', 'snapFolder',
 ]);

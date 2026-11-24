@@ -5,6 +5,8 @@ import { t, formatDuration, formatDate, localDigits, countMinutes, dateLocale, c
 import { db, type ReadingDay } from '../db';
 import { getSettings, updateSettings } from '../settings';
 import { todayKey, liveStatsOf } from '../stats';
+import { navigate } from '../router';
+import { finishedIn, perMonth } from '../yeargoal';
 
 const GOALS = [0, 15, 30, 45, 60, 90, 120, 180];
 const MIN_DAY_MS = 30000;
@@ -63,6 +65,31 @@ export async function showStats(): Promise<void> {
     h('span', null, goal ? t('goalProgress', { done: Math.round(today / 60000), goal }) : t('setGoal')),
     goal ? h('div', { class: 'bar' }, h('span', { style: { width: `${done}%` } })) : null,
     h('button', { class: 'btn small outlined', type: 'button', onclick: () => pickGoal() }, t('setGoal'))));
+
+  // The goal for the year: how many books to finish, how far along, what each month needs from now, and the ones done.
+  const yearBox = h('div', { class: 'year-goal' });
+  sheet.body.append(yearBox);
+  const paintYear = () => {
+    const goal = getSettings().yearGoalBooks; const now = new Date(); const year = now.getFullYear();
+    const fin = finishedIn(books, year); const n = fin.length;
+    const set = (v: number) => { updateSettings({ yearGoalBooks: Math.max(0, Math.min(999, Math.round(v) || 0)) }); paintYear(); };
+    const field = h('input', { type: 'text', inputmode: 'numeric', class: 'yg-input', dir: 'ltr', value: goal ? String(goal) : '', placeholder: t('yearGoalNone'), 'aria-label': t('yearGoal'), onchange: () => { const v = parseInt(String(field.value).replace(/[^0-9]/g, ''), 10); set(Number.isFinite(v) ? v : 0); } }) as HTMLInputElement;
+    const step = (by: number, label: string, glyph: string) => h('button', { type: 'button', class: 'btn small outlined yg-step', 'aria-label': label, onclick: () => set((getSettings().yearGoalBooks || 0) + by) }, glyph);
+    yearBox.replaceChildren(
+      h('div', { class: 'yg-head' }, h('b', null, t('yearGoal')), h('div', { class: 'yg-stepper' }, step(-1, t('yearGoalLess'), '−'), field, step(1, t('yearGoalMore'), '+'))));
+    if (goal) {
+      const pct = Math.min(1, n / goal); const R = 30; const C = 2 * Math.PI * R;
+      const ring = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); ring.setAttribute('viewBox', '0 0 72 72'); ring.setAttribute('class', 'yg-ring'); ring.setAttribute('aria-hidden', 'true');
+      ring.innerHTML = `<circle cx="36" cy="36" r="${R}" class="track"/><circle cx="36" cy="36" r="${R}" class="fill" stroke-dasharray="${(C * pct).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 36 36)"/>`;
+      const need = perMonth(n, goal, now);
+      yearBox.append(h('div', { class: 'yg-progress' }, ring,
+        h('div', { class: 'yg-text' }, h('b', { class: 'yg-of' }, t('yearGoalOf', { done: n, goal })), h('span', { class: 'yg-pace' }, need ? t('yearPerMonth', { n: need }) : t('yearReached')))));
+    }
+    yearBox.append(h('div', { class: 'yg-list-head' }, t('yearFinished', { year })));
+    if (!fin.length) yearBox.append(h('p', { class: 'yg-none' }, t('yearNoneYet')));
+    else yearBox.append(h('ul', { class: 'yg-list plain-list' }, ...fin.map(({ book, at }) => h('li', null, h('button', { type: 'button', class: 'yg-book', onclick: () => { sheet.close(); navigate(`/book/${book.id}`); } }, h('span', { class: 'yg-title', dir: 'auto' }, book.title), h('span', { class: 'yg-date' }, formatDate(at)))))));
+  };
+  paintYear();
 
   // The last two weeks, oldest first.
   const now = new Date();
