@@ -7,7 +7,7 @@ import { writePending } from './pending';
 import { pool } from './http';
 import { listRepos, refreshRepo, extensionUpdates, autoUpdateExtensions, type Repo, type ExtItem } from './repos';
 import { checkNovel } from './ext/source';
-import { t, countChapters, countNovels, countVolumes, countSeries } from '../i18n';
+import { t, getLang, countChapters, countNovels, countVolumes, countSeries } from '../i18n';
 
 export interface UpdateReport {
   at: number;
@@ -65,11 +65,43 @@ export async function trackedNovels(): Promise<Book[]> {
   return (await db.allBooks()).filter((b) => b.format === 'webnovel' && b.remote?.source);
 }
 
-/** What is waiting to be seen: chapters not yet opened (summed over the books) and extension updates. */
-export async function pendingCounts(): Promise<{ chapters: number; books: number; extensions: number; series: number }> {
+/** The works the checks watch: the novels of the library that came from an extension, and the series of the web
+ *  folders the reader has a volume of. Nothing followed, nothing to check — no bell, no section, no request. */
+export async function followedWorks(): Promise<{ novels: Book[]; series: number; total: number }> {
+  const all = await db.allBooks();
+  const novels = all.filter((b) => b.format === 'webnovel' && b.remote?.source);
+  const folders = new Set<string>();
+  for (const b of all) if (b.remote?.source?.startsWith('dir:') && b.remote.id?.startsWith('f:')) folders.add(`${b.remote.source}|${b.remote.id.slice(2).split('/')[0]}`);
+  return { novels, series: folders.size, total: novels.length + folders.size };
+}
+export async function followedCount(): Promise<number> { return (await followedWorks()).total; }
+const followListeners = new Set<(n: number) => void>();
+let followLast = -1; let followTimer = 0;
+const onBooks = () => {
+  clearTimeout(followTimer);
+  followTimer = window.setTimeout(() => { void followedCount().then((n) => { if (n === followLast) return; followLast = n; for (const fn of [...followListeners]) fn(n); emit(); }).catch(() => undefined); }, 300);
+};
+/** Told when the number of followed works changes (a first work added from a source, the last one removed). */
+export function onFollowedChanged(fn: (n: number) => void): () => void {
+  if (!followListeners.size) { window.addEventListener('kr:books', onBooks); followLast = -1; void followedCount().then((n) => { if (followLast < 0) followLast = n; }).catch(() => undefined); }
+  followListeners.add(fn);
+  return () => { followListeners.delete(fn); if (!followListeners.size) { window.removeEventListener('kr:books', onBooks); clearTimeout(followTimer); } };
+}
+/** A time as people say it: "3 hours ago". */
+export function timeAgo(ms: number): string {
+  const rtf = new Intl.RelativeTimeFormat(getLang() === 'ar' ? 'ar' : getLang(), { numeric: 'auto' }); const d = (ms - Date.now()) / 1000;
+  for (const [u, n] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) if (Math.abs(d) >= n) return rtf.format(Math.round(d / n), u);
+  return rtf.format(0, 'minute');
+}
+
+/** What is waiting to be seen: chapters not yet opened (summed over the books) and extension updates — nothing
+ *  at all while no work is followed. */
+export async function pendingCounts(): Promise<{ chapters: number; books: number; extensions: number; series: number; followed?: number }> {
+  const { total } = await followedWorks();
+  if (!total) return { chapters: 0, books: 0, extensions: 0, series: 0, followed: 0 };
   const books = (await trackedNovels()).filter((b) => (b.remote?.newChapters ?? 0) > 0);
   const ext = await extensionUpdates().catch(() => []);
-  return { chapters: books.reduce((n, b) => n + (b.remote?.newChapters ?? 0), 0), books: books.length, extensions: ext.length, series: (await folderNews()).length };
+  return { chapters: books.reduce((n, b) => n + (b.remote?.newChapters ?? 0), 0), books: books.length, extensions: ext.length, series: (await folderNews()).length, followed: total };
 }
 /** The series with new volumes in every web folder, newest first. */
 export async function folderNews(): Promise<{ repoKey: string; repoName: string; series: string; name: string; n: number; at: number; names: string[] }[]> {
@@ -189,6 +221,8 @@ export function scheduleUpdateChecks(): void {
   const due = () => { const h = checkEvery(); return h > 0 && Date.now() - Number(localStorage.getItem('kr.sources.checkedAt') ?? 0) > h * 3600000; };
   const maybe = async () => {
     if (!due() || navigator.onLine === false) return;
+    // (Nothing followed: nothing is asked, not even the repositories' indexes.)
+    if (!(await followedCount().catch(() => 0))) return;
     const repos = await listRepos().catch(() => []); if (!repos.length) return;
     const novels = await trackedNovels().catch(() => []);
     if (!novels.length && !repos.some((r) => r.items.some((i) => i.runnable) || (r.kind === 'folder' && r.flavor === 'h5ai'))) return;

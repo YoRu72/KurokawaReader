@@ -2715,6 +2715,23 @@ export const en = {
   yearReached: "Goal reached",
   yearFinished: "Finished in {year}",
   yearNoneYet: "No book finished yet this year.",
+  srcCheckOthers: 'Check the others',
+  srcFollowedLine: 'Works followed: {n}',
+  srcUpToDate: 'Up to date',
+  srcNewCount: 'New: {n}',
+  srcChecking: 'Checking…',
+  extSearchPlaceholder: 'Search the extensions of your repositories',
+  extSearchLabel: 'Search extensions by name, language or repository',
+  extSearchNone: 'Nothing by that name in your repositories',
+  extSearchClear: 'Clear the search',
+  extFoundN: 'Results: {n}',
+  extFilterInstalled: 'Installed',
+  extFilterUpdates: 'Updates',
+  extStateInstalled: 'Installed',
+  extStateUpdate: 'Update available',
+  extStateNot: 'Not installed',
+  extStateCannot: 'Cannot run here',
+  extFromRepo: 'From {repo}',
 };
 
 export type Strings = typeof en;

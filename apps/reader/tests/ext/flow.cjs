@@ -195,9 +195,11 @@ const SITE = 'http://localhost:5403';
     await page.click('.src-grid .src-card:has-text("Alpha")'); await page.waitForSelector('.src-files', { timeout: 20000 }); await page.waitForTimeout(300);
     // A chapter arrives on the site; the check finds it.
     await page.evaluate((site) => fetch(site + '/admin/add-chapter?slug=alpha').then((r) => r.json()), SITE);
-    await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
+    // (The bell shows only once something waits: the check is asked for from Settings, whose section shows for the followed work.)
+    await page.goto(base + '#/settings'); await page.waitForSelector('.upd-card:not([hidden])', { timeout: 10000 }); await page.evaluate(() => document.querySelector('.upd-card').classList.remove('collapsed'));
+    await page.click('.upd-card .upd-check .btn'); await page.waitForTimeout(3500);
+    await page.goto(base + '#/sources'); await page.waitForSelector('.bell-btn:not([hidden])', { timeout: 10000 }); await page.waitForTimeout(300);
     await page.click('.bell-btn'); await page.waitForSelector('.sheet'); await page.waitForTimeout(200);
-    await page.click('.sheet button:has-text("Check now")'); await page.waitForTimeout(3500);
     const sheet = await page.$eval('.sheet', (e) => e.textContent);
     ok('check finds the new chapter', /New chapters/.test(sheet) && /Alpha Ascension/.test(sheet));
     ok('bell carries the count', (await page.$eval('.bell-btn .count', (e) => e.textContent).catch(() => '')) === '1');

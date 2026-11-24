@@ -2701,3 +2701,28 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .bulk-sheet .sheet-body > .hint { margin: 0 0 14px; }
 .bulk-sheet .bulk-switch { margin-top: 4px; }
 .lang-chips[hidden] { display: none; }
+
+/* ---- the search over the extensions of every repository (sources hub) ---- */
+.ext-search { margin: 6px 0 14px; }
+.ext-search .src-search-row { margin: 6px 0 8px; }
+.ext-search .src-search-row .icon-btn { width: 40px; height: 40px; }
+.ext-filters { padding-bottom: 8px; }
+.ext-found { display: block; margin: 0 2px 6px; }
+.ext-hits { display: flex; flex-direction: column; gap: 6px; }
+.ext-hit { display: flex; align-items: center; gap: 10px; padding: 8px 10px; min-height: 56px; border-radius: 12px; background: color-mix(in srgb, var(--md-on-surface) 4%, transparent); }
+.ext-hit .ext-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ext-hit .ext-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.ext-hit .ext-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--md-on-surface-dim); font-size: 11.5px; }
+.ext-hit .ext-text small.ext-state { font-weight: 600; }
+.ext-hit.installed .ext-state, .ext-hit.update .ext-state { color: var(--md-primary); }
+.ext-hit .btn { flex: none; min-width: 92px; min-height: 40px; justify-content: center; }
+.ext-hit .icon-btn { flex: none; }
+.ext-hit.off { opacity: .7; cursor: default; }
+.ext-more { align-self: center; min-width: 140px; min-height: 40px; margin: 6px 0; }
+.ext-more[hidden] { display: none; }
+.upd-check { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.upd-check .actions-row { margin-top: 4px; }
+.upd-check small { display: block; }
+.updates-sheet .upd-state .upd-followed { opacity: .85; }
+.ext-search-field::-webkit-search-cancel-button { display: none; }
+.upd-row .icon-btn { flex: none; min-width: 40px; min-height: 40px; }
