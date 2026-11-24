@@ -792,6 +792,13 @@ html[dir='rtl'] .upd-arrow svg { transform: scaleX(-1); }
 .reset-one { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-inline-start: 6px; border-radius: var(--sh-full); color: var(--md-primary); background: color-mix(in srgb, var(--md-primary) 12%, transparent); vertical-align: middle; }
 .reset-one svg { width: 13px; height: 13px; stroke-width: 2.2; }
 .reset-one:hover { background: color-mix(in srgb, var(--md-primary) 22%, transparent); }
+/* (A touch screen: the button's own box is 40 × 40 — the small drawn disc is its ::before, and the negative margin keeps the row's size.) */
+@media (pointer: coarse) {
+  .reset-one { position: relative; width: 40px; height: 40px; margin-block: -9px; margin-inline: -3px -9px; background: transparent; }
+  .reset-one::before { content: ''; position: absolute; inset: 9px; border-radius: var(--sh-full); background: color-mix(in srgb, var(--md-primary) 12%, transparent); }
+  .reset-one:hover { background: transparent; } .reset-one:hover::before { background: color-mix(in srgb, var(--md-primary) 22%, transparent); }
+  .reset-one svg { position: relative; }
+}
 .field .hint { display: block; font-size: 12px; color: var(--md-on-surface-variant); margin-top: 4px; }
 
 /* Colour picker */
@@ -2604,3 +2611,21 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .gloss-card .gc-actions { display: flex; gap: 8px; margin-top: 2px; }
 .gloss-card .gc-actions .btn { flex: 1 1 0; min-width: 0; min-height: 44px; justify-content: center; white-space: normal; }
 .gloss-card .gc-actions .btn[hidden] { display: none; }
+
+/* «Gather the names first?» (src/ui/gather.ts): the scope, what it costs, two actions side by side as wide as each other, and a quiet one under them. */
+.gather-sheet .sheet-body { display: grid; gap: 12px; }
+.gather-sheet .gather-why, .gather-sheet .gather-volume, .gather-sheet .gather-cost { margin: 0; }
+.gather-sheet .gather-volume { padding: 10px 14px; border-radius: var(--sh-md); background: var(--md-surface-container-high); font-size: 14px; }
+.gather-sheet .gather-scope { margin: 2px 0; }
+.gather-sheet .sheet-actions.gather-actions { flex-direction: column; align-items: stretch; gap: 10px; }
+.gather-acts-row { display: flex; gap: 10px; }
+.gather-acts-row .btn { flex: 1 1 0; min-width: 0; padding-inline: 12px; text-align: center; line-height: 1.2; height: auto; min-height: 48px; }
+.gather-actions .gather-never { width: 100%; height: auto; min-height: 44px; line-height: 1.25; }
+/* The translator's new options (the AI settings, the glossary options): a three-way choice under its label. */
+.tr-three { display: grid; gap: 8px; margin-top: 4px; }
+.tr-three .segmented button { white-space: normal; line-height: 1.2; min-height: 44px; height: auto; padding-block: 6px; }
+.tr-auto .tr-opt { flex-wrap: nowrap; align-items: center; gap: 12px; }
+.tr-auto .tr-opt > .label { flex: 1 1 0; min-width: 0; }
+.tr-auto .tr-opt > .switch { flex: none; }
+.tr-auto .tr-opt > .label { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 500; color: var(--md-on-surface); }
+.tr-auto .tr-opt > .label .hint { text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 400; color: var(--md-on-surface-variant); }

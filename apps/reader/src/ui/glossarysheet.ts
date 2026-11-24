@@ -13,6 +13,7 @@ import { getSettings, updateSettings } from '../settings';
 import { aiReady, retranslateTerms } from '../ai';
 import { copyText, downloadBlob } from './share';
 import { pendingKinds } from './namespanel';
+import { threeWay, GATHER_OPTS, gatherModeOf, setBookGather } from './gather';
 import { buildIndex, searchIndex, type Ent, type Hit } from '../glosssearch';
 
 const newId = () => Math.random().toString(36).slice(2, 10);
@@ -97,12 +98,15 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
   const searchRow = h('div', { class: 'gloss-search-row' }, h('div', { class: 'gloss-search-box' }, search, clearBtn), scopeChip);
   const autoCb = h('input', { type: 'checkbox', checked: !!getSettings().aiAutoGlossary, onchange: (e: Event) => updateSettings({ aiAutoGlossary: (e.target as HTMLInputElement).checked }) }) as HTMLInputElement;
   const list = h('div', { class: 'gloss-list' }); const retrBar = h('div', { class: 'gloss-retr-bar' }); const fileBar = h('div', { class: 'gloss-file-bar' });
+  // (Before translating — for this book: ask, gather by itself, or don't: its own choice, kept with it; the global default is in the AI settings.)
+  const gatherBox = h('div', { class: 'gloss-gather' });
+  if (book0) void gatherModeOf(book0.id).then((v) => gatherBox.append(threeWay(t('gatherModeLabel'), GATHER_OPTS(), v, (x) => void setBookGather(book0.id, x), t('gatherModeHint'), 'gloss-gather-mode')));
   const opts = h('details', { class: 'gloss-opts' }, h('summary', null, icon('settings'), t('glossOptions')),
     h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('glossAuto'), h('small', { class: 'hint' }, t('glossAutoHint'))), h('span', { class: 'switch' }, autoCb, h('i'))),
     // (In the text: the names marked with a dotted line, and a tap on one opening its entry — independent: with the marks off a tap still works.)
     h('label', { class: 'row tr-opt gloss-marks' }, h('span', { class: 'label' }, t('glossMarkNames')), h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: getSettings().glossMarks !== false, onchange: (e: Event) => updateSettings({ glossMarks: (e.target as HTMLInputElement).checked }) }), h('i'))),
     h('label', { class: 'row tr-opt gloss-tap' }, h('span', { class: 'label' }, t('glossTapNames')), h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: getSettings().glossTap !== false, onchange: (e: Event) => updateSettings({ glossTap: (e.target as HTMLInputElement).checked }) }), h('i'))),
-    volModeField(), destBox());
+    volModeField(), destBox(), gatherBox);
   root.append(searchRow, vol, head, places, folderBar, bookList, opts, fileBar, langs, retrBar, list);
 
   // (Where the names the translator finds go, for this book: its own list, a folder made by itself for its series,

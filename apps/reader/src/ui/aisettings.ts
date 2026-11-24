@@ -8,6 +8,7 @@ import { t, isRtlText, localDigits } from '../i18n';
 import { getSettings, updateSettings, type VisualSettings } from '../settings';
 import { PROVIDERS, providerInfo, effectiveModel, defaultPrompt, langName, AI_VOICES, listModels, customApis, activeCustom, usageOf, testApi, appGet, type AiProvider, type CustomApi } from '../ai';
 import { candidatesFor, probe, detectAt, SERVICES, type Detected, type KnownService, type ModelInfo } from '../aiDetect';
+import { threeWay, switchRow, GATHER_OPTS, AUTO_OPTS, bookAuto, setBookAuto } from './gather';
 
 const TARGETS = ['ar', 'en', 'fr', 'tr', 'ur', 'fa', 'de', 'es', 'id', 'ja', 'zh-CN', 'ru'];
 
@@ -15,7 +16,7 @@ const TARGETS = ['ar', 'en', 'fr', 'tr', 'ur', 'fa', 'de', 'es', 'id', 'ja', 'zh
 export function aiSettingsSheet(onDone?: () => void, extra?: HTMLElement): void { void import('./aisheet').then((m) => m.aiSheet({ tab: 'translation', onDone, extra })); }
 
 /** The «Translation» tab: task, provider, key, model, target, instructions; read aloud below. */
-export function translationPanel(extra?: HTMLElement, toGlossary?: () => void): HTMLElement {
+export function translationPanel(extra?: HTMLElement, toGlossary?: () => void, bookId?: string): HTMLElement {
   const s = getSettings();
   const sh = { body: h('div', { class: 'ai-tr-panel' }) };
   const field = (label: string, control: HTMLElement, hint?: string) => h('div', { class: 'field' }, h('span', { class: 'label' }, label), control, hint ? h('span', { class: 'hint' }, hint) : null);
@@ -93,6 +94,7 @@ export function translationPanel(extra?: HTMLElement, toGlossary?: () => void): 
     langField,
     promptField,
     modelLine,
+    autoPanel(bookId),
     ...(extra ? [extra] : []),
     h('h4', { class: 'upd-title', style: { marginTop: '14px' } }, t('readAloud')),
     field(t('speechEngine'), engine),
@@ -103,6 +105,19 @@ export function translationPanel(extra?: HTMLElement, toGlossary?: () => void): 
   );
   syncLocal();
   return sh.body;
+}
+
+/** Starting by itself and gathering the names first: the app's defaults (both off or on by the setting's own rule), and — for the open
+ *  book — its own choice about starting by itself. */
+function autoPanel(bookId?: string): HTMLElement {
+  const s = getSettings(); const box = h('div', { class: 'tr-auto tr-options' });
+  const sub = h('div', { class: 'tr-auto-sub' }); sub.hidden = !s.aiAutoStart;
+  sub.append(switchRow(t('autoGather'), s.aiAutoGather !== false, (v) => updateSettings({ aiAutoGather: v }), t('autoGatherHint'), 'tr-auto-gather'));
+  box.append(
+    switchRow(t('autoStart'), !!s.aiAutoStart, (v) => { updateSettings({ aiAutoStart: v }); sub.hidden = !v; }, t('autoStartHint'), 'tr-auto-start'), sub,
+    threeWay(t('gatherModeLabel'), GATHER_OPTS(), s.aiGatherNames ?? 'ask', (v) => updateSettings({ aiGatherNames: v }), t('gatherModeHintGlobal'), 'tr-gather-default'));
+  if (bookId) void bookAuto(bookId).then((v) => { box.append(threeWay(t('autoBookLabel'), AUTO_OPTS(), v, (x) => void setBookAuto(bookId, x), undefined, 'tr-auto-book')); });
+  return box;
 }
 
 /* ---------- local models ---------- */

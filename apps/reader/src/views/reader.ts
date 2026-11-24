@@ -280,6 +280,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     currentChapter: () => Math.max(0, currentUnitIndex()),
     onChapterChange: (fn) => chapterListeners.push(fn),
     bookTitle: (id) => docs.find((d) => d.book.id === id)?.book.title,
+    bookInfo: (id) => { const b = docs.find((d) => d.book.id === id)?.book; return b ? { language: b.language, format: b.format } : undefined; },
   });
   onDispose(() => translator.dispose());
   let allImages: ImageRef[] = [];

@@ -12,9 +12,10 @@ import { h, icon, toast, openSheet, pickButton } from './dom';
 import { t, isRtlText, localDigits, getLang } from '../i18n';
 import { db } from '../db';
 import { translateBatch, translationKey, legacyTranslationKey, aiReady, suggestTerms, langName, hash, onAiWait, type TrContext } from '../ai';
-import { termsFor, addTerms, namesTarget, linkedFolders, terms as glossTerms, termLang, legacyLang, kindOf, kindOrder, hasGlossary, volDecision, volChoice, shareGlossary } from '../glossary';
+import { termsFor, addTerms, newNames, bookTerms, namesTarget, linkedFolders, terms as glossTerms, termLang, legacyLang, kindOf, kindOrder, hasGlossary, volDecision, volChoice, shareGlossary } from '../glossary';
 import { getSettings, updateSettings } from '../settings';
 import { aiSheet, setAiHooks, type AiHooks } from './aisheet';
+import { askGather, gatherModeOf, bookAuto, setBookGather, askedKey, wasAsked, markAsked, sessionChoice, setSessionChoice, autoStopped, stopAuto, type GatherScope } from './gather';
 
 export interface TranslatorHost {
   root: HTMLElement;                                   // reader root (the pill is appended here)
@@ -24,7 +25,11 @@ export interface TranslatorHost {
   currentChapter(): number;
   onChapterChange(fn: () => void): void;
   bookTitle?(bookId: string): string | undefined;
+  /** A book's language and format, as the library keeps them (for starting by itself: only a text in another language). */
+  bookInfo?(bookId: string): { language?: string; format?: string } | undefined;
 }
+/** The formats that are text laid out by the reader (not pages, pictures, tables or sound): what may start translating by itself. */
+const REFLOWABLE = new Set(['epub', 'docx', 'txt', 'md', 'html', 'fb2', 'odt', 'mobi', 'shamela', 'webnovel']);
 
 const SKIP = new Set(['IMG', 'FIGURE', 'TABLE', 'HR', 'SVG', 'VIDEO', 'AUDIO', 'PRE', 'CODE']);
 const KEEP = new Set(['I', 'EM', 'B', 'STRONG', 'U', 'SUP', 'SUB', 'A']);
@@ -113,6 +118,8 @@ export function attachTranslator(host: TranslatorHost): Translator {
   const dirty = new Set<string>();
   let saveTimer = 0;
   let pending = 0, done = 0;
+  // (Gathering the names before a translation: shown on the bar; a press of its button stops it.)
+  let gathering = false; let gatherSig = { stop: false }; let autoStarted = false;
 
   async function cache(bookId: string): Promise<Record<string, string>> {
     let c = caches.get(bookId);
@@ -274,10 +281,106 @@ export function attachTranslator(host: TranslatorHost): Translator {
     const k = scanKey(bookId); const done = await scannedFor(bookId); if (done.includes(chapterIdx)) return;
     const texts = blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1); if (!texts.length) return;
     try {
+      const had = bookTerms(bookId).length > 0;
       const n = await namesFrom(texts, bookId);
-      if (n && !quiet) toast(t('glossAutoAdded', { n: localDigits(n) }));
+      if (n && !quiet) toast(t(had ? 'gatherNew' : 'glossAutoAdded', { n: localDigits(n) }));
       await db.updateMeta<number[]>(k, (cur) => [...(cur ?? []), chapterIdx]);
     } catch (e) { console.warn('[kurokawa] auto glossary', e); }
+  }
+  /* ---------- gather the names first (the question, the gathering, what it found) ---------- */
+  const textsOf = (blocks: HTMLElement[]) => blocks.map((el) => (originals.has(el) ? sourceOf(el) : plainOf(el)).replace(/<[^>]+>/g, '')).filter((x) => x.length > 1);
+  const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i);
+  /** Whether any paragraph of these chapters still has no translation kept (else there is nothing to translate, so nothing to ask). */
+  async function hasWork(idxs: number[]): Promise<boolean> {
+    const chs = host.chapters();
+    for (const i of idxs) { const ch = chs[i]; if (!ch) continue; const c = await cache(ch.bookId); for (const el of ch.blocks) { if (!eligible(el)) continue; const text = sourceOf(el); if (!(c[translationKey(text, ch.bookId)] ?? c[legacyTranslationKey(text)])) return true; } }
+    return false;
+  }
+  interface Gathered { ok: boolean; added: number; ids: string[]; hadTerms: boolean }
+  /** The chapters' names found by the model and put in the book's glossary — only those it does not hold yet (by the one key
+   *  of a name), the former volume's glossary included —; each chapter read is marked as scanned. */
+  async function gatherFor(bookId: string, idxs: number[], sig: { stop: boolean }, report?: (i: number, n: number) => void): Promise<Gathered> {
+    const hadTerms = bookTerms(bookId).length > 0; const before = new Set(glossTerms().map((x) => x.id));
+    const target = getSettings().aiTarget; const k = scanKey(bookId); const done = new Set(await scannedFor(bookId)); const chs = host.chapters();
+    const groups: { idx: number[]; texts: string[] }[] = []; let cur = { idx: [] as number[], texts: [] as string[] }; let size = 0;
+    for (const i of idxs) {
+      if (done.has(i) || !chs[i]) continue; const tx = textsOf(chs[i].blocks); const n = tx.reduce((a, x) => a + x.length, 0); if (!n) continue;
+      if (cur.idx.length && size + n > 20000) { groups.push(cur); cur = { idx: [], texts: [] }; size = 0; } cur.idx.push(i); cur.texts.push(...tx); size += n;
+    }
+    if (cur.idx.length) groups.push(cur);
+    let ok = true;
+    for (let g = 0; g < groups.length && !sig.stop; g++) {
+      report?.(g + 1, groups.length);
+      try {
+        const found = await suggestTerms(groups[g].texts.join('\n').slice(0, 24000).split('\n'), termsFor(bookId, target).map((x) => x.from), target);
+        const fresh = newNames(found, bookId, target);
+        if (fresh.length) { const place = namesTarget(bookId, host.bookTitle?.(bookId) ?? ''); addTerms(fresh.map((f) => ({ from: f.from, to: f.to, ...place, kind: kindOf(f.kind), auto: true, lang: target }))); }
+        await db.updateMeta<number[]>(k, (c) => [...(c ?? []), ...groups[g].idx]);
+      } catch (e) { console.warn('[kurokawa] gather names', e); ok = false; break; }
+    }
+    const ids = glossTerms().filter((x) => !before.has(x.id)).map((x) => x.id);
+    return { ok: ok && !sig.stop, added: ids.length, ids, hadTerms };
+  }
+  /** What the gathering found, said once: «New terms added. Count: n» with a «Show» that opens the Glossary tab on the first of them
+   *  (the first time a book gets terms: the older line); nothing new: said so — except where it ran quietly. */
+  function reportGather(bookId: string, r: Gathered, quiet = false): void {
+    if (!r.ok) return;
+    if (r.added) { toast(t(r.hadTerms ? 'gatherNew' : 'glossAutoAdded', { n: localDigits(r.added) }), 'info', { ms: 8000, action: { label: t('gatherShow'), run: () => aiSheet({ tab: 'glossary', book: { id: bookId, title: host.bookTitle?.(bookId) ?? '' }, focusTerm: r.ids[0] }) } }); return; }
+    if (!quiet) toast(t(r.hadTerms ? 'gatherNoNew' : 'trSuggestNone'));
+  }
+  const formerTitle = async (bookId: string): Promise<string | undefined> => {
+    const v = volChoice(bookId); if (!v || v.choice === 'empty' || !v.from) return undefined;
+    try { const { listBooks } = await import('../library'); return (await listBooks()).find((b) => b.id === v.from)?.title; } catch { return undefined; }
+  };
+  /** Before a translation of these chapters: the names gathered first, as the book's choice (else the setting) says — asked in a sheet,
+   *  gathered by itself, or not at all. 'go': the translation goes on; 'gathered': it goes on and what was found was said; 'cancel':
+   *  nothing starts. Never asks for a part already searched, a chapter asked about in this session, or while a translation runs. */
+  async function beforeTranslate(from: number, to: number, whole: boolean): Promise<'go' | 'gathered' | 'cancel'> {
+    const chs = host.chapters(); const bookId = chs[from]?.bookId ?? firstBook(); if (!bookId) return 'go';
+    // (Nothing to gather with, or the translation's own path says what is missing: the no-key notice, the offline wait.)
+    if (furi() || !aiReady() || navigator.onLine === false || getSettings().aiAutoGlossary || running || gathering) return 'go';
+    const mode = await gatherModeOf(bookId); if (mode === 'never') return 'go';
+    const idxs = whole ? range(0, chs.length - 1) : range(from, to); const scanned = new Set(await scannedFor(bookId));
+    if (idxs.every((i) => scanned.has(i)) || !(await hasWork(idxs))) return 'go';
+    const keys = [...idxs.map((i) => askedKey(bookId, i)), ...(whole ? [askedKey(bookId, '*')] : [])];
+    let result: Gathered | null = null;
+    if (mode === 'always' || sessionChoice(bookId) === 'gather') {
+      result = await silentGather(bookId, idxs, false); return result?.ok ? 'gathered' : 'go';
+    }
+    if (whole ? wasAsked(askedKey(bookId, '*')) : idxs.every((i) => wasAsked(askedKey(bookId, i)))) return 'go';
+    const chars = (l: number[]) => l.filter((i) => !scanned.has(i)).reduce((a, i) => a + textsOf(chs[i]?.blocks ?? []).reduce((b, x) => b + x.length, 0), 0);
+    const cost = (sc: GatherScope) => Math.max(1, Math.ceil(chars(sc === 'book' ? range(0, chs.length - 1) : idxs) / 20000));
+    const ans = await askGather({
+      scope: whole ? 'book' : 'chapter', chapters: idxs.length > 1 && !whole ? 'many' : 'one', both: !whole, cost, volume: await formerTitle(bookId), local: getSettings().aiProvider === 'local',
+      work: async (sc, rep, sg) => { gatherSig = sg; const r = await gatherFor(bookId, sc === 'book' ? range(0, chs.length - 1) : idxs, sg, rep); result = r; return r.ok; },
+    });
+    if (ans.answer === 'cancel') return 'cancel';
+    for (const k of keys) markAsked(k);   // (asked once the question is answered — closed unanswered, it may be asked again)
+    if (ans.answer === 'never') { await setBookGather(bookId, 'never'); setSessionChoice(bookId, 'skip'); return 'go'; }
+    if (ans.answer === 'skip') { setSessionChoice(bookId, 'skip'); return 'go'; }
+    setSessionChoice(bookId, 'gather'); const r = result as Gathered | null; if (r) reportGather(bookId, r); return r ? 'gathered' : 'go';
+  }
+  /** Gathering without a question: on the bar («Gathering the names…», its button stops it); what is found said when it is done. */
+  async function silentGather(bookId: string, idxs: number[], quiet: boolean): Promise<Gathered | null> {
+    if (gathering) return null; gathering = true; gatherSig = { stop: false }; paint();
+    try {
+      const r = await gatherFor(bookId, idxs, gatherSig, (i, n) => { gatherNote = n > 1 ? ` ${localDigits(i)}/${localDigits(n)}` : ''; paint(); });
+      if (r.ok) reportGather(bookId, r, quiet); else if (!gatherSig.stop) toast(t('gatherFailed'), 'error', 5000);
+      return r;
+    } finally { gathering = false; gatherNote = ''; paint(); }
+  }
+  let gatherNote = '';
+  /** A chapter moved on to while the translation is on: its names gathered first when the book is set to gather by itself (or its
+   *  reader said «Gather» in this session) — never a question —, then the chapter translated. */
+  async function advance(): Promise<void> {
+    const cur = host.currentChapter(); const bookId = host.chapters()[cur]?.bookId;
+    if (bookId && on && !gathering && !furi() && aiReady() && navigator.onLine !== false && !getSettings().aiAutoGlossary) {
+      const mode = await gatherModeOf(bookId);
+      if (mode === 'always' || (mode === 'ask' && sessionChoice(bookId) === 'gather')) {
+        if (!(await scannedFor(bookId)).includes(cur) && await hasWork([cur])) await silentGather(bookId, [cur], true);
+      }
+    }
+    if (on) void run();
   }
   /** Translate the shown chapter: cached paragraphs appear at once, the rest in view order. */
   async function run(force = false) {
@@ -433,8 +536,13 @@ export function attachTranslator(host: TranslatorHost): Translator {
     let shownOnce = false; const loop = () => { if (jobsBox.isConnected) shownOnce = true; else if (shownOnce) return; drawJobs(); setTimeout(loop, 700); }; loop();
     const start = (from: number, to: number) => {
       if (!aiReady()) { toast(t('aiNeedsKey'), 'error', 4000); return; }
-      void translateAhead(Math.max(0, from), Math.min(chapters.length - 1, to), status, null, () => drawJobs());
-      setTimeout(drawJobs, 150); toast(t('trInBackground'), 'info', 3000);
+      const f = Math.max(0, from), l = Math.min(chapters.length - 1, to);
+      // (The names first, when the book asks for it — «Gather, then translate» —; closed without an answer, nothing starts.)
+      void (async () => {
+        const r = await beforeTranslate(f, l, f === 0 && l >= chapters.length - 1); if (r === 'cancel' || disposed) return;
+        void translateAhead(f, l, status, null, () => drawJobs());
+        setTimeout(drawJobs, 150); if (r === 'go') toast(t('trInBackground'), 'info', 3000);
+      })();
     };
     const btn = (label: string, fn: () => void) => h('button', { class: 'btn small tonal', type: 'button', onclick: fn }, label);
     return h('div', { class: 'tr-ahead' },
@@ -506,15 +614,19 @@ export function attachTranslator(host: TranslatorHost): Translator {
   } as AiHooks);
   /** A former volume's glossary, once, when the translation is first turned on for a book with none: taken by itself
    *  (the same series, «Automatically»: a notice with Undo), or offered in the Glossary tab. */
-  async function formerVolume(): Promise<void> {
-    const id = firstBook(); if (!id || hasGlossary(id) || volChoice(id)) return;
+  async function formerVolume(allowAsk = true): Promise<boolean> {
+    const id = firstBook(); if (!id || hasGlossary(id) || volChoice(id)) return false;
     const k = 'kr.glossaryVolSeen'; let seen: string[] = []; try { seen = JSON.parse(localStorage.getItem(k) ?? '[]') as string[]; } catch { /* none */ }
-    if (seen.includes(id)) return; try { localStorage.setItem(k, JSON.stringify([...seen, id].slice(-500))); } catch { /* full */ }
+    if (seen.includes(id)) return false;
     const { listBooks } = await import('../library'); const all = (await listBooks()).filter((b) => b.format !== 'series').map((b) => ({ id: b.id, title: b.title, ...(b.titles?.length ? { others: b.titles.filter((x) => x !== b.title) } : {}), ...(b.series?.name ? { series: { name: b.series.name, index: b.series.index } } : {}) }));
-    const me = all.find((b) => b.id === id); if (!me || disposed) return;
+    const me = all.find((b) => b.id === id); if (!me || disposed) return false;
     const d = volDecision(me, all, getSettings().aiVolGlossary ?? 'auto');
-    if (d.kind === 'auto') { const und = shareGlossary(id, d.cand, true); const { offerUndo } = await import('./undo'); offerUndo(t('glossVolUsing', { title: `\u2068${d.cand.title}\u2069` }), () => und(), () => { shareGlossary(id, d.cand, true); }); if (on) void run(); }
-    else if (d.kind === 'ask') aiSheet({ tab: 'glossary' });
+    // (Starting by itself never opens a sheet: a glossary to choose among is offered the first time the reader turns the translation on.)
+    if (d.kind === 'ask' && !allowAsk) return false;
+    try { localStorage.setItem(k, JSON.stringify([...seen, id].slice(-500))); } catch { /* full */ }
+    if (d.kind === 'auto') { const und = shareGlossary(id, d.cand, true); const { offerUndo } = await import('./undo'); offerUndo(t('glossVolUsing', { title: `\u2068${d.cand.title}\u2069` }), () => und(), () => { shareGlossary(id, d.cand, true); }); if (on) void run(); return false; }
+    if (d.kind === 'ask') { aiSheet({ tab: 'glossary' }); return true; }
+    return false;
   }
 
   /* ---------- pill ---------- */
@@ -523,6 +635,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
   let waitSec = 0; const offWait = onAiWait((sec) => { waitSec = sec; paint(); });
   function paint() {
     if (!pill) return;
+    if (gathering) { status.textContent = t('gatherWorking') + gatherNote; toggleBtn.setAttribute('aria-pressed', 'true'); toggleBtn.classList.add('on'); return; }
     if (waitSec > 0 && on) { status.textContent = t('trWaitingLimit', { s: localDigits(waitSec) }); return; }
     mini?.classList.toggle('on', on);
     toggleBtn.setAttribute('aria-pressed', String(on));
@@ -531,10 +644,22 @@ export function attachTranslator(host: TranslatorHost): Translator {
     status.textContent = !on ? t('translatorOff') : running ? t('translating') + ` ${localDigits(done)}/${localDigits(pending)}` : pending ? t('translatedCount', { n: done, total: pending }) : t('translatorOn');
   }
   function setOn(v: boolean) {
-    if (v && !on) void formerVolume();
+    if (v && !on) void formerVolume(!autoStarted);
     on = v; void isKept().then((k) => { if (k) void setKept(true); });   // (saved with the book: on or off is kept as it was left)
-    if (on) void run(); else { generation++; running = false; restoreAll(); }
+    if (on) void run(); else { generation++; running = false; restoreAll(); if (autoStarted) { autoStarted = false; stopAuto(firstBook()); } }
     paint();
+  }
+  /** The translation turned on by the reader (the bar's button, the Translation tab's «Done»): a former volume's glossary looked at first, then — asked or
+   *  by itself, as the book is set — the names gathered; cancelled in the question, nothing starts. */
+  async function startUser(): Promise<void> {
+    const offered = await formerVolume(true); if (disposed || on) return;
+    if (!offered) { const cur = host.currentChapter(); if ((await beforeTranslate(cur, cur, false)) === 'cancel' || disposed || on) return; }
+    setOn(true);
+  }
+  /** The bar's button: on (asking first), off, or — while the names are being gathered — stop. */
+  function pressToggle(): void {
+    if (gathering) { gatherSig.stop = true; if (autoStarted) { autoStarted = false; stopAuto(firstBook()); } return; }
+    if (on) setOn(false); else void startUser();
   }
   // Clearing the saved translations costs time — and, with a paid service, money — to undo by translating again: asked
   // first (how many), then kept until the snackbar's time is over; its Undo brings them back as they were.
@@ -583,7 +708,7 @@ export function attachTranslator(host: TranslatorHost): Translator {
       whole), range, track, status);
   }
   function buildPill() {
-    toggleBtn = h('button', { type: 'button', class: 'tr-toggle', 'aria-label': t('trTurnOnOff'), title: t('trTurnOnOff'), onclick: () => setOn(!on) }, icon('translate')) as HTMLButtonElement;
+    toggleBtn = h('button', { type: 'button', class: 'tr-toggle', 'aria-label': t('trTurnOnOff'), title: t('trTurnOnOff'), onclick: () => pressToggle() }, icon('translate')) as HTMLButtonElement;
     status = h('span', { class: 'tr-status' });
     pill = h('div', { class: 'tr-pill', role: 'toolbar', 'aria-label': t('aiTranslate') },
       toggleBtn, status,
@@ -598,13 +723,36 @@ export function attachTranslator(host: TranslatorHost): Translator {
     paint(); void isKept().then(markSaved);
   }
 
-  host.onChapterChange(() => { if (on) void run(); });
+  /** A book opened with «Start translating by itself» (the setting, or the book's own «Always»): the chapter shown is translated as if the bar's button
+   *  had been pressed — only with a working service and a connection where it needs one, a text in another language than the target,
+   *  laid out by the reader, and no «Never» for this book or Stop in this session. The names are gathered first (quietly, never asked)
+   *  when that is on and the book is not set to «Don't gather». The same scheduler as ever: later chapters follow as they do after
+   *  the bar's button. */
+  async function autoStart(id: string): Promise<boolean> {
+    const s = getSettings(); const own = await bookAuto(id);
+    if (disposed || own === 'never' || (own === 'follow' && !s.aiAutoStart) || autoStopped(id) || !aiReady()) return false;
+    const local = s.aiProvider === 'local' && s.localEngine === 'device';
+    if (!local && navigator.onLine === false) return false;
+    const info = host.bookInfo?.(id); if (info?.format && !REFLOWABLE.has(info.format)) return false;
+    const cur = host.currentChapter(); const ch = host.chapters()[cur]; if (!ch || furi()) return false;
+    const base = (x?: string) => (x ?? '').trim().split(/[-_]/)[0].toLowerCase();
+    if (info?.language && base(info.language) === base(s.aiTarget)) return false;
+    if (!ch.blocks.some((el) => eligible(el))) return false;
+    autoStarted = true; if (!pill) buildPill(); paint();
+    await formerVolume(false); if (disposed || autoStopped(id)) return true;
+    if (s.aiAutoGather !== false && !s.aiAutoGlossary && (await gatherModeOf(id)) !== 'never' && !(await scannedFor(id)).includes(cur) && await hasWork([cur])) await silentGather(id, [cur], false);
+    if (disposed || autoStopped(id) || on) return true;
+    setOn(true); return true;
+  }
+
+  host.onChapterChange(() => { if (on) void advance(); });
   // (A book saved translated opens translated: once its chapters are there, the kept translations put in.)
   void (async () => {
     for (let i = 0; i < 20 && !disposed && !host.chapters().length; i++) await new Promise((r) => setTimeout(r, 300));
     const id = firstBook(); if (!id || disposed || on) return;
     const k = await db.getMeta<{ hidden?: boolean; on?: boolean }>(keepKey(id)); if (disposed || on) return;
     // (Not saved, but chapters of it translated before: the bar is there, the translation a tap away.)
+    if (!k && await autoStart(id)) return;
     if (!k) { if (!pill && (Object.keys(await sourceIndex(id)).length || Object.keys(await cache(id)).length) && !disposed) buildPill(); return; }
     buildPill(); if (k.hidden || k.on === false) hidePill(); if (k.on !== false) setOn(true); else paint();
   })();
@@ -637,9 +785,9 @@ export function attachTranslator(host: TranslatorHost): Translator {
       return out;
     },
     // (The toolbar's button: the bar shown or hidden — the translation stays; the first time, turned on.)
-    toggleUi() { if (pill && !pill.hidden) { hidePill(); return; } if (pill) { showPill(); return; } buildPill(); void (async () => { const id = firstBook(); const kept = !!id && (Object.keys(await sourceIndex(id)).length > 0 || Object.keys(await cache(id)).length > 0); if (aiReady() || kept) setOn(true); else settingsSheet(); })(); },
-    dispose() { disposed = true; setAiHooks(null); offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); flush(); },
+    toggleUi() { if (pill && !pill.hidden) { hidePill(); return; } if (pill) { showPill(); return; } buildPill(); void (async () => { const id = firstBook(); const kept = !!id && (Object.keys(await sourceIndex(id)).length > 0 || Object.keys(await cache(id)).length > 0); if (kept) setOn(true); else if (aiReady()) void startUser(); else settingsSheet(); })(); },
+    dispose() { disposed = true; gatherSig.stop = true; setAiHooks(null); offWait(); generation++; pill?.remove(); pill = null; mini?.remove(); mini = null; window.clearTimeout(saveTimer); flush(); },
   };
 
-  function settingsSheet() { aiSheet({ tab: 'translation', onDone: () => { if (pill && aiReady()) { if (!on) setOn(true); else void run(true); } }, extra: h('div', null, optionControls(), aheadControls()) }); }
+  function settingsSheet() { aiSheet({ tab: 'translation', onDone: () => { if (pill && aiReady()) { if (!on) void startUser(); else void run(true); } }, extra: h('div', null, optionControls(), aheadControls()) }); }
 }

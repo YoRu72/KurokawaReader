@@ -70,7 +70,7 @@ export function aiSheet(o: AiSheetOpts = {}): void {
   function build(k: AiTab): void {
     if (built.has(k)) return; built.add(k); const p = panels.get(k)!;
     if (k === 'translation') {
-      void import('./aisettings').then((m) => { p.append(m.translationPanel(o.extra ?? hooks?.options(), () => show('glossary'))); });
+      void import('./aisettings').then((m) => { p.append(m.translationPanel(o.extra ?? hooks?.options(), () => show('glossary'), book?.id)); });
     } else if (k === 'glossary') {
       void import('./glossarysheet').then((m) => {
         const g = m.glossaryPanel(book, { scan: hooks && book && hooks.bookId === book.id ? (f) => { sh.close(); hooks!.scan(f); } : undefined, toNames: () => show('names') });

@@ -39,7 +39,7 @@ export function openGlossCard(entry: NameEntry, o: CardOpts): void {
   const row = (label: string, ...kids: (string | Node)[]): HTMLElement => h('div', { class: 'gc-row' }, h('span', { class: 'gc-label' }, label), h('span', { class: 'gc-val', dir: 'auto' }, ...kids));
   const close = (): void => { off(); el.remove(); if (open?.el === el) open = null; o.onClose?.(); };
   const edit = h('button', { type: 'button', class: 'btn tonal gc-edit', onclick: () => { close(); void import('./aisheet').then((m) => m.aiSheet({ tab: 'glossary', book: { id: o.bookId, title: o.title }, focusTerm: main.id })); } }, icon('pen'), t('edit'));
-  const copy = h('button', { type: 'button', class: 'btn tonal gc-copy', onclick: () => { void copyText(`${main.from} = ${main.to}`).then(() => toast(t('copied'))); } }, icon('copy'), t('copy'));
+  const copy = h('button', { type: 'button', class: 'btn tonal gc-copy', onclick: () => { void copyText(`${main.from} = ${main.to}`).then(() => toast(t('copied'))); } }, icon('copy'), t('glossCardCopy'));
   const dict = h('button', { type: 'button', class: 'btn tonal gc-dict', hidden: true }, icon('define'), t('glossCardDict')) as HTMLButtonElement;
   const el = h('div', { class: 'gloss-card', role: 'dialog', 'aria-label': t('glossCardLabel'), tabindex: '-1', dataset: { id: main.id } },
     h('div', { class: 'gc-head' }, h('span', { class: 'gc-kind' }, icon(kindIcon(main.kind ?? 'term')), h('span', { dir: 'auto' }, kindLabel(main.kind ?? 'term'))),
