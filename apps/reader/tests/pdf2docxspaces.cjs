@@ -17,6 +17,7 @@ const DIST = path.resolve(process.env.KR_DIST || path.join(__dirname, '../dist')
 const PORT = 5195;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
+const EDIT = (process.env.KR_DOCX_RESULT || 'edit') !== 'exact';
 let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); if (!c) fails++; };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'p2d-spaces-'));
 
@@ -139,7 +140,7 @@ async function book() {
 async function convert(browser, file) {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true });
   const page = await ctx.newPage(); page.on('pageerror', (e) => { console.log('pageerror', e.message); fails++; });
-  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
+  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate((r) => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); /* KR_DOCX_RESULT=exact|edit: PDF → Word's «Result» */ if (r) localStorage.setItem('kr.convert', JSON.stringify({ docxResult: r })); }, process.env.KR_DOCX_RESULT || ''); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [file]); await page.waitForSelector('.book-card', { timeout: 60000 }); await page.waitForTimeout(300);
   const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sel-actions');
   if (!(await page.$('.sel-actions button:has-text("Convert")'))) { await page.click('.sel-actions button:has-text("More")'); await page.waitForSelector('.sheet'); await page.click('.sheet button:has-text("Convert")'); } else await page.click('.sel-actions button:has-text("Convert")');
@@ -167,8 +168,10 @@ async function convert(browser, file) {
     for (const t of ['سلام علي من', 'رب دار نور', 'جد تين هو', 'يد سر عين', 'باب لين مر', 'تم دم ود', 'نهر بر سد', 'مع ري عود'])
       ok(`1. a box keeps its words apart where the page draws a narrow space: "${t}" — ${show(p1)}`, p1.split('\n').some((l) => l.trim() === t));
     const p2 = pages[1] ?? '';
-    ok(`2. a space of no width at a word's edge, the next word set apart, parts them: "سلام علي من" — ${show(p2)}`, p2.split('\n').some((l) => l.trim() === 'سلام علي من'));
-    ok(`2. likewise on the next line: "نور دار باب" — ${show(p2)}`, p2.split('\n').some((l) => l.trim() === 'نور دار باب'));
+    // (In the result to edit — the default — the two lines of the paragraph run on as one text, a space between.)
+    const line2 = (t) => p2.split('\n').some((l) => l.trim() === t || (EDIT && (l.trim().startsWith(t + ' ') || l.trim().endsWith(' ' + t))));
+    ok(`2. a space of no width at a word's edge, the next word set apart, parts them: "سلام علي من" — ${show(p2)}`, line2('سلام علي من'));
+    ok(`2. likewise on the next line: "نور دار باب" — ${show(p2)}`, line2('نور دار باب'));
     ok(`2. a word drawn in two touching pieces stays one word, its space after it: no "عل ي", no "ي من" glued — ${show(p2)}`, !/عل ي|دا ر|يمن|رباب/.test(p2));
     const p3 = pages[2] ?? '';
     ok(`3. a sliver of a space where a word and its comma or quote touch is no space: "سلام، علي» من" — ${show(p3)}`, p3.trim() === 'سلام، علي» من');

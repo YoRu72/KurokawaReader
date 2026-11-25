@@ -1068,4 +1068,7 @@ export const ko: Partial<Strings> = {
   comicOrientFree: "자유",
   comicShiftOn: "한 페이지 밀었습니다",
   comicShiftOff: "원래대로 되돌렸습니다",
+  docxResult: "결과물",
+  docxResultEdit: "편집하기 쉽게",
+  docxResultExact: "모양 그대로",
 };

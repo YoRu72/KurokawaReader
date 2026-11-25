@@ -18,8 +18,9 @@ export async function convertPicker(books: Book[], pickFile: () => void): Promis
   }, t('close'));
 }
 
-/** The options row: the paper and type size (for a PDF), and whether pictures come along; remembered. */
-function optionsRow(): { el: HTMLElement; get(): ConvOptions; showPdf(v: boolean): void } {
+/** The options row: the paper and type size (for a PDF), and whether pictures come along; for a PDF made into
+ *  Word, the result — easy to edit or the page's exact look; remembered. */
+function optionsRow(): { el: HTMLElement; get(): ConvOptions; showPdf(v: boolean): void; showDocx(v: boolean): void } {
   const KEY = 'kr.convert';
   let o: ConvOptions = { paper: 'a4', images: true };
   try { o = { ...o, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as ConvOptions) }; } catch { /* defaults */ }
@@ -28,11 +29,21 @@ function optionsRow(): { el: HTMLElement; get(): ConvOptions; showPdf(v: boolean
   paper.addEventListener('change', () => { o.paper = paper.value as PdfPaper; save(); });
   const size = h('select', { 'aria-label': t('fontSize') }, ...[['', t('fontSizeDefault')], ['15', '15'], ['18', '18'], ['21', '21'], ['24', '24']].map(([v, l]) => h('option', { value: v, selected: String(o.fontSize ?? '') === v }, l))) as HTMLSelectElement;
   size.addEventListener('change', () => { o.fontSize = size.value ? Number(size.value) : undefined; save(); });
-  const images = h('input', { type: 'checkbox', checked: o.images !== false }) as HTMLInputElement;
+  const images = h('input', { type: 'checkbox', role: 'switch', checked: o.images !== false }) as HTMLInputElement;
   images.addEventListener('change', () => { o.images = images.checked; save(); });
   const pdfOnly = h('span', { class: 'conv-pdf-opts' }, h('label', { class: 'chip small check' }, h('span', null, t('pageSize')), paper), h('label', { class: 'chip small check' }, h('span', null, t('fontSize')), size));
-  const el = h('div', { class: 'scan-filters conv-opts' }, h('label', { class: 'chip small check' }, images, h('span', null, t('convKeepImages'))), pdfOnly);
-  return { el, get: () => ({ ...o }), showPdf: (v) => { pdfOnly.hidden = !v; } };
+  // (PDF → Word: «Easy to edit» — real paragraphs, headings, lists, links and notes — or «Exact look», every line
+  // where the page has it.)
+  const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': t('docxResult') });
+  const drawSeg = () => seg.replaceChildren(...([['edit', t('docxResultEdit')], ['exact', t('docxResultExact')]] as ['edit' | 'exact', string][]).map(([v, l]) => {
+    const on = (o.docxResult ?? 'edit') === v;
+    return h('button', { type: 'button', role: 'radio', 'aria-pressed': String(on), 'aria-checked': String(on), onclick: () => { o.docxResult = v; save(); drawSeg(); } }, l);
+  }));
+  drawSeg();
+  const docxOnly = h('div', { class: 'field conv-docx-opts', hidden: true }, h('span', { class: 'label' }, t('docxResult')), seg);
+  // (Keep pictures: a switch, as the app's on/off settings are.)
+  const el = h('div', { class: 'conv-opts-wrap' }, h('label', { class: 'row conv-images' }, h('span', { class: 'label' }, t('convKeepImages')), h('span', { class: 'switch' }, images, h('i'))), h('div', { class: 'scan-filters conv-opts' }, pdfOnly), docxOnly);
+  return { el, get: () => ({ ...o }), showPdf: (v) => { pdfOnly.hidden = !v; }, showDocx: (v) => { docxOnly.hidden = !v; } };
 }
 
 /** Several books to one format, one after the other; the results saved one by one or together as a ZIP. */
@@ -66,6 +77,7 @@ export function convertManySheet(books: Book[], onDone?: () => void): void {
     result.hidden = false; busy = false; grid.querySelectorAll('button').forEach((b) => { b.disabled = false; });
   };
   for (const tg of targets) grid.append(h('button', { class: 'convert-target', type: 'button', onclick: () => { opts.showPdf(tg.id === 'pdf'); void run(tg.id); } }, icon(tg.id === 'pdf' ? 'file' : 'type'), h('b', null, tg.label), h('small', null, `.${tg.ext}`)));
+  opts.showDocx(list.every((b) => b.format === 'pdf') && targets.some((x) => x.id === 'docx'));
   sh.body.append(status, track, opts.el, grid, result);
 }
 
@@ -122,6 +134,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       h('small', null, `.${tg.ext}`)));
   }
   opts.showPdf(targets.some((x) => x.id === 'pdf'));
+  opts.showDocx(book.format === 'pdf' && targets.some((x) => x.id === 'docx'));
   sh.body.append(status, track, opts.el, grid, nf.el, result);
   if (book.format === 'pdf') sh.body.append(h('p', { class: 'hint', style: { marginTop: '10px' } }, t('pdfConvertHint')));
   if (!('kurokawaDesktop' in window) && targets.some((x) => x.id === 'pdf')) sh.body.append(h('p', { class: 'hint' }, t('pdfImageHint')));

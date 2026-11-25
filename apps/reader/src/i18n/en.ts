@@ -620,7 +620,7 @@ export const en = {
   details: 'Details',
   paperPhone: 'Phone',
   fontSizeDefault: 'Default',
-  convKeepImages: 'Keep pictures',
+  convKeepImages: 'Keep pictures', docxResult: 'Result', docxResultEdit: 'Easy to edit', docxResultExact: 'Exact look',
   convertManyBody: '{n} books, one after the other, to the format you pick.',
   convertManyDone: '{n} converted',
   saveZip: 'Save as ZIP',

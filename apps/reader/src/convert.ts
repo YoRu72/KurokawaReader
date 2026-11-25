@@ -469,7 +469,8 @@ export function buildText(d: ConvDoc, markdown: boolean): string {
 export type PdfPaper = 'a4' | 'a5' | 'letter' | 'phone';
 const PAPER: Record<PdfPaper, { css: string; pt: [number, number] }> = { a4: { css: 'A4', pt: [595.28, 841.89] }, a5: { css: 'A5', pt: [419.53, 595.28] }, letter: { css: 'Letter', pt: [612, 792] }, phone: { css: '90mm 160mm', pt: [255.1, 453.5] } };
 /** What the reader can set for a conversion: the paper and type size of a PDF, whether pictures go along. */
-export interface ConvOptions { paper?: PdfPaper; fontSize?: number; images?: boolean }
+/** docxResult: PDF → Word's «Result» — 'edit' (the default: easy to edit) or 'exact' (the page's exact look). */
+export interface ConvOptions { paper?: PdfPaper; fontSize?: number; images?: boolean; docxResult?: 'edit' | 'exact' }
 
 export async function buildPdf(d: ConvDoc, progress: Progress, opts: ConvOptions = {}): Promise<Blob> {
   const paper = PAPER[opts.paper ?? 'a4'];
@@ -906,7 +907,7 @@ export async function convertBook(book: Book, target: Target, progress: Progress
   if (book.format === 'pdf' && target === 'docx') {
     try {
       const { pdfToDocx } = await import('./pdf2docx');
-      const blob = await pdfToDocx(book, file, progress, password);
+      const blob = await pdfToDocx(book, file, progress, password, { exact: opts.docxResult === 'exact' });
       progress('done', 100);
       return { blob, name: `${slug(book.title)}.${tg.ext}` };
     } catch (err) {

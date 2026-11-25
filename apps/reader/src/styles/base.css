@@ -1527,6 +1527,8 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 .conv-opts { margin: 8px 0 10px; }
 .conv-pdf-opts { display: contents; }
 .conv-pdf-opts[hidden] { display: none; }
+.conv-docx-opts { margin: 0 0 12px; gap: 6px; }
+.conv-docx-opts[hidden] { display: none; }
 .chip.check select { font: inherit; color: var(--text); background: var(--md-surface-container); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 2px 6px; }
 .chapter-pick { position: sticky; top: calc(var(--topbar-h, 56px)); z-index: 5; margin: 0 8px 6px; padding: 6px 8px; border-radius: 14px; background: var(--md-surface-container-high); box-shadow: var(--el-2); }
 .chapter-pick .sel-head { display: flex; align-items: center; gap: 8px; }

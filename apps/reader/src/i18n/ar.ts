@@ -625,7 +625,7 @@ export const ar: Strings = {
   details: 'التفاصيل',
   paperPhone: 'هاتف',
   fontSizeDefault: 'الافتراضي',
-  convKeepImages: 'مع الصور',
+  convKeepImages: 'مع الصور', docxResult: 'الناتج', docxResultEdit: 'سهولة التحرير', docxResultExact: 'مطابقة الشكل',
   convertManyBody: '{n} من الكتب، واحدًا بعد واحد، إلى الصيغة التي تختارها.',
   convertManyDone: 'حُوِّل {n}',
   saveZip: 'حفظ في ملف ZIP',

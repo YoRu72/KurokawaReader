@@ -26,7 +26,7 @@ if (!g.document) {
 }
 
 type Job = { n: number; force?: string[] };
-export type LaneIn = { t: 'open'; file: Blob; lane: number; port: MessagePort } | { t: 'page'; n: number; force?: string[] } | { t: 'word'; ids: string[] } | { t: 'close' };
+export type LaneIn = { t: 'open'; file: Blob; lane: number; port: MessagePort; edit?: boolean } | { t: 'page'; n: number; force?: string[] } | { t: 'word'; ids: string[] } | { t: 'close' };
 export type LanePage = {
   t: 'page'; n: number; model: PageModel;
   /** Fonts this lane met first on this page: their ids and what is known of them. */
@@ -57,6 +57,8 @@ const store: UseStore = { seqs: new GlyphRuns(), seen: new Map(), keepAll: true,
 const queue: Job[] = [];
 const asked = new Map<number, Promise<import('pdfjs-dist').PDFPageProxy>>();
 let busy = false;
+// (The result the conversion is for — «Easy to edit» or «Exact look» — as the page told it.)
+let editMode = true;
 const post = (m: LaneOut, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
 
 const force = (ids: string[]) => {
@@ -90,7 +92,8 @@ async function open(file: Blob, port: MessagePort): Promise<void> {
 async function pump(): Promise<void> {
   if (busy || !doc) return;
   busy = true;
-  const { analysePage, askAhead, takePendingPngs, eachRunList } = await import('./pdf2docx');
+  const { analysePage, askAhead, takePendingPngs, eachRunList, p2d } = await import('./pdf2docx');
+  p2d.edit = editMode;
   try {
     while (queue.length) {
       const job = queue.shift()!;
@@ -144,7 +147,7 @@ async function pump(): Promise<void> {
 self.addEventListener('unhandledrejection', (e) => post({ t: 'error', message: String((e as PromiseRejectionEvent).reason?.stack ?? (e as PromiseRejectionEvent).reason) }));
 self.onmessage = (e: MessageEvent<LaneIn>) => {
   const m = e.data;
-  if (m.t === 'open') { lane = m.lane; open(m.file, m.port).catch((err) => post({ t: 'error', message: String((err as Error)?.stack ?? err) })); }
+  if (m.t === 'open') { lane = m.lane; editMode = m.edit !== false; open(m.file, m.port).catch((err) => post({ t: 'error', message: String((err as Error)?.stack ?? err) })); }
   else if (m.t === 'page') { queue.push({ n: m.n, force: m.force }); void pump(); }
   else if (m.t === 'word') force(m.ids);
   // (Told when done, so the page can end this worker and its pdf.js worker at once.)

@@ -41,10 +41,10 @@ async function readDocx(buf) {
       jc: ppr && kid(ppr, 'w:jc') ? attr(kid(ppr, 'w:jc'), 'w:val') : undefined, num: ppr && kid(ppr, 'w:numPr') ? numPrOf(kid(ppr, 'w:numPr')) : undefined, bold: rpr && kid(rpr, 'w:b') ? on(kid(rpr, 'w:b')) : undefined };
   }
   // numbering: numId -> abstract -> level formats
-  D.numFmt = {}; const nb = await get('word/numbering.xml');
+  D.numFmt = {}; D.numLv = {}; D.counters = {}; const nb = await get('word/numbering.xml');
   if (nb) {
-    const abs = {}; for (const a of descend(nb)) if (a.tag === 'w:abstractNum') { abs[a.attrs['w:abstractNumId']] = {}; for (const l of kidsOf(a, 'w:lvl')) abs[a.attrs['w:abstractNumId']][l.attrs['w:ilvl']] = attr(kid(l, 'w:numFmt'), 'w:val'); }
-    for (const n of descend(nb)) if (n.tag === 'w:num') D.numFmt[n.attrs['w:numId']] = abs[attr(kid(n, 'w:abstractNumId'), 'w:val')] || {};
+    const abs = {}, absLv = {}; for (const a of descend(nb)) if (a.tag === 'w:abstractNum') { const id = a.attrs['w:abstractNumId']; abs[id] = {}; absLv[id] = {}; for (const l of kidsOf(a, 'w:lvl')) { abs[id][l.attrs['w:ilvl']] = attr(kid(l, 'w:numFmt'), 'w:val'); absLv[id][l.attrs['w:ilvl']] = { fmt: attr(kid(l, 'w:numFmt'), 'w:val'), start: +(attr(kid(l, 'w:start'), 'w:val') || 1), text: attr(kid(l, 'w:lvlText'), 'w:val') || '' }; } }
+    for (const n of descend(nb)) if (n.tag === 'w:num') { D.numFmt[n.attrs['w:numId']] = abs[attr(kid(n, 'w:abstractNumId'), 'w:val')] || {}; D.numLv[n.attrs['w:numId']] = absLv[attr(kid(n, 'w:abstractNumId'), 'w:val')] || {}; }
   }
   D.kindOf = (num) => { if (!num) return null; const f = (D.numFmt[num.id] || {})[String(num.lvl)]; return f === undefined ? 'number' : f === 'bullet' ? 'bullet' : f === 'none' ? 'none' : 'number'; };
   // body
@@ -102,6 +102,8 @@ function readPara(D, p, ctx) {
   for (const s of chain) { const m = /^heading (\d)/.exec(s.name); if (m && !heading) heading = { level: +m[1] }; if (s.name === 'title' && !heading) heading = { level: 0, title: true }; }
   const P = { text: '', runs: [], style: sid, styleName: chain[0]?.name || '', heading, num, numKind: D.kindOf(num), bidi: !!bidi, jc, table: ctx.table, box: ctx.box, pics: 0, rtlRuns: 0, frame: !!kid(pr, 'w:framePr') };
   D.paras.push(P); const boxes = [];
+  // (A list item's number as Word shows it — what the reader sees of the list: counted per list and level.)
+  if (num && P.numKind === 'number') { const lv = (D.numLv[num.id] || {})[String(num.lvl)]; if (lv) { const c = D.counters[num.id] ??= {}; for (const k of Object.keys(c)) if (+k > num.lvl) delete c[k]; c[num.lvl] = c[num.lvl] === undefined ? lv.start : c[num.lvl] + 1; const n = c[num.lvl]; const v = lv.fmt === 'lowerLetter' ? String.fromCharCode(96 + n) : lv.fmt === 'upperLetter' ? String.fromCharCode(64 + n) : lv.fmt === 'lowerRoman' ? ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'][n - 1] || String(n) : lv.fmt === 'upperRoman' ? ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][n - 1] || String(n) : lv.fmt === 'hindiNumbers' ? String(n).replace(/\d/g, (d) => String.fromCharCode(0x660 + +d)) : String(n); P.label = lv.text.replace(/%\d/, v); } }
   const fieldStack = []; // complex fields: {instr, link}
   const run = (r, link) => {
     const rp = kid(r, 'w:rPr'); const rf = kid(rp, 'w:rFonts');
@@ -319,7 +321,8 @@ function scoreDocx(D, src, feat, meta) {
   // ---- direction of Arabic paragraphs
   if (ok('arabic')) {
     const ar = D.paras.filter((p) => (p.text.normalize('NFKC').match(AR_RE) || []).length >= 3); let sc = 0;
-    for (const p of ar) { const right = p.bidi ? (!p.jc || ['start', 'left'].includes(p.jc)) : ['right', 'end'].includes(p.jc); sc += 0.5 * (p.bidi ? 1 : 0) + 0.5 * (right ? 1 : 0); }
+    // (A table's cell keeps the alignment of its column — a centred figure — so there only its direction counts.)
+    for (const p of ar) { const right = p.table ? p.bidi : p.bidi ? (!p.jc || ['start', 'left'].includes(p.jc)) : ['right', 'end'].includes(p.jc); sc += 0.5 * (p.bidi ? 1 : 0) + 0.5 * (right ? 1 : 0); }
     S.direction = ar.length ? sc / ar.length : 0;
   }
   // ---- scans and OCR layers: any text recovered at all
@@ -327,4 +330,31 @@ function scoreDocx(D, src, feat, meta) {
   return S;
 }
 
-module.exports = { readDocx, scoreDocx, fold, sim, dist, expectations, parseXml };
+// ---------- the guard against lost text: the PDF's own text layer, word by word, found anywhere in the .docx ----------
+// (pdf.js in Node reads the layer; the .docx side is every part a reader of the document sees: body, tables, text
+// boxes, headers, footers, footnotes. Words broken by a hyphen at a line's end count whole on both sides; a word
+// found only reversed counts too (a PDF that stores right-to-left text in visual order).)
+const joinHyph = (s) => s.replace(/[‐‑­]/g, '-').replace(/([\p{Ll}])-\s+([\p{Ll}])/gu, '$1$2');
+async function pdfTextWords(file) {
+  const fs = require('fs'); const path = require('path'); const url = require('url');
+  const base = path.join(__dirname, '../../../node_modules/pdfjs-dist/');
+  const pdfjs = await import(url.pathToFileURL(path.join(base, 'legacy/build/pdf.mjs')).href);
+  const task = pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(file)), password: '', cMapUrl: url.pathToFileURL(path.join(base, 'cmaps/')).href, cMapPacked: true, standardFontDataUrl: url.pathToFileURL(path.join(base, 'standard_fonts/')).href, verbosity: 0, isEvalSupported: false }); const doc = await task.promise;
+  let text = '';
+  for (let i = 1; i <= doc.numPages; i++) { const tc = await (await doc.getPage(i)).getTextContent(); for (const it of tc.items) text += (it.str || '') + (it.hasEOL ? '\n' : ' '); text += '\n'; }
+  await task.destroy();
+  return words(joinHyph(text));
+}
+function docxAllText(D) { return joinHyph([...D.paras.map((p) => (p.label ? p.label + ' ' : '') + p.text), ...D.hf.map((h) => h.text), ...D.footnotes].join('\n')); }
+function wordRecall(pdfWords, D) {
+  const dw = words(docxAllText(D)); const got = multiset(dw); const all = dw.join(' ');
+  // (Arabic ligatures — lam-alef and the like — come out of some PDFs' text layers with their letters swapped: the
+  // same letters in another order count.)
+  const key = (w) => [...w].sort().join(''); const anag = multiset(dw.filter((w) => /[\u0600-\u06ff]/.test(w)).map(key));
+  let hit = 0; const miss = [];
+  const want = multiset(pdfWords);
+  for (const [w, n] of want) { const g = got.get(w) || 0; const rev = [...w].reverse().join(''); const gr = got.get(rev) || 0; let h = Math.min(n, g + gr); if (h < n && (all.includes(w) || all.includes(rev))) h = n; if (h < n && /[\u0600-\u06ff]/.test(w)) h = Math.min(n, h + (anag.get(key(w)) || 0)); hit += h; if (h < n) miss.push(w + (n - h > 1 ? '×' + (n - h) : '')); }
+  return { recall: pdfWords.length ? hit / pdfWords.length : null, miss };
+}
+
+module.exports = { readDocx, scoreDocx, fold, sim, dist, expectations, parseXml, pdfTextWords, wordRecall };

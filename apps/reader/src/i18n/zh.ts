@@ -1068,4 +1068,7 @@ export const zh: Partial<Strings> = {
   comicOrientFree: "自由",
   comicShiftOn: "已偏移一页",
   comicShiftOff: "已恢复配对",
+  docxResult: "结果",
+  docxResultEdit: "便于编辑",
+  docxResultExact: "外观一致",
 };

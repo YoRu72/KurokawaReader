@@ -1068,4 +1068,7 @@ export const ja: Partial<Strings> = {
   comicOrientFree: "自由",
   comicShiftOn: "ペアを1ページずらしました",
   comicShiftOff: "ペアを元に戻しました",
+  docxResult: "仕上がり",
+  docxResultEdit: "編集しやすく",
+  docxResultExact: "見た目どおり",
 };

@@ -108,7 +108,7 @@ async function convert(file) {
       };
       globalThis.Worker.prototype = Native.prototype;
     });
-    await page.goto(`http://127.0.0.1:${server.address().port}/`); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
+    await page.goto(`http://127.0.0.1:${server.address().port}/`); await page.evaluate((r) => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); /* KR_DOCX_RESULT=exact|edit: PDF → Word's «Result» */ if (r) localStorage.setItem('kr.convert', JSON.stringify({ docxResult: r })); }, process.env.KR_DOCX_RESULT || ''); await page.reload(); await page.waitForSelector('.library-view');
     await page.setInputFiles('input[type=file]', [file]); await page.waitForSelector('.book-card', { timeout: 120000 }); await page.waitForTimeout(1500);
     const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sel-actions');
     if (!(await page.$('.sel-actions button:has-text("Convert")'))) { await page.click('.sel-actions button:has-text("More")'); await page.waitForSelector('.sheet'); await page.click('.sheet button:has-text("Convert")'); } else await page.click('.sel-actions button:has-text("Convert")');
