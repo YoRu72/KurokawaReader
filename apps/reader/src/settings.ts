@@ -305,8 +305,26 @@ export interface VisualSettings {
   comicPageNumber: boolean;
   /** The page between volumes (finished, the next one) at the book's end and before its start. */
   comicBetween: boolean;
-  /** The colour behind the pages (black only, for now). */
-  comicBackground: 'black';
+  /** The colour behind the pages: black, grey, white, or chosen from the page's border (white or dark). */
+  comicBackground: 'black' | 'grey' | 'white' | 'auto';
+  /** Wide pages (wider than tall), one page per screen: shown as two halves in reading order («Split», the order
+   *  reversed with «Invert»), or turned a quarter to fill the height (split wins when both are on). The same four
+   *  for the long strip (the halves stacked). */
+  comicSplit: boolean; comicSplitInvert: boolean; comicRotate: boolean; comicRotateInvert: boolean;
+  comicSplitStrip: boolean; comicSplitInvertStrip: boolean; comicRotateStrip: boolean; comicRotateInvertStrip: boolean;
+  /** Two pages side by side (one page per screen only): never, always, or when the viewport is wider than tall. */
+  comicDual: 'never' | 'always' | 'wide';
+  /** Border trimming (white or black borders), one page per screen and in the strip. */
+  comicCrop: boolean; comicCropStrip: boolean;
+  /** A long press (a right click on a computer) on a page opens its menu. */
+  comicLongPress: boolean;
+  /** The long strip: room left and right of the pages (percent of the width), and no zooming out below the width. */
+  comicStripPadding: number; comicStripNoZoomOut: boolean;
+  /** Colour: custom brightness (−75…100), a colour filter (R G B A 0–255, a blend mode), greyscale, inverted colours. */
+  comicBrightOn: boolean; comicBrightness: number;
+  comicTintOn: boolean; comicTintR: number; comicTintG: number; comicTintB: number; comicTintA: number;
+  comicTintBlend: 'normal' | 'multiply' | 'screen' | 'overlay' | 'lighten' | 'darken';
+  comicGrey: boolean; comicInvertColours: boolean;
   /** For one version: comics open as before, as one scroll of pictures. */
   comicOldWay: boolean;
 }
@@ -487,6 +505,9 @@ export const DEFAULTS: VisualSettings = {
   swipeSensitivity: 'normal',
   comicMode: 2, comicTransitions: true, comicScale: 'fit', comicZoomStart: 'auto', comicNavPan: true, comicLandscapeZoom: true, comicStripZoom: true,
   comicZonesPaged: 0, comicZonesStrip: 0, comicInvertPaged: 'none', comicInvertStrip: 'none', comicPageNumber: true, comicBetween: true, comicBackground: 'black', comicOldWay: false,
+  comicSplit: false, comicSplitInvert: false, comicRotate: false, comicRotateInvert: false, comicSplitStrip: false, comicSplitInvertStrip: false, comicRotateStrip: false, comicRotateInvertStrip: false,
+  comicDual: 'never', comicCrop: false, comicCropStrip: false, comicLongPress: true, comicStripPadding: 0, comicStripNoZoomOut: false,
+  comicBrightOn: false, comicBrightness: 0, comicTintOn: false, comicTintR: 0, comicTintG: 0, comicTintB: 0, comicTintA: 0, comicTintBlend: 'normal', comicGrey: false, comicInvertColours: false,
   titleBarKind: 'own',
   titleBarClear: false,
   titleBarName: true,

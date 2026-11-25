@@ -18,7 +18,18 @@
 //  8. the settings panel's two tabs (a computer: no tap zones, the keys' list; a phone: the zones, no keys' list), the
 //     Comics group in Settings → Reader; «Open comics the old way» still opens the flow reader;
 //  9. a computer: ← → by direction, ↑ ↓, Page Up / Down, Space, Home / End, the wheel a page per notch group, clicks.
-// Screenshots (KR_SHOTS=<dir>): S5a-paged-rtl, S5a-strip, S5a-settings-mode, S5a-settings-general, S5a-zones-overlay,
+// Part 2 (0.67.0, S5b): the repairs (the slider's fill in a right-to-left book — the rule and the pixels —, the page count
+//  once, the zones' overlay and the pill, the arrow of the page between volumes); wide pages (split in LTR and RTL and
+//  reversed, the counts and the place kept across the setting, rotate, two pages side by side: the cover alone, a wide page
+//  alone, shift by one page, «on wide screens» on a turned viewport); borders trimmed (within 2 px on white and on black, not an
+//  animated GIF, the 45 % cap, the strip's own setting, the bar's button); the background (grey, white, automatic by the
+//  border); colour (brightness, greyscale, inversion, the blended tint, the bars not covered, the third tab); the page's menu
+//  (save through the app's save, cover set and undone, the whole page or as shown, off when set off, the right click on a
+//  computer); the strip (an 800×40,000 page as 10 slices, every part sharp at its own size, the pixels held at most, side
+//  padding, zooming out and its switch, wide pages stacked); the rotation lock (a phone's); the pair at 1280×800 and 1920×1080.
+// Screenshots (KR_SHOTS=<dir>; KR_DSF=2 for a phone at twice the pixels): S5b-paged-rtl, S5b-split, S5b-crop-before-after,
+// S5b-colour-tab, S5b-wide-settings, S5b-longpress, S5b-strip, S5b-spread-phone, S5b-spread-pc;
+// S5a-paged-rtl, S5a-strip, S5a-settings-mode, S5a-settings-general, S5a-zones-overlay,
 // S5a-transition (phone, dark), S5a-paged-pc.
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const { makeCbz } = require('./helpers/comicfixture.cjs');
@@ -83,7 +94,7 @@ async function settle(p) { await p.waitForTimeout(120); }
 
 async function session(phone, fn) {
   const br = await chromium.launch({ args: ['--js-flags=--max-old-space-size=2048'] }); const errors = [];
-  const ctx = await br.newContext(phone ? { viewport: { width: 412, height: 915 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, serviceWorkers: 'block', locale: LANG, colorScheme: 'dark' } : { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, serviceWorkers: 'block', locale: LANG, colorScheme: 'dark' });
+  const ctx = await br.newContext(phone ? { viewport: { width: 412, height: 915 }, deviceScaleFactor: Number(process.env.KR_DSF ?? 1), isMobile: true, hasTouch: true, serviceWorkers: 'block', locale: LANG, colorScheme: 'dark' } : { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, serviceWorkers: 'block', locale: LANG, colorScheme: 'dark' });
   await ctx.route((u) => !/^(127\.0\.0\.1|localhost)$/.test(u.hostname), (r) => r.abort());
   const p = await ctx.newPage(); p.on('pageerror', (e) => errors.push(e.message));
   await p.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -308,6 +319,333 @@ async function importBooks(p, files, want) {
     ok('a computer: no tap-zone options', !mt.zones && !mt.show, mt);
     await p.evaluate((g) => [...document.querySelectorAll('.panel.open .panel-tabs button, .panel.open [role="tab"]')].find((b) => b.textContent.trim() === g)?.click(), W.general);
     ok('a computer: the keys\' list in «General»', await until(p, () => !!document.querySelector('.panel.open .cm-keys-hint'), null, 3000));
+  });
+
+  /* ---------------------------------------------------------------- 0.67.0 part 2 (S5b): wide pages, borders, colour, the page's menu, the long strip */
+  const extra = {
+    crop: path.join(TMP, 'Crop Test.cbz'), tall: path.join(TMP, 'Tall Strip.cbz'),
+  };
+  // Crop test: 300×400 pages — 1 plain, 2 white borders, 3 black borders, 4 an animated GIF, 5 nearly nothing but a speck.
+  fs.writeFileSync(extra.crop, await makeCbz({ pages: 5, width: 300, height: 400, bordered: [2], blackBordered: [3], gif: [4], faint: [5] }));
+  // The tall book: a normal page, then one 800×40,000 px.
+  fs.writeFileSync(extra.tall, await makeCbz({ pages: 2, width: 800, height: 1200, strip: [2] }));
+  const ids2 = (books) => { const f = (re) => books.find((b) => re.test(b.fileName || b.title))?.id; return { v1: f(/Lantern Comic Vol\. 1/), v2: f(/Lantern Comic Vol\. 2/), crop: f(/Crop Test/), tall: f(/Tall Strip/) }; };
+  const iconHas = (p, sel, frag) => p.evaluate(([sel, frag]) => !!document.querySelector(sel)?.innerHTML.includes(frag), [sel, frag]);
+  const track = (p) => p.evaluate(() => getComputedStyle(document.querySelector('.cm-slider'), '::-webkit-slider-runnable-track').backgroundImage);
+  const display = (p) => p.evaluate(() => { const v = window.__krComic.viewer; return { n: v.displayPos, total: v.displayTotal, page: v.page, count: document.querySelector('.cm-bar .pcount').textContent, max: document.querySelector('.cm-slider').max }; });
+  const onShow = (p) => p.evaluate(() => [...document.querySelectorAll('.cm-current .cm-part')].map((e) => ({ page: Number(e.dataset.page), x: Math.round(e.getBoundingClientRect().left) })));
+  const bars = (p, on) => p.evaluate((on) => document.querySelector('.reader-view').classList[on ? 'remove' : 'add']('immersive'), on);
+  const importAll = async (p, list, want) => { await p.setInputFiles('.library-view input[type=file]', list); let books = []; for (let i = 0; i < 600; i++) { books = await allBooks(p); if (books.length >= want) break; await p.evaluate(() => { const s = [...document.querySelectorAll('.sheet')].pop(); s?.querySelector('.sheet-actions button, button.btn')?.click(); }); await p.waitForTimeout(250); } return ids2(books); };
+  const settle2 = (p) => p.waitForTimeout(250);
+  const sized = async (p) => { await until(p, () => window.__krComic.source.pages.every((x) => x.width && x.height), null, 10000); await p.waitForTimeout(300); };
+  const ensureTotal = (p, n) => until(p, (n) => window.__krComic.viewer.displayTotal === n, n, 8000);
+
+  await session(true, async (p) => {
+    const ids = await importAll(p, [files.v1, files.v2, extra.crop, extra.tall], 4);
+    ok('S5b: the books are imported', ids.v1 && ids.v2 && ids.crop && ids.tall, ids);
+    await p.evaluate(() => localStorage.setItem('kr.comicZonesSeen', '1'));
+
+    // ---- Part 0: the repairs
+    await open(p, ids.v1);
+    await p.evaluate(() => window.__krComic.viewer.goTo(2)); await settle2(p); await bars(p, true);
+    await noToast(p); await p.waitForTimeout(500);
+    // (A slider's track is a shadow part whose computed style the browser does not give: the rule that paints it is read, and
+    // the pixels are looked at.)
+    const rule = (p, dir) => p.evaluate((dir) => { const out = []; for (const sh of document.styleSheets) { let rs; try { rs = sh.cssRules; } catch { continue; } for (const r of rs) if (r.selectorText && r.selectorText.includes('.cm-slider::-webkit-slider-runnable-track') && r.selectorText.includes(`data-dir="${dir}"`)) out.push(r.style.background || r.style.backgroundImage); } return out.join(' | '); }, dir);
+    const g1 = await rule(p, 'rtl');
+    ok('0a: the rule for a right-to-left book fills the track from the right (to left)', /to left/.test(g1), g1);
+    ok('0a: …and the slider\'s direction is right to left', await p.evaluate(() => getComputedStyle(document.querySelector('.cm-slider')).direction) === 'rtl');
+    const thumb = await p.evaluate(() => { const s = document.querySelector('.cm-slider'); return { p: s.style.getPropertyValue('--p'), v: s.value, max: s.max }; });
+    ok('0a: the fill ends at the thumb (page 3 of 12)', Math.abs(parseFloat(thumb.p) - (2 / 11) * 100) < 0.5, thumb);
+    const px = await p.evaluate(() => { const s = document.querySelector('.cm-slider'); const r = s.getBoundingClientRect(); return { l: r.left + 6, r: r.right - 6, y: r.top + r.height / 2 }; });
+    const shot = await p.screenshot({ clip: { x: px.l - 4, y: px.y - 6, width: px.r - px.l + 8, height: 12 } });
+    const pixels = await p.evaluate(async (b64) => { const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode(); const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0); const at = (x) => [...g.getImageData(x, img.height >> 1, 1, 1).data].slice(0, 3);
+      const probe = (v) => { const d = document.createElement('div'); d.style.background = `var(${v})`; document.body.append(d); const c2 = getComputedStyle(d).backgroundColor; d.remove(); return c2.match(/\d+/g).slice(0, 3).map(Number); };
+      return { left: at(8), right: at(img.width - 8), primary: probe('--md-primary'), rest: probe('--md-secondary-container') }; }, shot.toString('base64'));
+    const nearRgb = (a, b) => a.every((v, i) => Math.abs(v - b[i]) <= 8);
+    if (SHOTS) { await noToast(p); await p.screenshot({ path: path.join(SHOTS, 'S5b-paged-rtl.png') }); }
+    ok('0a: by pixels the right end of the track (the part read) is the fill colour and the left end the rest', nearRgb(pixels.right, pixels.primary) && nearRgb(pixels.left, pixels.rest), pixels);
+    await setMode(p, 4); await settle(p);
+    await p.waitForTimeout(500); ok('0a: in the strip the rule fills from the left (to right)', /to right/.test(await rule(p, 'ltr')) && (await p.evaluate(() => document.querySelector('.cm-bar').dataset.dir)) === 'ltr', await rule(p, 'ltr'));
+    await setMode(p, 0);
+    // 0b: the count once.
+    await bars(p, true); await settle(p);
+    const once = await p.evaluate(() => ({ pill: getComputedStyle(document.querySelector('.cm-pnum')).display, bar: document.querySelector('.cm-bar .pcount').textContent }));
+    ok('0b: with the bars up the count is in the bar only, not on a pill over the page', once.pill === 'none' && /\d+ \/ 12/.test(once.bar), once);
+    await bars(p, false); await settle(p);
+    const hidden = await p.evaluate(() => { const e = document.querySelector('.cm-pnum'); return { pill: getComputedStyle(e).display, text: e.textContent }; });
+    ok('0b: with the bars hidden the pill shows it', hidden.pill !== 'none' && /\d+ \/ 12/.test(hidden.text), hidden);
+    // 0c: the zones' overlay and the pill.
+    await p.evaluate(() => localStorage.removeItem('kr.comicZonesSeen')); await open(p, ids.v1);
+    await until(p, () => !!document.querySelector('.cm-zones'), null, 3000);
+    const zr = await p.evaluate(() => { const hint = document.querySelector('.cm-zones-hint').getBoundingClientRect(); const pill = document.querySelector('.cm-pnum'); const labels = [...document.querySelectorAll('.cm-zones span')].map((e) => e.getBoundingClientRect()); const hit = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top); return { pill: getComputedStyle(pill).display, hint: { top: Math.round(hint.top), bottom: Math.round(hint.bottom) }, vh: innerHeight, over: labels.some((l) => hit(l, hint)), rb: !!document.querySelector('.reader-readbar:not([hidden])') }; });
+    ok('0c: under the zones\' overlay the page-number pill is hidden and the hint is inside the screen, clear of the zone names', zr.pill === 'none' && zr.hint.bottom <= zr.vh && !zr.over, zr);
+    await p.evaluate(() => localStorage.setItem('kr.comicZonesSeen', '1')); await dismissZones(p);
+    // 0d: the arrow of the page between volumes.
+    await p.evaluate(() => window.__krComic.viewer.goLast()); await until(p, () => window.__krComic.viewer.itemKind === 'after', null, 2000);
+    ok('0d: right to left: the open button points left', await iconHas(p, '.cm-current .cm-open-volume', 'M19 12H5'));
+    await setMode(p, 1); await p.evaluate(() => window.__krComic.viewer.goLast()); await until(p, () => window.__krComic.viewer.itemKind === 'after', null, 2000);
+    ok('0d: left to right: it points right', await iconHas(p, '.cm-current .cm-open-volume', 'M5 12h14'));
+    await setMode(p, 3); await p.evaluate(() => window.__krComic.viewer.goLast()); await until(p, () => window.__krComic.viewer.itemKind === 'after', null, 2000);
+    ok('0d: vertical: it points down', await iconHas(p, '.cm-current .cm-open-volume', 'M12 5v14'));
+    await setMode(p, 0);
+
+    // ---- Part A: split, reverse, rotate (page 4 of Vol. 1 is wide: 1350×900)
+    await visual(p, { comicSplit: true }); await reload(p); await open(p, ids.v1);
+    ok('A: split: 12 pages with one wide page count 13', await ensureTotal(p, 13), await display(p));
+    let pcs = await p.evaluate(() => window.__krComic.viewer.piecesOf(3).map((x) => x.piece.crop));
+    ok('A: split, right to left: the right half is read first', pcs.length === 2 && pcs[0][0] === 0.5 && pcs[1][0] === 0, pcs);
+    await p.evaluate(() => window.__krComic.viewer.goToDisplay(4)); await bars(p, false); await p.waitForTimeout(700);
+    if (SHOTS) { await noToast(p); await p.screenshot({ path: path.join(SHOTS, 'S5b-split.png') }); }
+    await p.evaluate(() => window.__krComic.viewer.goToDisplay(5)); await settle2(p);
+    let d = await display(p); ok('A: the second half is its own page (5 of 13), the source page 4', d.n === 5 && d.page === 3 && d.count === '5 / 13' && d.max === '13', d);
+    await stored(p, ids.v1, (b) => b?.progress?.page === 4);
+    await visual(p, { comicSplit: false }); await reload(p); await open(p, ids.v1);
+    d = await display(p); ok('A: split turned off: the place is the same source page (4 of 12)', d.page === 3 && d.n === 4 && d.total === 12, d);
+    await visual(p, { comicSplit: true }); await reload(p); await open(p, ids.v1); await ensureTotal(p, 13);
+    d = await display(p); ok('A: split turned on again: back on page 4, its first half', d.page === 3 && d.n === 4, d);
+    await setMode(p, 1); await settle(p); await ensureTotal(p, 13);
+    pcs = await p.evaluate(() => window.__krComic.viewer.piecesOf(3).map((x) => x.piece.crop));
+    ok('A: split, left to right: the left half is read first', pcs[0][0] === 0 && pcs[1][0] === 0.5, pcs);
+    await setMode(p, 0);
+    await visual(p, { comicSplit: true, comicSplitInvert: true }); await reload(p); await open(p, ids.v1); await ensureTotal(p, 13);
+    pcs = await p.evaluate(() => window.__krComic.viewer.piecesOf(3).map((x) => x.piece.crop));
+    ok('A: reverse the halves (right to left): the left half first', pcs[0][0] === 0 && pcs[1][0] === 0.5, pcs);
+    // Rotate (wins over split).
+    await visual(p, { comicSplit: true, comicSplitInvert: false, comicRotate: true }); await reload(p); await open(p, ids.v1);
+    await p.evaluate(() => window.__krComic.viewer.goTo(3)); await settle2(p);
+    pcs = await p.evaluate(() => window.__krComic.viewer.piecesOf(3).map((x) => x.piece.rotate));
+    d = await display(p);
+    ok('A: rotate to fit: one piece, turned a quarter (and it wins over the split, as in the reference reader)', pcs.length === 1 && pcs[0] === 1 && d.total === 12, { pcs, d });
+    const rot = await p.evaluate(() => { const el = document.querySelector('.cm-current .cm-rot'); const cs = el && getComputedStyle(el).transform; return { transform: cs, drawn: window.__krComic.viewer.drawn() }; });
+    ok('A: …drawn turned, and filling the screen\'s width as a portrait page', /matrix\(0, 1, -1, 0/.test(rot.transform) && Math.abs(rot.drawn.w - 412) <= 1 && rot.drawn.h > 600, rot);
+    await visual(p, { comicSplit: false, comicRotate: true, comicRotateInvert: true }); await reload(p); await open(p, ids.v1);
+    pcs = await p.evaluate(() => window.__krComic.viewer.piecesOf(3).map((x) => x.piece.rotate)); ok('A: rotate the other way: three quarters', pcs[0] === 3, pcs);
+    await visual(p, { comicRotate: false, comicRotateInvert: false });
+
+    // Spreads: two pages side by side.
+    await visual(p, { comicDual: 'always' }); await reload(p); await open(p, ids.v1); await bars(p, false);
+    await sized(p);
+    const seq = async () => { await p.evaluate(() => window.__krComic.viewer.goTo(0)); await settle2(p); const out = []; for (let i = 0; i < 9; i++) { out.push((await onShow(p)).map((x) => x.page).join('+')); const b = await st(p); await p.evaluate(() => window.__krComic.viewer.step(1, { pan: false })); await until(p, (it) => window.__krComic.viewer.item !== it, b.item, 1500); } return out; };
+    let sq = await seq();
+    ok('A: two pages side by side: the cover alone, then pairs; a wide page (4) alone; the pairing starts again after it', JSON.stringify(sq.slice(0, 6)) === JSON.stringify(['0', '1+2', '3', '4+5', '6+7', '8+9']), sq);
+    await p.evaluate(() => window.__krComic.viewer.goTo(1)); await settle2(p);
+    const pos = await onShow(p); ok('A: right to left: the first page of a pair stands on the right', pos.length === 2 && pos[0].page === 1 && pos[0].x > pos[1].x, pos);
+    if (SHOTS) { await noToast(p); await p.screenshot({ path: path.join(SHOTS, 'S5b-spread-phone.png') }); }
+    // Shift by one page (in the bar; kept per book).
+    await bars(p, true); await p.click('.cm-shift-btn'); await settle2(p); await bars(p, false);
+    sq = await seq(); ok('A: shift by one page: the cover pairs with the next, the pairing is off by one', sq[0] === '0+1' && sq[1] === '2' && sq[2] === '3', sq);
+    ok('A: …kept with the book', (await bookOf(p, ids.v1)).prefs?.comicShift === 1);
+    await p.evaluate(() => { document.querySelector('.reader-view').classList.remove('immersive'); }); await p.click('.cm-shift-btn'); await settle2(p);
+    // «On wide screens»: a portrait phone no, a turned one yes.
+    await visual(p, { comicDual: 'wide' }); await reload(p); await open(p, ids.v1); await p.evaluate(() => window.__krComic.viewer.goTo(1)); await settle2(p);
+    ok('A: «on wide screens»: a portrait screen shows one page', (await onShow(p)).length === 1);
+    await p.setViewportSize({ width: 915, height: 412 }); await until(p, () => document.querySelectorAll('.cm-current .cm-part').length === 2, null, 4000);
+    ok('A: …turned on its side it shows two', (await onShow(p)).length === 2, await onShow(p));
+    await p.setViewportSize({ width: 412, height: 915 }); await until(p, () => document.querySelectorAll('.cm-current .cm-part').length === 1, null, 4000);
+    ok('A: …turned back, one again', (await onShow(p)).length === 1);
+    await visual(p, { comicDual: 'never' }); await reload(p);
+
+    // ---- Part B: crop borders (300×400 pages)
+    await open(p, ids.crop);
+    const crops = async (n) => { await p.evaluate((n) => window.__krComic.viewer.goTo(n), n); await settle2(p); return p.evaluate((n) => ({ b: window.__krComic.viewer.borderOf(n), c: window.__krComic.viewer.piecesOf(n)[0].piece.crop }), n); };
+    let c = await crops(1); ok('B: off: nothing is measured and the page is shown whole', !c.b && c.c.join() === '0,0,1,1', c);
+    await visual(p, { comicCrop: true }); await reload(p); await open(p, ids.crop);
+    c = await crops(1);
+    ok('B: a page with white borders: trimmed to within 2 px of its picture (36 px margin)', await until(p, () => !!window.__krComic.viewer.borderOf(1), null, 3000), c);
+    c = await crops(1);
+    const near = (box, W, H) => Math.abs(box[0] * W - 36) <= 2 && Math.abs(box[1] * H - 36) <= 2 && Math.abs((box[0] + box[2]) * W - (W - 36)) <= 2 && Math.abs((box[1] + box[3]) * H - (H - 36)) <= 2;
+    ok('B: white borders: the rectangle is the picture to within 2 px', near(c.c, 300, 400) && c.b.edge === 'white', c);
+    await until(p, () => !!window.__krComic.viewer.borderOf(2), null, 1); c = await crops(2); await until(p, () => !!window.__krComic.viewer.borderOf(2), null, 3000); c = await crops(2);
+    ok('B: black borders: the same, to within 2 px', near(c.c, 300, 400) && c.b?.edge === 'black', c);
+    c = await crops(3); await settle2(p); c = await crops(3);
+    ok('B: an animated GIF is not trimmed', !c.b && c.c.join() === '0,0,1,1', c);
+    await crops(4); await until(p, () => !!window.__krComic.viewer.borderOf(4), null, 3000); c = await crops(4);
+    ok('B: a page of nearly nothing: no axis loses more than 45 %', c.c[2] >= 0.549 && c.c[3] >= 0.549, c);
+    const meas = await p.evaluate(() => { const b = window.__krComic.viewer.borderOf(1); return { b }; });
+    ok('B: the measurement is kept for the page (asked again, the same)', JSON.stringify((await crops(1)).b) === JSON.stringify(meas.b));
+    const imgRect = await p.evaluate(() => { const part = document.querySelector('.cm-current .cm-part'); const img = part.querySelector('img'); return { w: part.getBoundingClientRect().width, h: part.getBoundingClientRect().height, iw: img.getBoundingClientRect().width, ih: img.getBoundingClientRect().height }; });
+    await p.evaluate(() => window.__krComic.viewer.goTo(1)); await settle2(p);
+    const shown = await p.evaluate(() => { const part = document.querySelector('.cm-current .cm-part'); const img = part.querySelector('img'); const a = part.getBoundingClientRect(), b = img.getBoundingClientRect(); return { part: [a.width, a.height], img: [b.width, b.height] }; });
+    ok('B: the page drawn cut to its rectangle (the picture larger than the part showing it)', shown.img[0] > shown.part[0] * 1.2 && shown.img[1] > shown.part[1] * 1.1, { shown, imgRect });
+    if (SHOTS) {
+      await p.evaluate(() => window.__krComic.viewer.goTo(1)); await bars(p, false); await settle(p); await p.waitForTimeout(500); await noToast(p);
+      const after = await p.screenshot(); fs.writeFileSync(path.join(TMP, 'crop-after.png'), after);
+      await visual(p, { comicCrop: false }); await reload(p); await open(p, ids.crop); await p.evaluate(() => window.__krComic.viewer.goTo(1)); await bars(p, false); await p.waitForTimeout(600); await noToast(p);
+      const before = await p.screenshot(); fs.writeFileSync(path.join(TMP, 'crop-before.png'), before);
+      const both = await p.evaluate(async ([a, b]) => { const load = async (s) => { const i = new Image(); i.src = 'data:image/png;base64,' + s; await i.decode(); return i; }; const A = await load(a), B = await load(b); const c = document.createElement('canvas'); c.width = A.width * 2 + 20; c.height = A.height; const g = c.getContext('2d'); g.fillStyle = '#222'; g.fillRect(0, 0, c.width, c.height); g.drawImage(B, 0, 0); g.drawImage(A, A.width + 20, 0); return c.toDataURL('image/png').split(',')[1]; }, [after.toString('base64'), before.toString('base64')]);
+      fs.writeFileSync(path.join(SHOTS, 'S5b-crop-before-after.png'), Buffer.from(both, 'base64'));
+      await visual(p, { comicCrop: false }); await reload(p); await open(p, ids.crop);
+    }
+    // The strip's own setting; the quick toggle.
+    await visual(p, { comicCrop: true, comicCropStrip: false, comicMode: 4 }); await reload(p); await open(p, ids.crop);
+    await p.evaluate(() => window.__krComic.viewer.goTo(1)); await settle2(p);
+    ok('B: the strip has its own setting: off there, the pages whole', (await p.evaluate(() => window.__krComic.viewer.piecesOf(1)[0].piece.crop.join())) === '0,0,1,1');
+    await bars(p, true); await p.click('.cm-crop-btn'); await until(p, () => JSON.parse(localStorage.getItem('kr.visual')).comicCropStrip === true, null, 2000);
+    ok('B: the quick button in the bar turns the strip\'s borders on', JSON.parse(await p.evaluate(() => localStorage.getItem('kr.visual'))).comicCropStrip === true);
+    ok('B: …and shows pressed', (await p.getAttribute('.cm-crop-btn', 'aria-pressed')) === 'true');
+    await visual(p, { comicCrop: false, comicCropStrip: false, comicMode: 2 });
+
+    // Background «Automatic»: the border sampled.
+    await visual(p, { comicBackground: 'auto', comicMode: 2 }); await reload(p); await open(p, ids.crop);
+    const bg = () => p.evaluate(() => getComputedStyle(document.querySelector('.cm-view')).backgroundColor);
+    await p.evaluate(() => window.__krComic.viewer.goTo(1)); await until(p, () => window.__krComic.viewer.borderOf(1)?.edge === 'white', null, 4000); await settle2(p);
+    ok('F: background «Automatic»: a white-bordered page gives white', (await bg()) === 'rgb(255, 255, 255)', await bg());
+    await p.evaluate(() => window.__krComic.viewer.goTo(2)); await until(p, () => window.__krComic.viewer.borderOf(2)?.edge === 'black', null, 4000); await settle2(p);
+    ok('F: …a black-bordered page gives dark', (await bg()) === 'rgb(0, 0, 0)', await bg());
+    await visual(p, { comicBackground: 'grey' }); await reload(p); await open(p, ids.crop); ok('F: grey', (await bg()) === 'rgb(74, 74, 74)', await bg());
+    await visual(p, { comicBackground: 'white' }); await reload(p); await open(p, ids.crop); ok('F: white', (await bg()) === 'rgb(255, 255, 255)', await bg());
+    await visual(p, { comicBackground: 'black' });
+
+    // ---- Part C: colour
+    await visual(p, { comicBrightOn: true, comicBrightness: -50, comicGrey: true, comicInvertColours: true, comicTintOn: true, comicTintR: 40, comicTintG: 90, comicTintB: 200, comicTintA: 128, comicTintBlend: 'multiply' });
+    await reload(p); await open(p, ids.v1); await bars(p, true); await settle(p);
+    const col = await p.evaluate(() => { const q = (s) => document.querySelector(s); const cs = (e) => getComputedStyle(e); const bar = q('.cm-bar').getBoundingClientRect(); const at = document.elementFromPoint(bar.left + bar.width / 2, bar.top + bar.height / 2); const top = document.elementFromPoint(40, 30);
+      return { dim: cs(q('.cm-dim')).opacity, dimOn: cs(q('.cm-dim')).display, filter: cs(q('.cm-track')).filter, blend: cs(q('.cm-tint')).mixBlendMode, tint: cs(q('.cm-tint')).backgroundColor, barOk: !!at?.closest('.cm-bar'), topOk: !!top?.closest('.topbar'), pe: cs(q('.cm-tint')).pointerEvents }; });
+    ok('C: custom brightness below 0 darkens with a black layer (−50: half)', col.dimOn !== 'none' && Math.abs(Number(col.dim) - 0.5) < 0.01, col);
+    ok('C: greyscale and inverted colours are a filter on the pages', /grayscale\(1\)/.test(col.filter) && /invert\(1\)/.test(col.filter), col.filter);
+    ok('C: the colour filter is a blended layer (multiply) of the colour mixed', col.blend === 'multiply' && /rgba\(40, 90, 200, 0\.5/.test(col.tint), col);
+    ok('C: …that does not cover the bars (they are above it, and it takes no touch)', col.barOk && col.topOk && col.pe === 'none', col);
+    await visual(p, { comicBrightness: 40, comicGrey: false, comicInvertColours: false, comicTintOn: false }); await reload(p); await open(p, ids.v1);
+    const up = await p.evaluate(() => ({ filter: getComputedStyle(document.querySelector('.cm-track')).filter, dim: getComputedStyle(document.querySelector('.cm-dim')).display }));
+    ok('C: above 0 (no device brightness here): the pages lightened by a CSS brightness', /brightness\(1\.4/.test(up.filter) && up.dim === 'none', up);
+    // The tab.
+    await visual(p, { comicBrightOn: true, comicBrightness: 20, comicTintOn: true }); await reload(p); await open(p, ids.v1); await bars(p, true);
+    await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicMode"]', { timeout: 5000 });
+    ok('C: the settings sheet has a third tab «Colour filter»', await p.evaluate(() => document.querySelectorAll('.panel.open .panel-tabs button').length === 3));
+    await p.evaluate(() => [...document.querySelectorAll('.panel.open .panel-tabs button')][2].click()); await p.waitForSelector('.panel.open [data-key="comicTintR"]', { timeout: 4000 });
+    const tab = await p.evaluate(() => ({ ranges: [...document.querySelectorAll('.panel.open input[type=range]')].map((r) => ({ k: r.dataset.key, p: r.style.getPropertyValue('--p'), min: r.min, max: r.max })), switches: document.querySelectorAll('.panel.open .switch input').length, blend: !!document.querySelector('.panel.open [data-key="comicTintBlend"]'), presets: document.querySelectorAll('.panel.open .preset, .panel.open [data-preset]').length }));
+    ok('C: sliders: brightness −75…100, R G B A 0…255, each with its fill; a blend mode; no colour presets', tab.ranges.length === 5 && tab.ranges[0].min === '-75' && tab.ranges[0].max === '100' && tab.ranges.every((r) => r.p) && tab.blend && !tab.presets, tab);
+    await p.evaluate(() => { const r = document.querySelector('.panel.open [data-key="comicTintA"]'); r.value = '200'; r.dispatchEvent(new Event('input', { bubbles: true })); });
+    ok('C: a slider sets the setting as it moves', await until(p, () => JSON.parse(localStorage.getItem('kr.visual')).comicTintA === 200, null, 2000));
+    if (SHOTS) { await p.waitForTimeout(500); await noToast(p); await p.screenshot({ path: path.join(SHOTS, 'S5b-colour-tab.png') }); }
+    await p.evaluate(() => document.querySelector('.panel.open .panel-head .icon-btn')?.click());
+    await visual(p, { comicBrightOn: false, comicTintOn: false, comicBrightness: 0 });
+
+    // ---- the wide-pages group in the settings (phone)
+    await reload(p); await open(p, ids.v1); await bars(p, true);
+    await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicMode"]', { timeout: 5000 });
+    const wide = await p.evaluate(() => ({ split: !!document.querySelector('.panel.open [data-key="comicSplit"]'), rot: !!document.querySelector('.panel.open [data-key="comicRotateInvert"]'), dual: !!document.querySelector('.panel.open [data-key="comicDual"]'), head: [...document.querySelectorAll('.panel.open .cm-group-sub')].map((e) => e.textContent) }));
+    ok('A: «Reading mode» has the wide-pages group: split, reverse, rotate, the other way, two pages side by side', wide.split && wide.rot && wide.dual && wide.head.length >= 2, wide);
+    if (SHOTS) { await p.evaluate(() => document.querySelector('.panel.open [data-key="comicSplit"]').scrollIntoView({ block: 'start' })); await p.waitForTimeout(500); await p.screenshot({ path: path.join(SHOTS, 'S5b-wide-settings.png') }); }
+    await p.evaluate(() => document.querySelector('.panel.open .panel-head .icon-btn')?.click());
+
+    // ---- Part D: the page's menu
+    await reload(p); await open(p, ids.v1);
+    const press = async () => { await p.mouse.move(206, 450); await p.mouse.down(); await p.waitForSelector('.cm-page-menu', { timeout: 3000 }); await p.mouse.up(); };
+    await press();
+    const menu = await p.evaluate(() => ({ save: !!document.querySelector('.cm-page-menu .cm-save'), share: !!document.querySelector('.cm-page-menu .cm-share'), cover: !!document.querySelector('.cm-page-menu .cm-cover'), copy: !!document.querySelector('.cm-page-menu .cm-copy'), which: !!document.querySelector('.cm-page-menu .cm-which'), clip: typeof ClipboardItem !== 'undefined' && !!navigator.clipboard && 'write' in navigator.clipboard }));
+    ok('D: a long press opens the page\'s menu: save, share (a phone), set as the cover; copy where the browser can', menu.save && menu.share && menu.cover && menu.copy === menu.clip && !menu.which, menu);
+    if (SHOTS) { await p.waitForTimeout(500); await noToast(p); await p.screenshot({ path: path.join(SHOTS, 'S5b-longpress.png') }); }
+    const dl = p.waitForEvent('download', { timeout: 5000 });
+    await p.click('.cm-page-menu .cm-save'); const d1 = await dl;
+    ok('D: «Save the page» goes through the app\'s save: a file named for the book and page', /Lantern Comic Vol\. 1 - p\d+\.png$/.test(d1.suggestedFilename()), d1.suggestedFilename());
+    await until(p, () => !document.querySelector('.cm-page-menu'), null, 3000);
+    // Set as the cover, then undo.
+    await p.evaluate(() => window.__krComic.viewer.goTo(6)); await settle2(p);
+    // (A Blob does not travel out of the page as it is: its size is read there.)
+    const cov = (id) => p.evaluate((id) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').get(id); q.onsuccess = () => { const b = q.result; res({ cover: b.cover?.size, orig: b.coverOrig === undefined ? 'none' : b.coverOrig === null ? 'null' : b.coverOrig.size }); }; }; }), id);
+    const covWait = async (test, ms = 5000) => { const end = Date.now() + ms; for (;;) { const c = await cov(ids.v1); if (test(c)) return c; if (Date.now() > end) return null; await p.waitForTimeout(100); } };
+    const beforeCov = await cov(ids.v1);
+    await press(); await p.click('.cm-page-menu .cm-cover'); await p.waitForSelector('.cm-cover-ask', { timeout: 3000 });
+    const ask = await p.evaluate(() => { const bs = [...document.querySelectorAll('.cm-cover-ask .sheet-actions button')].map((b) => Math.round(b.getBoundingClientRect().width)); return { bs, text: document.querySelector('.cm-cover-ask .confirm-line').textContent }; });
+    ok('D: setting the cover is asked first (two buttons of one width)', ask.bs.length === 2 && Math.abs(ask.bs[0] - ask.bs[1]) <= 1 && /7/.test(ask.text), ask);
+    await p.click('.cm-cover-ask .confirm-ok');
+    const afterCov = await covWait((c) => c.orig !== 'none' && c.cover !== beforeCov.cover);
+    ok('D: the cover is set: the book keeps the page\'s picture, its own cover kept to restore', !!afterCov && afterCov.orig === beforeCov.cover, { beforeCov, afterCov });
+    await p.waitForSelector('.toast button, .toast .toast-action', { timeout: 3000 });
+    await p.evaluate(() => (document.querySelector('.toast .toast-action') ?? document.querySelector('.toast button')).click());
+    const undone = await covWait((c) => c.orig === 'none' && c.cover === beforeCov.cover);
+    ok('D: Undo puts the old cover back', !!undone, await cov(ids.v1));
+    // A cropped page offers the whole page or the page as shown.
+    await visual(p, { comicCrop: true }); await reload(p); await open(p, ids.crop); await p.evaluate(() => window.__krComic.viewer.goTo(1)); await until(p, () => !!window.__krComic.viewer.borderOf(1), null, 4000); await settle2(p);
+    await press();
+    ok('D: a cropped page offers «the whole page» and «as shown»', await p.evaluate(() => document.querySelectorAll('.cm-page-menu .cm-which button').length === 2));
+    const dlShown = p.waitForEvent('download', { timeout: 5000 }); await p.click('.cm-page-menu .cm-save'); const ds = await dlShown; const sShown = fs.statSync(await ds.path()).size;
+    await press(); await p.click('.cm-page-menu .cm-which button[data-which="whole"]');
+    const dlWhole = p.waitForEvent('download', { timeout: 5000 }); await p.click('.cm-page-menu .cm-save'); const dw = await dlWhole; const sWhole = fs.statSync(await dw.path()).size;
+    ok('D: …the two are different pictures (as shown is the trimmed one)', sShown !== sWhole && sShown > 0 && sWhole > 0, { sShown, sWhole });
+    await visual(p, { comicLongPress: false }); await reload(p); await open(p, ids.v1);
+    await p.mouse.move(206, 450); await p.mouse.down(); await p.waitForTimeout(900); await p.mouse.up();
+    ok('D: «Actions on long press» off: no menu', !(await p.$('.cm-page-menu')));
+    await visual(p, { comicLongPress: true, comicCrop: false });
+
+    // ---- Part F: rotation lock (a phone's), kept per book
+    await reload(p); await open(p, ids.v1); await bars(p, true);
+    ok('F: a phone has the rotation button in the bar', !!(await p.$('.cm-orient-btn')));
+    await p.click('.cm-orient-btn'); await p.waitForSelector('.sheet .dest-row'); 
+    ok('F: Free · Portrait · Landscape', await p.evaluate(() => document.querySelectorAll('.sheet .dest-row').length === 3));
+    await p.evaluate(() => [...document.querySelectorAll('.sheet .dest-row')][2].click());
+    ok('F: the choice is kept with the book', await stored(p, ids.v1, (b) => b?.prefs?.comicOrient === 'landscape'));
+    await p.evaluate(async (id) => { await new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const os = tx.objectStore('books'); os.get(id).onsuccess = (e) => { const b = e.target.result; b.prefs = { ...(b.prefs ?? {}), comicOrient: 'auto' }; os.put(b); }; tx.oncomplete = res; }; }); }, ids.v1);
+  });
+
+  // ---- Part E: the long strip, a page of 800×40,000 px
+  await session(true, async (p) => {
+    const ids = await importAll(p, [extra.tall, files.v1], 2);
+    await p.evaluate(() => localStorage.setItem('kr.comicZonesSeen', '1'));
+    await visual(p, { comicMode: 4 }); await reload(p); await open(p, ids.tall); await bars(p, false);
+    await p.evaluate(() => window.__krComic.viewer.goTo(1)); await settle2(p);
+    const slots = await p.evaluate(() => document.querySelectorAll('.cm-slice').length);
+    ok('E: the 800×40,000 page is a stack of 10 slices', slots === 10, slots);
+    // Every slice scrolled to: drawn at its own size (800 wide: not downscaled), its rows right (the colour tells the row).
+    const sh = 4096; let allSharp = true; const bad = []; let peak = 0;
+    for (let j = 0; j < 10; j++) {
+      await p.evaluate((j) => { const slot = document.querySelectorAll('.cm-slice')[j]; const sc = document.querySelector('.cm-scroll'); const r = slot.getBoundingClientRect(), s = sc.getBoundingClientRect(); sc.scrollTop += r.top - s.top + r.height / 2 - sc.clientHeight / 2; }, j);
+      const drawn = await until(p, (j) => !!document.querySelectorAll('.cm-slice')[j]?.querySelector('canvas'), j, 8000);
+      const info = await p.evaluate((j) => { const slot = document.querySelectorAll('.cm-slice')[j]; const c = slot.querySelector('canvas'); if (!c) return null; const g = c.getContext('2d'); const rows = [0, 1, Math.floor(c.height / 2), c.height - 1]; const base = j * 4096;
+        return { w: c.width, h: c.height, ok: rows.every((r) => { const d = g.getImageData(5, r, 1, 1).data; const y = base + r; return d[0] === (y & 255) && d[1] === ((y >> 8) & 255); }), stats: window.__krComic.viewer.sliceStats() }; }, j);
+      if (!drawn || !info || info.w !== 800 || info.h !== Math.min(sh, 40000 - j * sh) || !info.ok) { allSharp = false; bad.push({ j, info }); }
+      if (info) peak = Math.max(peak, info.stats.peakPx);
+    }
+    ok('E: every part of the page, scrolled to, is drawn at its own size with the right rows (800 px wide, none downscaled)', allSharp, bad);
+    const stats = await p.evaluate(() => window.__krComic.viewer.sliceStats());
+    console.log(`  numbers: 800×40,000 page (32,000,000 px): ${stats.drawn} slices drawn over a scroll through it; most pixels held at once ${stats.peakPx} (${Math.round((stats.peakPx / 32e6) * 100)} % of the page), live slices now ${stats.live}`);
+    ok('E: peak decoded pixels held at once bounded (≤ 4 slices, a third of the page or less)', stats.peakPx <= 4 * 800 * 4096 && stats.peakPx < 32e6 / 2, stats);
+    ok('E: slices far from the screen are let go (at most 4 live)', stats.live <= 4, stats);
+    if (SHOTS) { await p.evaluate(() => { const slot = document.querySelectorAll('.cm-slice')[3]; const sc = document.querySelector('.cm-scroll'); const r = slot.getBoundingClientRect(), s = sc.getBoundingClientRect(); sc.scrollTop += r.top - s.top + 40; }); await p.waitForTimeout(900); await noToast(p); await p.screenshot({ path: path.join(SHOTS, 'S5b-strip.png') }); }
+    // Side padding.
+    await visual(p, { comicStripPadding: 10 }); await reload(p); await open(p, ids.v1);
+    const wdt = await p.evaluate(() => { const b = document.querySelector('.cm-block[data-page]').getBoundingClientRect(); return { w: Math.round(b.width), left: Math.round(b.left) }; });
+    ok('E: side padding 10 %: the pages 80 % of the width, centred', Math.abs(wdt.w - 330) <= 2 && Math.abs(wdt.left - 41) <= 2, wdt);
+    await visual(p, { comicStripPadding: 0 }); await reload(p); await open(p, ids.v1);
+    // Zooming out: allowed to half unless disabled.
+    const zoomOut = async () => { await p.keyboard.down('Control'); for (let i = 0; i < 8; i++) { await p.mouse.move(206, 450); await p.mouse.wheel(0, 200); await p.waitForTimeout(40); } await p.keyboard.up('Control'); await settle2(p); return p.evaluate(() => window.__krComic.viewer.zoom); };
+    const z1 = await zoomOut(); ok('E: zooming out is allowed (the strip narrows to half the width)', z1 < 1 && z1 >= 0.5, z1);
+    await visual(p, { comicStripNoZoomOut: true }); await reload(p); await open(p, ids.v1);
+    const z2 = await zoomOut(); ok('E: «Disable zooming out»: the width is the least', z2 === 1, z2);
+    await visual(p, { comicStripNoZoomOut: false });
+    // Wide pages stacked.
+    await visual(p, { comicSplitStrip: true }); await reload(p); await open(p, ids.v1);
+    await until(p, () => document.querySelectorAll('.cm-block[data-page]').length === 13, null, 8000);
+    const st2 = await p.evaluate(() => ({ n: document.querySelectorAll('.cm-block[data-page]').length, crops: window.__krComic.viewer.piecesOf(3).map((x) => x.piece.crop[0]), tops: [...document.querySelectorAll('.cm-block[data-page="3"]')].map((b) => Math.round(b.getBoundingClientRect().top)) }));
+    ok('E: wide pages split in the strip: the halves stacked, the right one on top', st2.n === 13 && st2.crops[0] === 0.5 && st2.crops[1] === 0, st2);
+    await visual(p, { comicSplitStrip: false, comicMode: 2 });
+  });
+
+  // ---- the computer: pairs at 1280×800, the right click
+  await session(false, async (p) => {
+    const ids = await importAll(p, [files.v1, files.v2, extra.crop, extra.tall], 4);
+    await visual(p, { comicDual: 'always' }); await reload(p); await open(p, ids.v1);
+    await sized(p); await p.evaluate(() => window.__krComic.viewer.goTo(4)); await settle2(p);
+    const pr = await p.evaluate(() => { const v = document.querySelector('.cm-view').getBoundingClientRect(); const parts = [...document.querySelectorAll('.cm-current .cm-part')].map((e) => { const r = e.getBoundingClientRect(); return { page: Number(e.dataset.page), l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom) }; }); return { v: [Math.round(v.width), Math.round(v.height)], parts }; });
+    ok('PC 1280×800: a pair fills the height side by side, no overlap, in the window', pr.parts.length === 2 && (pr.parts[0].r <= pr.parts[1].l + 1 || pr.parts[1].r <= pr.parts[0].l + 1), pr);
+    ok('PC: …the pair\'s height is the window\'s', pr.parts.every((x) => Math.abs(x.b - x.t - 800) <= 2), pr);
+    if (SHOTS) { await noToast(p); await p.waitForTimeout(500); await p.screenshot({ path: path.join(SHOTS, 'S5b-spread-pc.png') }); }
+    await p.setViewportSize({ width: 1920, height: 1080 }); await settle2(p); await p.waitForTimeout(300);
+    const big = await p.evaluate(() => [...document.querySelectorAll('.cm-current .cm-part')].map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+    ok('PC 1920×1080: the pair fills the height there too', big.length === 2 && big.every((x) => Math.abs(x[1] - 1080) <= 2), big);
+    await p.setViewportSize({ width: 1280, height: 800 });
+    await visual(p, { comicDual: 'wide' }); await reload(p); await open(p, ids.v1); await p.evaluate(() => window.__krComic.viewer.goTo(1)); await settle2(p);
+    ok('PC: «on wide screens»: a window wider than tall shows pairs', (await onShow(p)).length === 2);
+    ok('PC: no rotation button (a phone\'s)', !(await p.$('.cm-orient-btn')));
+    // Right click: the page's menu; no share on a computer.
+    await p.mouse.click(640, 400, { button: 'right' }); await p.waitForSelector('.cm-page-menu', { timeout: 3000 });
+    const m = await p.evaluate(() => ({ save: !!document.querySelector('.cm-page-menu .cm-save'), share: !!document.querySelector('.cm-page-menu .cm-share'), cover: !!document.querySelector('.cm-page-menu .cm-cover') }));
+    ok('PC: a right click opens the page\'s menu: save and cover, no share', m.save && m.cover && !m.share, m);
+    await p.keyboard.press('Escape'); await until(p, () => !document.querySelector('.cm-page-menu'), null, 2000);
+    ok('PC: the settings of the pairing and the wide pages are there', await (async () => { await p.evaluate(() => document.querySelector('.reader-view').classList.remove('immersive')); await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicDual"]', { timeout: 4000 }); return true; })());
+    await p.evaluate(() => document.querySelector('.panel.open .panel-head .icon-btn')?.click());
   });
 
   /* ---------------------------------------------------------------- a big archive */

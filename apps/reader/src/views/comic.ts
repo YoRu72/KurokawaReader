@@ -22,8 +22,8 @@ import { scheduleSync, markDeleted } from '../sync';
 import { offerPutBack } from '../undoitems';
 import { readingKeys } from '../readkeys';
 import { onBack, arrowBack } from '../ui/backstack';
-import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, isFullscreen, nativePlatform } from '../native';
-import { onPhone } from '../platform';
+import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, isFullscreen, nativePlatform, canDeviceBrightness, getDeviceBrightness, setDeviceBrightness } from '../native';
+import { onPhone, fits } from '../platform';
 import { touchBook, shareBooks } from '../library';
 import { navigate } from '../router';
 import { nextVolume, prevVolume } from '../series';
@@ -33,8 +33,9 @@ import { takeJump } from '../jump';
 import { diagLeaveIntent } from '../diag';
 import { leaveBook, goNextVolume, toggleFavorite } from './reader';
 import { openPages, type PageSource } from '../comic/pages';
-import { ComicViewer, isStrip, isHorizontal, type Mode, type ViewerOptions } from '../comic/viewer';
-import { comicModeFields, comicGeneralFields, modeName } from '../comic/settingsui';
+import { ComicViewer, isStrip, isHorizontal, type Mode, type ViewerOptions, type Pressed } from '../comic/viewer';
+import type { Edge } from '../comic/crop';
+import { comicModeFields, comicGeneralFields, comicColourFields, modeName } from '../comic/settingsui';
 import { stepOf } from '../comic/zones';
 
 type OnDispose = (fn: () => void) => void;
@@ -47,11 +48,26 @@ export function comicModeOf(book: Book, s: VisualSettings = getSettings()): Mode
   const own = Number(book.prefs?.comicMode ?? 0);
   return (own >= 1 && own <= 5 ? own : s.comicMode) as Mode;
 }
-const optionsOf = (mode: Mode, s: VisualSettings): ViewerOptions => ({
-  transitions: s.comicTransitions, scale: s.comicScale, zoomStart: s.comicZoomStart, navPan: s.comicNavPan, landscapeZoom: s.comicLandscapeZoom, stripZoom: s.comicStripZoom,
-  zones: isStrip(mode) ? s.comicZonesStrip : s.comicZonesPaged, invert: isStrip(mode) ? s.comicInvertStrip : s.comicInvertPaged,
-});
-const COMIC_KEYS = ['comicMode', 'comicTransitions', 'comicScale', 'comicZoomStart', 'comicNavPan', 'comicLandscapeZoom', 'comicStripZoom', 'comicZonesPaged', 'comicZonesStrip', 'comicInvertPaged', 'comicInvertStrip'] as const;
+/** The arrow of the button to another volume: the way reading goes on (left in a book read right to left, down in the vertical
+ *  modes) for the next volume, the opposite way for the one before. */
+export const volumeArrow = (mode: Mode, next: boolean): string => (mode === 3 || mode === 4 || mode === 5 ? (next ? 'arrowDown' : 'arrowUp') : (mode === 2) === next ? 'arrowLeft' : 'arrowRight');
+const optionsOf = (mode: Mode, s: VisualSettings, book?: Book): ViewerOptions => {
+  const strip = isStrip(mode);
+  return {
+    transitions: s.comicTransitions, scale: s.comicScale, zoomStart: s.comicZoomStart, navPan: s.comicNavPan, landscapeZoom: s.comicLandscapeZoom, stripZoom: s.comicStripZoom,
+    zones: strip ? s.comicZonesStrip : s.comicZonesPaged, invert: strip ? s.comicInvertStrip : s.comicInvertPaged,
+    split: strip ? s.comicSplitStrip : s.comicSplit, splitInvert: strip ? s.comicSplitInvertStrip : s.comicSplitInvert,
+    rotate: strip ? s.comicRotateStrip : s.comicRotate, rotateInvert: strip ? s.comicRotateInvertStrip : s.comicRotateInvert,
+    dual: s.comicDual, shift: Number(book?.prefs?.comicShift ?? 0) === 1,
+    crop: strip ? s.comicCropStrip : s.comicCrop, auto: s.comicBackground === 'auto',
+    padding: s.comicStripPadding, noZoomOut: s.comicStripNoZoomOut, longPress: s.comicLongPress,
+  };
+};
+const COMIC_KEYS = ['comicMode', 'comicTransitions', 'comicScale', 'comicZoomStart', 'comicNavPan', 'comicLandscapeZoom', 'comicStripZoom', 'comicZonesPaged', 'comicZonesStrip', 'comicInvertPaged', 'comicInvertStrip',
+  'comicSplit', 'comicSplitInvert', 'comicRotate', 'comicRotateInvert', 'comicSplitStrip', 'comicSplitInvertStrip', 'comicRotateStrip', 'comicRotateInvertStrip', 'comicDual', 'comicCrop', 'comicCropStrip', 'comicStripPadding', 'comicStripNoZoomOut', 'comicLongPress'] as const;
+/** The background colours; «Automatic» takes white or black from the page's own border. */
+const BG: Record<'black' | 'grey' | 'white', string> = { black: '#000', grey: '#4a4a4a', white: '#fff' };
+const BLEND_CSS: Record<VisualSettings['comicTintBlend'], string> = { normal: 'normal', multiply: 'multiply', screen: 'screen', overlay: 'overlay', lighten: 'lighten', darken: 'darken' };
 
 export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDispose, gone: () => boolean, op?: Op): Promise<void> {
   // (The opening timed from here — the file fetched, its directory read, the first page decoded: «first page visible».)
@@ -87,10 +103,18 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
   // (The arrows go the way they point: in a right-to-left book the left one is the next page.)
   const leftBtn = iconButton('chevronLeft', t('previousPage'), () => viewer.step(stepOf('left', viewer.rtl), { pan: false }));
   const rightBtn = iconButton('chevronRight', t('nextPage'), () => viewer.step(stepOf('right', viewer.rtl), { pan: false }));
+  // The quick buttons: borders trimmed, the pairing shifted by a page (when two pages stand side by side), and the screen's rotation (a phone).
+  const cropBtn = iconButton('crop', t('comicCrop'), () => { const k = isStrip(mode) ? 'comicCropStrip' : 'comicCrop'; updateSettings({ [k]: !getSettings()[k] } as Partial<VisualSettings>); });
+  cropBtn.classList.add('cm-quick', 'cm-crop-btn');
+  const pairBtn = iconButton('pairs', t('comicShift'), () => setShift(Number(book.prefs?.comicShift ?? 0) !== 1));
+  pairBtn.classList.add('cm-quick', 'cm-shift-btn');
+  const orientBtn = iconButton('rotate', t('comicOrient'), () => pickOrient());
+  orientBtn.classList.add('cm-quick', 'cm-orient-btn');
+  const quick = h('div', { class: 'cm-quick-row' }, cropBtn, pairBtn, ...(onPhone() ? [orientBtn] : []));
   const barNav = h('div', { class: 'pdf-bar-nav cm-bar-nav' }, modeBtn, leftBtn, slider, rightBtn, count, setBtn);
   const barTools = h('div', { class: 'pdf-bar-tools' });
   const portrait = matchMedia('(orientation: portrait)');
-  const bar = h('div', { class: 'pdf-bar cm-bar' }, barNav, barTools, seek);
+  const bar = h('div', { class: 'pdf-bar cm-bar' }, barNav, quick, barTools, seek);
   const relayout = () => { const s = getSettings(); bar.dataset.layout = portrait.matches ? 'rows' : 'row'; bar.dataset.row = 'bottom'; bar.dataset.look = s.pdfBarLook === 'docked' ? 'docked' : 'pill'; };
   relayout(); onDispose(onSettingsChange(relayout)); portrait.addEventListener('change', relayout); onDispose(() => portrait.removeEventListener('change', relayout));
   const backBtn = iconButton('back', t('back'), arrowBack(() => leaveBook(book, false)));
@@ -149,7 +173,7 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
   // The pages between volumes: the end («Finished», the next volume) and, when there is one, the volume before.
   let nextBook: Book | null = null, prevBook: Book | null = null, queued = false;
   const betweenCard = (lines: (HTMLElement | null)[]) => h('div', { class: 'cm-between-card' }, ...lines.filter((x): x is HTMLElement => !!x));
-  const openBtn = (b: Book, next: boolean) => h('button', { type: 'button', class: 'btn tonal cm-open-volume', dataset: { book: b.id }, onclick: () => { if (next) goNextVolume(book.id, b.id); else { diagLeaveIntent('prev-volume'); navigate(`/read/${b.id}`, true); } } }, icon(next ? 'arrowRight' : 'back'), h('span', null, t('comicOpenVolume')));
+  const openBtn = (b: Book, next: boolean) => h('button', { type: 'button', class: 'btn tonal cm-open-volume', dataset: { book: b.id }, onclick: () => { if (next) goNextVolume(book.id, b.id); else { diagLeaveIntent('prev-volume'); navigate(`/read/${b.id}`, true); } } }, icon(volumeArrow(mode, next)), h('span', null, t('comicOpenVolume')));
   const before = (): HTMLElement | null => (getSettings().comicBetween && prevBook ? betweenCard([
     h('p', { class: 'cm-b-label', dir: 'auto' }, t('comicPrevious', { title: prevBook.title })), openBtn(prevBook, false),
     h('p', { class: 'cm-b-label cm-b-main', dir: 'auto' }, t('comicStartOf', { title: book.title }))]) : null);
@@ -177,10 +201,12 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
   };
   const tracker = new ReadingTracker(book, () => true);
   let nextPill: HTMLElement | null = null;
-  const onChange = (st: { page: number; kind: string }) => {
+  const onChange = (st: { page: number; kind: string; shown: number; shownEnd: number; shownTotal: number }) => {
     const n = st.page + 1;
-    slider.value = String(n); count.textContent = `${n} / ${total}`;
-    pnum.textContent = `${n} / ${total}`; pnum.hidden = !getSettings().comicPageNumber || st.kind !== 'page';
+    // (The count is of the pieces shown: a wide page split in two counts two, two pages side by side count two.)
+    const shown = st.shown === st.shownEnd ? String(st.shown) : `${st.shown}-${st.shownEnd}`;
+    slider.max = String(Math.max(1, st.shownTotal)); slider.value = String(st.shown); count.textContent = `${shown} / ${st.shownTotal}`;
+    pnum.textContent = `${shown} / ${st.shownTotal}`; pnum.hidden = !getSettings().comicPageNumber || st.kind !== 'page';
     readBar.set({ title: book.title, bookPage: n, bookPages: total, bookPct: Math.round((n / total) * 100), page: n, pages: total, chapterPct: Math.round((n / total) * 100), chapter: chapterAt(st.page) });
     tracker.advance(0, n / total);
     // (No page between volumes: at the last page the next volume is offered as a PDF offers it.)
@@ -191,13 +217,44 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
   const setSliderDir = () => { slider.style.direction = viewer.rtl ? 'rtl' : 'ltr'; bar.dataset.dir = viewer.rtl ? 'rtl' : 'ltr'; };
   const toggleBars = () => { const on = root.classList.toggle('immersive'); if (nativePlatform() === 'android' || nativePlatform() === 'ios') void setImmersive(on || getSettings().hideSystemBars); };
 
-  viewer = new ComicViewer({ container: reader, source, before, after, onChange, onMenu: () => { if (hideZones()) return; toggleBars(); } }, mode, optionsOf(mode, getSettings()));
+  // The background (black, grey, white, or by the page's border) and the colour over the pages.
+  let edge: Edge = 'none'; let autoBg = BG.black;
+  const applyBackground = () => {
+    const s = getSettings(); if (s.comicBackground === 'auto') { if (edge === 'white') autoBg = BG.white; else if (edge === 'black') autoBg = BG.black; }
+    const col = s.comicBackground === 'auto' ? autoBg : BG[s.comicBackground] ?? BG.black;
+    root.style.setProperty('--cm-bg', col); document.body.style.background = col;
+  };
+  const tint = h('div', { class: 'cm-colour cm-tint', 'aria-hidden': 'true', hidden: true });
+  const dim = h('div', { class: 'cm-colour cm-dim', 'aria-hidden': 'true', hidden: true });
+  reader.append(tint, dim);
+  let savedBright: number | null = null;
+  const applyColour = () => {
+    const s = getSettings(); const f: string[] = [];
+    if (s.comicGrey) f.push('grayscale(1)');
+    if (s.comicInvertColours) f.push('invert(1)');
+    const v = s.comicBrightOn ? s.comicBrightness : 0;
+    // (Below 0 a black layer darkens the pages; above 0 the device's own brightness is raised where the platform allows, else the pages are lightened.)
+    dim.hidden = !(v < 0); dim.style.background = '#000'; dim.style.opacity = v < 0 ? String(-v / 100) : '0';
+    if (v > 0 && canDeviceBrightness()) {
+      if (savedBright === null) void getDeviceBrightness().then((b) => { if (savedBright === null) { savedBright = b; void setDeviceBrightness(Math.min(1, 0.5 + getSettings().comicBrightness / 200)); } });
+      else void setDeviceBrightness(Math.min(1, 0.5 + v / 200));
+    } else {
+      if (v > 0) f.push(`brightness(${(1 + v / 100).toFixed(2)})`);
+      if (savedBright !== null) { void setDeviceBrightness(savedBright); savedBright = null; }
+    }
+    root.style.setProperty('--cm-filter', f.length ? f.join(' ') : 'none'); reader.style.setProperty('--cm-filter', f.length ? f.join(' ') : 'none');
+    const on = s.comicTintOn && s.comicTintA > 0;
+    tint.hidden = !on; tint.style.background = `rgb(${s.comicTintR} ${s.comicTintG} ${s.comicTintB} / ${(s.comicTintA / 255).toFixed(3)})`; tint.style.mixBlendMode = BLEND_CSS[s.comicTintBlend] ?? 'normal';
+  };
+  applyBackground(); applyColour();
+  onDispose(() => { if (savedBright !== null) void setDeviceBrightness(savedBright); });
+  viewer = new ComicViewer({ container: reader, source, before, after, onChange, onMenu: () => { if (hideZones()) return; toggleBars(); }, onBackground: (e) => { edge = e; applyBackground(); }, onLongPress: (hit) => openPageMenu(hit) }, mode, optionsOf(mode, getSettings(), book));
   (window as unknown as { __krComic?: unknown }).__krComic = { viewer, source, mode: () => mode, openMs: 0 };
   onDispose(() => { viewer.dispose(); delete (window as unknown as { __krComic?: unknown }).__krComic; });
   setSliderDir();
   // The slider: the page's number shown as it is dragged, the page turned to when it is let go.
-  slider.addEventListener('input', () => { seek.hidden = false; seek.textContent = `${slider.value} / ${total}`; });
-  slider.addEventListener('change', () => { seek.hidden = true; viewer.goTo(Number(slider.value) - 1); });
+  slider.addEventListener('input', () => { seek.hidden = false; seek.textContent = `${slider.value} / ${slider.max}`; });
+  slider.addEventListener('change', () => { seek.hidden = true; viewer.goToDisplay(Number(slider.value)); });
   slider.addEventListener('pointerup', () => { seek.hidden = true; });
 
   // Back to the place it was left (a bookmark's, when opened from one).
@@ -224,13 +281,13 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
   let seen = JSON.stringify(COMIC_KEYS.map((k) => getSettings()[k]));
   let betweenSeen = getSettings().comicBetween;
   onDispose(onSettingsChange((s) => {
-    applySettings(reader, s); syncComfort();
+    applySettings(reader, s); syncComfort(); applyBackground(); applyColour(); syncQuick();
     const now = JSON.stringify(COMIC_KEYS.map((k) => s[k]));
     if (now !== seen) { seen = now; mode = comicModeOf(book, s); applyMode(); }
     pnum.hidden = !s.comicPageNumber || viewer.itemKind !== 'page';
     if (betweenSeen !== s.comicBetween) { betweenSeen = s.comicBetween; viewer.rebuild(); }
   }));
-  const applyMode = () => { viewer.set(mode, optionsOf(mode, getSettings())); setSliderDir(); modeBtn.replaceChildren(icon(MODE_ICON[mode])); modeBtn.dataset.mode = String(mode); refreshKeys(); };
+  const applyMode = () => { viewer.set(mode, optionsOf(mode, getSettings(), book)); setSliderDir(); modeBtn.replaceChildren(icon(MODE_ICON[mode])); modeBtn.dataset.mode = String(mode); refreshKeys(); syncQuick(); };
   modeBtn.dataset.mode = String(mode);
   const setBookMode = (m: number) => {
     book.prefs = { ...(book.prefs ?? {}), comicMode: m };
@@ -245,12 +302,13 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
     panel.open(t('comicSettings'), [
       { id: 'mode', label: t('comicModeTitle'), render: (body) => { const box = h('div', { class: 'options-grid cm-options' }); comicModeFields(box, { bookMode: () => Number(book.prefs?.comicMode ?? 0), setBookMode, showZones: () => { panel.close(); showZones(); } }); body.append(box); } },
       { id: 'general', label: t('comicTabGeneral'), render: (body) => { const box = h('div', { class: 'options-grid cm-options' }); comicGeneralFields(box); body.append(box); } },
+      { id: 'colour', label: t('comicTabColour'), render: (body) => { const box = h('div', { class: 'options-grid cm-options' }); comicColourFields(box); body.append(box); } },
     ], 'mode');
   }
 
   // The tap zones shown: tinted, each named; for a new reader once, and from «Show the zones».
   let zonesEl: HTMLElement | null = null; let zonesTimer = 0;
-  function hideZones(): boolean { if (!zonesEl) return false; zonesEl.remove(); zonesEl = null; window.clearTimeout(zonesTimer); return true; }
+  function hideZones(): boolean { if (!zonesEl) return false; zonesEl.remove(); zonesEl = null; window.clearTimeout(zonesTimer); root.classList.remove('cm-zones-up'); return true; }
   function showZones(): void {
     hideZones();
     const el = h('div', { class: 'cm-zones', role: 'presentation' });
@@ -263,7 +321,7 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
     if (free) el.append(h('div', { class: 'cm-zone-menu', style: { left: `${free[0] * 100}%`, top: `${free[1] * 100}%` } }, h('span', null, t('comicZoneMenu'))));
     el.append(h('p', { class: 'cm-zones-hint' }, t('comicZonesClose')));
     el.addEventListener('pointerup', (e) => { e.stopPropagation(); hideZones(); });
-    reader.append(el); zonesEl = el;
+    reader.append(el); zonesEl = el; root.classList.add('cm-zones-up');
     zonesTimer = window.setTimeout(hideZones, 6000);
   }
   try { if (onPhone() && !localStorage.getItem(ZONES_SEEN)) { localStorage.setItem(ZONES_SEEN, '1'); showZones(); } } catch { /* no storage: not shown */ }
@@ -306,6 +364,35 @@ export async function mountComic(root: HTMLElement, book: Book, onDispose: OnDis
   if (getSettings().hideSystemBars || nativePlatform() === 'android' || nativePlatform() === 'ios') void setImmersive(true);
   keepAwake(getSettings().keepAwake);
   onDispose(() => { void setImmersive(false); keepAwake(false); });
+
+  // The quick buttons' state: borders trimmed (pressed), the pairing shifted, shown only when they matter; the rotation lock.
+  function syncQuick(): void {
+    const s = getSettings(); const trimmed = isStrip(mode) ? s.comicCropStrip : s.comicCrop;
+    cropBtn.setAttribute('aria-pressed', String(trimmed)); cropBtn.setAttribute('aria-label', trimmed ? `${t('comicCrop')}` : t('comicCrop'));
+    const pairs = !isStrip(mode) && s.comicDual !== 'never';
+    pairBtn.hidden = !pairs; pairBtn.setAttribute('aria-pressed', String(Number(book.prefs?.comicShift ?? 0) === 1));
+    orientBtn.setAttribute('aria-pressed', String((book.prefs?.comicOrient ?? 'auto') !== 'auto'));
+  }
+  function setShift(on: boolean): void {
+    book.prefs = { ...(book.prefs ?? {}), comicShift: on ? 1 : 0 };
+    void db.updateBook(book.id, (b) => { b.prefs = { ...(b.prefs ?? {}), comicShift: on ? 1 : 0 }; });
+    viewer.set(mode, optionsOf(mode, getSettings(), book)); syncQuick(); toast(t(on ? 'comicShiftOn' : 'comicShiftOff'));
+  }
+  // The screen's rotation for this book: free (the app's own setting), portrait, landscape — a phone's.
+  const applyOrient = () => { const o = String(book.prefs?.comicOrient ?? 'auto'); if (o === 'portrait' || o === 'landscape') void applyOrientation({ ...getSettings(), orientation: o }); else void applyOrientation(); };
+  function pickOrient(): void {
+    import('../ui/dom').then(({ pickSheet }) => pickSheet(t('comicOrient'), [['auto', t('comicOrientFree')], ['portrait', t('orientationPortrait')], ['landscape', t('orientationLandscape')]], String(book.prefs?.comicOrient ?? 'auto') as 'auto', (v) => {
+      book.prefs = { ...(book.prefs ?? {}), comicOrient: v }; void db.updateBook(book.id, (b) => { b.prefs = { ...(b.prefs ?? {}), comicOrient: v }; }); applyOrient(); syncQuick();
+    }, t('close'))).catch(() => undefined);
+  }
+  if (onPhone()) { applyOrient(); onDispose(() => { void applyOrientation(); }); }
+  syncQuick();
+  // The page's own menu: a long press (a right click on a computer).
+  function openPageMenu(hit: Pressed): void {
+    if (!getSettings().comicLongPress) return;
+    hideZones();
+    void import('../comic/pagemenu').then((m) => m.pageMenu({ book, source, hit, coverChanged: () => { void import('../library').then((l) => l.forgetCover(book.id)); } }));
+  }
 
   async function addBookmark(): Promise<void> {
     const page = viewer.page + 1;

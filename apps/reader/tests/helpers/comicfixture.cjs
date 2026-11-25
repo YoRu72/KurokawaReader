@@ -34,11 +34,14 @@ function page(n, w, h, o = {}) {
   if (noiseRows) { NOISE ??= require('crypto').randomBytes(4 << 20); }
   const H = h + noiseRows;
   return png(w, H, (x, y) => {
-    if (o.border) { const m = Math.round(Math.min(w, h) * 0.12); if (x < m || y < m || x >= w - m || y >= h - m) return [255, 255, 255]; }
+    // (`faint`: white all over but a small dark square in the middle — a page of nearly nothing, for the crop's cap.)
+    if (o.faint) return Math.abs(x - w / 2) < 12 && Math.abs(y - h / 2) < 12 ? [0, 0, 0] : [255, 255, 255];
+    // (`border`: a wide margin — white (true, 'white') round a dark field, or black round a light one.)
+    if (o.border) { const m = Math.round(Math.min(w, h) * 0.12); if (x < m || y < m || x >= w - m || y >= h - m) return o.border === 'black' ? [0, 0, 0] : [255, 255, 255]; }
     if (x < f || y < f || x >= w - f || y >= h - f) return frame;
     const dx = x - ox, dy = y - oy;
     if (dx >= 0 && dy >= 0 && dx < tw && dy < th) { const k = Math.floor(dx / (6 * cell)); const cx = Math.floor((dx % (6 * cell)) / cell), cy = Math.floor(dy / cell); if (cx < 5 && DIGITS[digits[k]][cy * 5 + cx] === '1') return [20, 20, 24]; }
-    return o.border ? [10, 10, 10] : [246, 244, 240];
+    return o.border === true || o.border === 'white' ? [10, 10, 10] : [246, 244, 240];
   }, { level: o.noise ? 1 : 6, tail: noiseRows ? NOISE : null, tailRows: noiseRows, seed: n });
 }
 let NOISE = null;
@@ -48,12 +51,40 @@ async function makeCbz(o = {}) {
   const z = new JSZip(); const folders = o.folders ?? null;
   const at = (i) => { if (!folders) return ''; let k = 0, left = i; while (k < folders.length && left >= folders[k]) { left -= folders[k]; k++; } return `Chapter ${String(k + 1).padStart(2, '0')}/`; };
   for (let i = 1; i <= n; i++) {
-    const wide = o.wide?.includes(i), tall = o.tall?.includes(i), border = o.bordered?.includes(i);
+    const wide = o.wide?.includes(i), tall = o.tall?.includes(i), border = o.bordered?.includes(i) ? 'white' : o.blackBordered?.includes(i) ? 'black' : false;
     const pw = wide ? Math.round(h * 1.5) : w, ph = tall ? h * 5 : h;
-    z.file(`${at(i - 1)}page-${i}.png`, page(i, pw, ph, { border, noise: o.noise }));
+    if (o.gif?.includes(i)) { z.file(`${at(i - 1)}page-${i}.gif`, animatedGif(w, h)); continue; }
+    if (o.strip?.includes(i)) { z.file(`${at(i - 1)}page-${i}.png`, tallPng(w, o.stripHeight ?? 40000)); continue; }
+    z.file(`${at(i - 1)}page-${i}.png`, page(i, pw, ph, { border, noise: o.noise, faint: o.faint?.includes(i) }));
   }
   // (Entries the reader must leave out: a system folder, a dot file, a text file.)
   z.file('__MACOSX/._page-1.png', Buffer.from('x')); z.file('.hidden.png', Buffer.from('x')); z.file('info.txt', 'made-up comic');
   return z.generateAsync({ type: 'nodebuffer', compression: o.store ? 'STORE' : 'DEFLATE' });
 }
-module.exports = { makeCbz, png, page };
+/** A very tall page for the strip: every row one colour that tells its number — red the row's number mod 256, green its
+ *  number / 256 mod 256 — so a part of it drawn anywhere shows which rows it holds, and a downscaled part would blur it. */
+function tallPng(w, h) {
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) { const row = y * (w * 3 + 1); raw[row] = 0; const r = y & 255, g = (y >> 8) & 255; for (let x = 0; x < w; x++) { const i = row + 1 + x * 3; raw[i] = r; raw[i + 1] = g; raw[i + 2] = 30; } }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw, { level: 1 })), chunk('IEND', Buffer.alloc(0))]);
+}
+/** A two-frame (animated) GIF: white with a black block in the middle, the block moved in the second frame. The pixels are
+ *  coded with a clear code every two pixels, so the codes stay three bits wide and no dictionary is needed. */
+function animatedGif(w, h) {
+  const out = [Buffer.from('GIF89a'), Buffer.from([w & 255, w >> 8, h & 255, h >> 8, 0xf1, 0, 0]), Buffer.from([255, 255, 255, 0, 0, 0, 120, 120, 120, 40, 90, 200])];
+  out.push(Buffer.from([0x21, 0xff, 0x0b, ...Buffer.from('NETSCAPE2.0'), 3, 1, 0, 0, 0]));
+  for (const shift of [0, 6]) {
+    out.push(Buffer.from([0x21, 0xf9, 4, 0, 10, 0, 0, 0]), Buffer.from([0x2c, 0, 0, 0, 0, w & 255, w >> 8, h & 255, h >> 8, 0]));
+    const px = []; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px.push(Math.abs(x - w / 2 - shift) < w / 5 && Math.abs(y - h / 2) < h / 5 ? 1 : 0);
+    const bits = []; const put = (code) => { for (let b = 0; b < 3; b++) bits.push((code >> b) & 1); };
+    for (let i = 0; i < px.length; i += 2) { put(4); put(px[i]); if (i + 1 < px.length) put(px[i + 1]); }
+    put(5);
+    const bytes = []; for (let i = 0; i < bits.length; i += 8) { let v = 0; for (let b = 0; b < 8; b++) v |= (bits[i + b] || 0) << b; bytes.push(v); }
+    out.push(Buffer.from([2]));
+    for (let i = 0; i < bytes.length; i += 255) { const part = bytes.slice(i, i + 255); out.push(Buffer.from([part.length, ...part])); }
+    out.push(Buffer.from([0]));
+  }
+  out.push(Buffer.from([0x3b])); return Buffer.concat(out);
+}
+module.exports = { makeCbz, png, page, tallPng, animatedGif };

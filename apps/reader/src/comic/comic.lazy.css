@@ -1,14 +1,24 @@
 /* The comic reader (src/views/comic.ts, src/comic/viewer.ts): the pages full screen on black, the bars over them. */
-.reader-view.comic-reader { background: #000; }
-.reader-view.comic-reader .reader.comic-stage { position: absolute; inset: 0; padding: 0; background: #000; overflow: hidden; display: block; }
+.reader-view.comic-reader { background: var(--cm-bg, #000); }
+.reader-view.comic-reader .reader.comic-stage { position: absolute; inset: 0; padding: 0; background: var(--cm-bg, #000); overflow: hidden; display: block; isolation: isolate; }
 .reader-view.comic-reader.immersive .reader.comic-stage { padding: 0; }
-.cm-view { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; background: #000; }
+.cm-view { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; background: var(--cm-bg, #000); }
 .cm-track { position: absolute; inset: 0; }
 .cm-slot { position: absolute; inset: 0; overflow: hidden; will-change: transform; contain: strict; }
 .cm-piece { position: absolute; left: 0; top: 0; overflow: hidden; will-change: transform; }
+.cm-part { position: absolute; overflow: hidden; }
+.cm-part.cm-rotated { container-type: size; }
+.cm-rot { position: absolute; left: 50%; top: 50%; }
 .cm-img { position: absolute; left: 0; top: 0; max-width: none; max-height: none; user-select: none; -webkit-user-drag: none; pointer-events: none; image-rendering: auto; }
-/* (A layer over each page for colour filters, later: nothing yet.) */
-.cm-filter { position: absolute; inset: 0; pointer-events: none; }
+/* The colour: greyscale, inverted colours and a brightness over the pages (a filter on them, not on the bars), and the
+   layer for the tint and the darkening over the pages only — the bars are not under it. */
+.comic-stage .cm-track, .comic-stage .cm-scroll { filter: var(--cm-filter, none); }
+.cm-colour { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.cm-colour[hidden] { display: none; }
+/* A very tall picture: slots for its slices, a canvas in each as it nears the screen. */
+.cm-sliced { position: relative; }
+.cm-slice { position: absolute; left: 0; width: 100%; }
+.cm-slice > canvas { display: block; width: 100%; height: 100%; }
 .cm-between { display: grid; place-items: center; }
 .cm-between-card { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 520px; padding: 24px 20px; text-align: center; color: #e8e8e8; font-family: var(--font-ui); }
 .cm-between-card .cm-b-label { margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -18,14 +28,14 @@
 /* The strip: every page a placeholder as tall as its size makes it; the pictures near the screen inside. */
 .cm-scroll { position: absolute; inset: 0; overflow: auto; touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
 .cm-list { position: relative; }
-.cm-block { position: relative; overflow: hidden; background: #0a0a0a; }
-.cm-block.cm-between { background: #000; }
+.cm-block { position: relative; overflow: hidden; }
 .cm-block .cm-piece { position: relative; }
 /* The page number, clear of the bars: at the foot while they are hidden, above the page bar while it is shown. */
 .cm-pnum { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(10px + var(--safe-bottom, 0px)); z-index: 30; pointer-events: none;
   font: 600 13px/1.2 var(--font-ui); font-variant-numeric: tabular-nums; direction: ltr; color: #fff; background: rgb(0 0 0 / .6); padding: 5px 12px; border-radius: 999px;
   transition: bottom var(--dur-med, .25s) var(--ease-emph, ease); }
-.reader-view.comic-reader:not(.immersive) .cm-pnum { bottom: calc(var(--cm-bar-room, 110px) + 8px); }
+/* (Shown once: in the bar while the bars are up, here when they are hidden — and not under the zones' overlay.) */
+.reader-view.comic-reader:not(.immersive) .cm-pnum, .reader-view.comic-reader.cm-zones-up .cm-pnum { display: none; }
 .reader-view.comic-reader.rb-on.rb-imm.immersive .cm-pnum { bottom: calc(var(--rb-size, 24px) + var(--safe-bottom, 0px) + 8px); }
 .cm-pnum[hidden] { display: none; }
 /* The page bar: the mode and settings buttons at its ends, the number shown while the slider is dragged. */
@@ -43,9 +53,29 @@
 .cm-zone[data-step='prev'] { background: rgb(124 104 214 / .5); }
 .cm-zone span, .cm-zone-menu span { font: 600 15px/1.3 var(--font-ui); color: #fff; padding: 6px 12px; border-radius: 999px; background: rgb(0 0 0 / .45); }
 .cm-zone-menu { position: absolute; transform: translate(-50%, -50%); }
-.cm-zones-hint { position: absolute; left: 0; right: 0; bottom: calc(24px + var(--safe-bottom, 0px)); margin: 0; text-align: center; color: #fff; font: 500 14px var(--font-ui); text-shadow: 0 1px 3px #000; }
+.cm-zones-hint { position: absolute; left: 0; right: 0; bottom: calc(var(--rb-size, 0px) + 32px + var(--safe-bottom, 0px)); margin: 0; text-align: center; color: #fff; font: 500 14px var(--font-ui); text-shadow: 0 1px 3px #000; }
 @keyframes cm-fade { from { opacity: 0; } to { opacity: 1; } }
 /* The settings: the fields as the visual options have them; groups in Settings → Reader. */
 .cm-options { padding-bottom: 12px; }
 .cm-group-head { margin-top: 22px; }
 .cm-keys-hint { margin-top: 10px; }
+
+/* The slider fills the part already read: from the edge reading starts at (the right in a book read right to left) to the thumb,
+   whatever the interface's direction. */
+.cm-bar[data-dir='ltr'] input.cm-slider::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--md-primary) 0 var(--p), var(--md-secondary-container) var(--p)); }
+.cm-bar[data-dir='rtl'] input.cm-slider::-webkit-slider-runnable-track { background: linear-gradient(to left, var(--md-primary) 0 var(--p), var(--md-secondary-container) var(--p)); }
+/* The quick buttons in the bar: pressed ones tinted. */
+.cm-bar .cm-quick[aria-pressed='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+/* The page's own menu. */
+.cm-page-menu .cm-menu-list { display: flex; flex-direction: column; gap: 6px; }
+.cm-page-menu .cm-menu-list button { min-height: 48px; justify-content: flex-start; gap: 12px; }
+/* Sliders in the colour tab. */
+.cm-slider-row { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.cm-slider-row .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cm-slider-row output { min-width: 3.5ch; text-align: end; font-variant-numeric: tabular-nums; direction: ltr; }
+.cm-slider-row input[type=range] { width: 100%; }
+.cm-group-sub { margin: 18px 0 4px; font-size: 14px; font-weight: 600; color: var(--md-on-surface-variant); }
+.cm-bar[data-layout='rows'] .cm-quick-row { align-self: stretch; width: 100%; }
+.cm-quick-row { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.cm-quick-row .icon-btn { min-width: 44px; min-height: 44px; }
+.cm-quick-row [hidden] { display: none; }
