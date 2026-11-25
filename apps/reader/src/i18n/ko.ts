@@ -1074,7 +1074,7 @@ export const ko: Partial<Strings> = {
   archPreparing: "「{name}」 준비 중",
   archPages: "{n} / {total}쪽",
   archProtected: "보호된 압축 파일",
-  archPasswordPrompt: "이 압축 파일은 보호되어 있습니다. 비밀번호:",
+  archPasswordPrompt: "이 압축 파일은 보호되어 있습니다.",
   archPasswordWrong: "비밀번호가 틀렸습니다",
   archNoPictures: "이 압축 파일에는 그림이 없습니다.",
   archOpenInArchives: "압축 파일 도구로 열기",

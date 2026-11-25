@@ -1074,7 +1074,7 @@ export const zh: Partial<Strings> = {
   archPreparing: "正在准备「{name}」",
   archPages: "{n} / {total} 页",
   archProtected: "受保护的压缩包",
-  archPasswordPrompt: "此压缩包受密码保护。密码：",
+  archPasswordPrompt: "此压缩包受密码保护。",
   archPasswordWrong: "密码错误",
   archNoPictures: "此压缩包中没有图片。",
   archOpenInArchives: "在压缩包工具中打开",

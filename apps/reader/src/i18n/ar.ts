@@ -2863,7 +2863,7 @@ export const ar: Strings = {
   archPreparing: "تهيئة «⁨{name}⁩»",
   archPages: "الصفحات: {n} / {total}",
   archProtected: "أرشيف محمي",
-  archPasswordPrompt: "هذا الأرشيف محمي. كلمة السر:",
+  archPasswordPrompt: "هذا الأرشيف محميّ بكلمة سرّ.",
   archPasswordWrong: "كلمة السر خاطئة",
   archNoPictures: "لا صور في هذا الأرشيف.",
   archOpenInArchives: "فتح في الأرشيفات",

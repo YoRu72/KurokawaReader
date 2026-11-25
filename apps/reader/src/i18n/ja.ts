@@ -1074,7 +1074,7 @@ export const ja: Partial<Strings> = {
   archPreparing: "「{name}」を準備中",
   archPages: "{n} / {total} ページ",
   archProtected: "保護されたアーカイブ",
-  archPasswordPrompt: "このアーカイブは保護されています。パスワード：",
+  archPasswordPrompt: "このアーカイブは保護されています。",
   archPasswordWrong: "パスワードが違います",
   archNoPictures: "このアーカイブに画像はありません。",
   archOpenInArchives: "アーカイブで開く",

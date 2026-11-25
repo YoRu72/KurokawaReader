@@ -2861,7 +2861,7 @@ export const en = {
   archPreparing: "Preparing «{name}»",
   archPages: "{n} / {total} pages",
   archProtected: "Protected archive",
-  archPasswordPrompt: "This archive is protected. Password:",
+  archPasswordPrompt: "This archive is protected.",
   archPasswordWrong: "Wrong password",
   archNoPictures: "This archive holds no pictures.",
   archOpenInArchives: "Open in Archives",
