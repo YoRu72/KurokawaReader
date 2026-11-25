@@ -200,16 +200,16 @@ export function settingsView(): HTMLElement {
       h('small', { class: 'hint' }, t('glossVolModeHint')))));
 
   // Checks for new chapters at the sources (the same choices as the bell in Browse offers).
-  let updCard: HTMLElement | null = null; let followedNow = false;
+  let updCard: HTMLElement | null = null; let followedNow = false; let extNow = false;
   {
-    // (Only while a work is followed — one added to the library from a source; the section shows and goes by itself.)
-    const card = h('section', { class: 'card upd-card', hidden: true }, h('h3', null, t('updatesSection')), h('p', null, t('updatesSectionBody')));
+    // (While a work is followed — one added to the library from a source — or an extension is installed; the section shows and goes by itself. With extensions only, the rows about novels and chapters stay out: .upd-nov.)
+    const card = h('section', { class: 'card upd-card', hidden: true }, h('h3', null, t('updatesSection')), h('p', { class: 'upd-nov' }, t('updatesSectionBody')));
     updCard = card;
     {
       const last = h('small', { class: 'hint upd-last' }); const status = h('small', { class: 'hint upd-status', 'aria-live': 'polite' });
       const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
       const btn = h('button', { type: 'button', class: 'btn tonal' }, icon('refresh'), t('checkNow')) as HTMLButtonElement;
-      const paint = (u: typeof import('../sources/updates')) => { const at = Number(localStorage.getItem('kr.sources.checkedAt') ?? 0); last.textContent = at ? t('srcCheckedAgo', { when: u.timeAgo(at) }) : t('neverChecked'); btn.disabled = u.isChecking(); };
+      const paint = (u: typeof import('../sources/updates')) => { last.textContent = u.checkedLine(Number(localStorage.getItem('kr.sources.checkedAt') ?? 0)); btn.disabled = u.isChecking(); };
       void import('../sources/updates').then((u) => {
         paint(u);
         const off = u.onUpdatesChanged(() => { if (!card.isConnected) { off(); return; } paint(u); });
@@ -228,11 +228,12 @@ export function settingsView(): HTMLElement {
     void import('../sources/updates').then(({ updatePrefs, setUpdatePref, checkEvery, setCheckEvery }) => {
       const pref = updatePrefs();
       // How often the checks run by themselves (as in the bell's sheet).
-      card.append(h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
+      card.append(h('div', { class: 'row upd-nov', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
         pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(checkEvery()), (v) => setCheckEvery(Number(v)), t('close'))));
-      const sw = (k: import('../sources/updates').UpdatePref, label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
+      const sw = (k: import('../sources/updates').UpdatePref, label: string) => h('label', { class: 'row upd-nov', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
       card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')), sw('smart', t('updSmart')), sw('skipUnread', t('updSkipUnread')), sw('skipNotStarted', t('updSkipNotStarted')),
         h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('extAutoUpdate')), (() => { const c = h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: () => localStorage.setItem('kr.ext.autoUpdate', c.checked ? 'on' : 'off') }) as HTMLInputElement; return c; })()));
+      card.querySelectorAll<HTMLElement>('.upd-nov').forEach((el) => { if (!followedNow) el.hidden = true; });
     });
     body.append(card);
   }
@@ -478,7 +479,8 @@ export function settingsView(): HTMLElement {
   // (Back with a search typed: the search emptied first, every section shown again — then Back leaves Settings.)
   const offBack = onBack(() => { if (!root.isConnected) { offBack(); return false; } if (!search.value) return false; search.value = ''; search.blur(); applySearch(); return true; });
   const titled = cards.filter((c) => c.querySelector(':scope > h3'));
-  const shown = () => titled.filter((c) => c !== updCard || followedNow);
+  const updOn = () => followedNow || extNow;
+  const shown = () => titled.filter((c) => c !== updCard || updOn());
   if (!shown().some((c) => c.id === pcSec)) pcSec = shown()[0]?.id ?? '';
   const applySearch = () => {
     const q = search.value.trim().toLowerCase();
@@ -486,10 +488,10 @@ export function settingsView(): HTMLElement {
     if (!shown().some((c) => c.id === pcSec)) pcSec = shown()[0]?.id ?? '';
     const one = pc() && !q;
     body.classList.toggle('pc-one', one);
-    if (updCard) nav.querySelector<HTMLElement>(`[data-sec="${updCard.id}"]`)?.toggleAttribute('hidden', !followedNow);
+    if (updCard) nav.querySelector<HTMLElement>(`[data-sec="${updCard.id}"]`)?.toggleAttribute('hidden', !updOn());
     for (const b of Array.from(nav.querySelectorAll<HTMLElement>('[data-sec]'))) { const on = one && b.dataset.sec === pcSec; b.classList.toggle('on', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
     for (const card of cards) {
-      if (card === updCard && !followedNow) { card.hidden = true; card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
+      if (card === updCard && !updOn()) { card.hidden = true; card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       if (one) { card.hidden = card.id !== pcSec; card.classList.remove('collapsed'); card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       if (!q) { card.hidden = false; card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       card.classList.remove('collapsed');
@@ -516,12 +518,15 @@ export function settingsView(): HTMLElement {
       }
       card.hidden = !any;
     }
+    // (Nothing followed: the rows about novels and chapters stay out, whatever the search says.)
+    if (updCard) updCard.querySelectorAll<HTMLElement>('.upd-nov').forEach((el) => { if (!followedNow) el.hidden = true; else if (!el.hasAttribute('data-sq')) el.hidden = false; });
   };
   search.addEventListener('input', applySearch);
   applySearch();
   void import('../sources/updates').then((u) => {
+    extNow = u.installedExtCount() > 0; applySearch();
     const set = (n: number) => { const on = n > 0; if (on === followedNow) return; followedNow = on; applySearch(); };
-    void u.followedCount().then(set).catch(() => undefined);
+    void u.followedCount().then((n) => { followedNow = false; set(n); }).catch(() => undefined);
     const off = u.onFollowedChanged((n) => { if (!root.isConnected) { off(); return; } set(n); });
   }).catch(() => undefined);
   return root;

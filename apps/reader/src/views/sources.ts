@@ -23,7 +23,7 @@ import { buildExtIndex, searchExts, type ExtEntry, type ExtState } from '../sour
 import { schedule, peekLog, coverSource, fullCover } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, sameNovelElsewhere, addNovelToLibrary, readNovelFile, saveNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, followedWorks, onFollowedChanged } from '../sources/updates';
+import { timeAgo, checkedLine, isTime, checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, followedWorks, onFollowedChanged } from '../sources/updates';
 import { parseName } from '../sources/folder';
 import { onHoldOrContext } from '../ui/tags';
 
@@ -414,7 +414,7 @@ function extSearch(repos: Repo[], redraw: () => void, tree: HTMLElement): HTMLEl
   let ix: ExtEntry[] = []; let q = ''; let fInst = false; let fUpd = false; let fLang = ''; let shownN = BATCH; let changed = false;
   const build = () => { ix = buildExtIndex(repos, installedVersions(), langName, langLabel, newer); };
   build();
-  const input = h('input', { type: 'search', class: 'src-search ext-search-field', placeholder: t('extSearchPlaceholder'), 'aria-label': t('extSearchLabel'), dir: 'auto', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search' }) as HTMLInputElement;
+  const input = h('input', { type: 'search', class: 'src-search ext-search-field', placeholder: t('extSearchPlaceholder'), 'aria-label': t('extSearchLabel'), dir: 'auto', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search', 'data-own-clear': '1' }) as HTMLInputElement;
   const clear = iconButton('close', t('extSearchClear'), () => { input.value = ''; q = ''; fInst = false; fUpd = false; fLang = ''; run(); input.focus(); });
   const chips = h('div', { class: 'folder-chips ext-filters' });
   const count = h('small', { class: 'hint ext-found', 'aria-live': 'polite' });
@@ -550,12 +550,7 @@ function updatesSheet(after: () => void): void {
   const sh = openSheet(t('srcWhatsNew'), t('close'));
   sh.el.classList.add('updates-sheet');
   const body = sh.body;
-  // (A time as people say it: "3 hours ago".)
-  const ago = (ms: number) => {
-    const rtf = new Intl.RelativeTimeFormat(getLang() === 'ar' ? 'ar' : getLang(), { numeric: 'auto' }); const d = (ms - Date.now()) / 1000;
-    for (const [u, n] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) if (Math.abs(d) >= n) return rtf.format(Math.round(d / n), u);
-    return rtf.format(0, 'minute');
-  };
+  const ago = timeAgo;
   const draw = async () => {
     body.replaceChildren();
     const rep = await lastReport();
@@ -565,9 +560,9 @@ function updatesSheet(after: () => void): void {
     const when = Number(localStorage.getItem('kr.sources.checkedAt') ?? 0);
     // The state of the checks, and the way to check now.
     const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: !isChecking() }, bar);
-    const line = h('small', null, when ? t('srcCheckedAgo', { when: ago(when) }) : t('neverChecked'));
+    const line = h('small', null, checkedLine(when));
     const every = checkEvery();
-    const next = h('small', { class: 'upd-next' }, every ? t('srcNextCheck', { when: when ? ago(when + every * 3600000) : t('soon') }) : t('srcChecksOff'));
+    const next = h('small', { class: 'upd-next' }, every ? t('srcNextCheck', { when: isTime(when) ? ago(when + every * 3600000) : t('soon') }) : t('srcChecksOff'));
     const btn = h('button', { type: 'button', class: 'btn tonal', disabled: isChecking() }, icon('refresh'), t('srcCheckOthers')) as HTMLButtonElement;
     btn.addEventListener('click', async () => {
       btn.disabled = true; track.hidden = false;
@@ -588,7 +583,7 @@ function updatesSheet(after: () => void): void {
         const url = coverUrl(b);
         list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(`/read/${b.id}`); } },
           url ? h('img', { class: 'upd-cover', src: url, alt: '' }) : h('span', { class: 'upd-cover gen' }, icon('books')),
-          h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!), b.remote?.checkedAt ? ` · ${ago(b.remote.checkedAt)}` : '')),
+          h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!), isTime(b.remote?.checkedAt) ? ` · ${ago(b.remote!.checkedAt!)}` : '')),
           h('span', { class: 'badge new' }, `+${localDigits(String(b.remote!.newChapters))}`)), dismiss(() => dismissChapters(b.id))));
       }
       body.append(list);
@@ -599,7 +594,7 @@ function updatesSheet(after: () => void): void {
         h('button', { type: 'button', class: 'btn small text', onclick: async () => { for (const v of vols) await dismissVolumes(v.repoKey, v.series); void draw(); after(); } }, t('markAllSeen'))));
       const list = h('ul', { class: 'plain-list upd-list' });
       for (const v of vols) list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, h('span', { class: 'upd-cover gen' }, icon('books')),
-        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${v.at ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, `+${localDigits(String(v.n))}`)), dismiss(() => dismissVolumes(v.repoKey, v.series))));
+        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${isTime(v.at) ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, `+${localDigits(String(v.n))}`)), dismiss(() => dismissVolumes(v.repoKey, v.series))));
       body.append(list);
     }
     // Extensions with a newer version: each updated with a tap, or all at once.

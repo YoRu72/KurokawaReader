@@ -5,7 +5,7 @@
 import { db, type Book } from '../db';
 import { writePending } from './pending';
 import { pool } from './http';
-import { listRepos, refreshRepo, extensionUpdates, autoUpdateExtensions, type Repo, type ExtItem } from './repos';
+import { listRepos, refreshRepo, extensionUpdates, autoUpdateExtensions, installedVersions, type Repo, type ExtItem } from './repos';
 import { checkNovel } from './ext/source';
 import { t, getLang, countChapters, countNovels, countVolumes, countSeries } from '../i18n';
 
@@ -88,11 +88,19 @@ export function onFollowedChanged(fn: (n: number) => void): () => void {
   return () => { followListeners.delete(fn); if (!followListeners.size) { window.removeEventListener('kr:books', onBooks); clearTimeout(followTimer); } };
 }
 /** A time as people say it: "3 hours ago". */
+/** Whether a stored time is a real moment (not 0, undefined, NaN or a stray small number from before 2001). */
+export const isTime = (ms: unknown): ms is number => typeof ms === 'number' && Number.isFinite(ms) && ms > 1e12;
+/** A time as people say it ("3 hours ago"); a time that is none gives «not checked yet», never a made-up age. */
 export function timeAgo(ms: number): string {
+  if (!isTime(ms)) return t('notCheckedYet');
   const rtf = new Intl.RelativeTimeFormat(getLang() === 'ar' ? 'ar' : getLang(), { numeric: 'auto' }); const d = (ms - Date.now()) / 1000;
   for (const [u, n] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) if (Math.abs(d) >= n) return rtf.format(Math.round(d / n), u);
   return rtf.format(0, 'minute');
 }
+/** The «Checked …» line: «Not checked yet» while no check ever ran. */
+export const checkedLine = (ms: number): string => (isTime(ms) ? t('srcCheckedAgo', { when: timeAgo(ms) }) : t('notCheckedYet'));
+/** How many extensions are on the device. */
+export const installedExtCount = (): number => Object.keys(installedVersions()).length;
 
 /** What is waiting to be seen: chapters not yet opened (summed over the books) and extension updates — nothing
  *  at all while no work is followed. */

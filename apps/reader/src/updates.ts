@@ -440,7 +440,7 @@ export function showUpdateSheet(rel: ReleaseInfo, opts: { rustSwitch?: boolean }
 }
 
 export function renderUpdateCard(container: HTMLElement): void {
-  const status = h('p', null, lastChecked() ? t('lastChecked', { d: new Date(lastChecked()).toLocaleString() }) : '');
+  const status = h('p', null, lastChecked() > 1e12 ? t('lastChecked', { d: new Date(lastChecked()).toLocaleString() }) : t('notCheckedYet'));
   const cb = h('input', { type: 'checkbox', onchange: () => updateSettings({ autoUpdateCheck: cb.checked }) }) as HTMLInputElement;
   cb.checked = getSettings().autoUpdateCheck;
   const btn = h('button', { class: 'btn small tonal', onclick: async () => {

@@ -11,7 +11,7 @@ const DIST = path.resolve(__dirname, '../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.ttf': 'font/ttf' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
 const SITE = 'http://localhost:5423'; const APP = 'http://localhost:5424/';
-const T = { en: { upToDate: 'Up to date', appUpdates: 'App updates', checkNow: 'Check now' }, ar: { upToDate: 'كل شيء محدَّث', appUpdates: 'تحديثات التطبيق', checkNow: 'تحقق الآن' } }[LANG];
+const T = { en: { never: 'Not checked yet', upToDate: 'Up to date', appUpdates: 'App updates', checkNow: 'Check now' }, ar: { never: 'لم يُجرَ تحقّقٌ بعد', upToDate: 'كل شيء محدَّث', appUpdates: 'تحديثات التطبيق', checkNow: 'تحقق الآن' } }[LANG];
 (async () => {
   await new Promise((r) => server.listen(5424, r));
   const mock = spawn('node', [path.join(__dirname, 'ext/server.cjs'), '5423'], { stdio: 'ignore' }); await new Promise((r) => setTimeout(r, 600));
@@ -62,6 +62,12 @@ const T = { en: { upToDate: 'Up to date', appUpdates: 'App updates', checkNow: '
     ok('the first work followed: the section shows live (no restart) and its chip with it', (await updCardShown()) && (await chipShown()));
     const cardText = await page.$eval('.upd-card', (e) => e.textContent);
     ok('… with «Check now», the existing options and the time of the last check', cardText.includes(T.checkNow) && (await page.$$('.upd-card input[type=checkbox]')).length >= 6 && !!(await page.$('.upd-card .upd-last')) && (await page.$eval('.upd-card .upd-last', (e) => e.textContent.trim())).length > 3);
+    ok('… never checked: «Not checked yet», not an age', (await page.$eval('.upd-card .upd-last', (e) => e.textContent.trim())) === T.never);
+    await page.evaluate(() => localStorage.setItem('kr.sources.checkedAt', '1')); await settings(); await page.waitForSelector('.upd-card:not([hidden])');
+    ok('… a stray time (1) gives the same, never «20,782 days ago»', (await page.$eval('.upd-card .upd-last', (e) => e.textContent.trim())) === T.never);
+    await page.evaluate(() => localStorage.setItem('kr.sources.checkedAt', '0')); await settings(); await page.waitForSelector('.upd-card:not([hidden])');
+    ok('… and 0 too', (await page.$eval('.upd-card .upd-last', (e) => e.textContent.trim())) === T.never);
+    if (SHOTS) { await page.evaluate(() => { const c = document.querySelector('.upd-card'); c.classList.remove('collapsed'); c.scrollIntoView({ block: 'start' }); }); await settle(900); await page.screenshot({ path: path.join(SHOTS, 'S4c-settings-never.png') }); }
     ok('… and the app\'s own section still there', await appCard());
     await page.evaluate(() => localStorage.setItem('kr.sources.checkedAt', String(Date.now() - 3 * 3600000))); await settings(); await page.waitForSelector('.upd-card:not([hidden])'); await idb(`(all, st) => 0`);
     await page.evaluate(() => { const c = document.querySelector('.upd-card'); c.classList.remove('collapsed'); c.scrollIntoView({ block: 'start' }); }); await settle(700);
@@ -73,7 +79,15 @@ const T = { en: { upToDate: 'Up to date', appUpdates: 'App updates', checkNow: '
     delayMs = 0;
     ok('… then says «Up to date», and the button is back', (await page.$eval('.upd-card .upd-status', (e) => e.textContent)).includes(T.upToDate) && !(await page.$eval('.upd-card .btn', (e) => e.disabled)));
     await idb(`(all, st) => { st.delete('seed-follow'); }`); await poke(); await settle(900);
-    ok('the last work gone: the section goes with it', !(await updCardShown()) && !(await chipShown()) && (await appCard()));
+    // Extensions are installed (from the repository added above) but nothing is followed: the card shows with what concerns extensions only.
+    ok('the last work gone, extensions still installed: the card stays, for the extensions', (await updCardShown()) && (await chipShown()) && (await appCard()));
+    ok('… only «Check now», the last check and «Update extensions by themselves» show; no novel or chapter row', await page.evaluate((w) => { const c = document.querySelector('.upd-card'); const vis = (e) => !e.hidden && !e.closest('[hidden]') && getComputedStyle(e).display !== 'none'; return !!c.querySelector('.upd-last') && vis(c.querySelector('.upd-check')) && [...c.querySelectorAll('.upd-nov')].every((e) => !vis(e)) && [...c.querySelectorAll('input[type=checkbox]')].filter((e) => vis(e)).length === 1; }, T.checkNow));
+    if (SHOTS) { await page.evaluate(() => { const c = document.querySelector('.upd-card'); c.classList.remove('collapsed'); c.scrollIntoView({ block: 'start' }); }); await settle(900); await page.screenshot({ path: path.join(SHOTS, 'S4c-settings-extonly.png') }); }
+    // Followed again: the novel and chapter rows come back.
+    await idb(`(all, st) => { st.put({ id: 'seed-follow2', title: 'Seed Novel Two', format: 'webnovel', fileName: 'seed2.json', size: 1, addedAt: Date.now(), remote: { source: 'ext:seed:plug', id: '/n/seed2', newChapters: 0 } }); }`); await poke(); await settle(900);
+    ok('followed again: the novel and chapter rows are back (six switches and the extension one)', (await page.$$eval('.upd-card input[type=checkbox]', (l) => l.filter((e) => !e.closest('[hidden]') && !e.hidden).length)) >= 7);
+    await idb(`(all, st) => { st.delete('seed-follow2'); }`); await poke(); await settle(900);
+
 
     // ---- two works followed from the mock site, one update waiting ----
     const follow = async (title) => {
@@ -114,6 +128,11 @@ const T = { en: { upToDate: 'Up to date', appUpdates: 'App updates', checkNow: '
     ok('… and the red mark with it', await page.$eval('.browse-btn .alert-mark', (e) => e.hidden));
     await settings();
     ok('the section of the followed works stays (they are still followed) and the app\'s own section too', (await updCardShown()) && (await appCard()));
+    // No extension at all and nothing followed: nothing shown, nothing asked.
+    await idb(`(all, st) => { for (const b of all) if (b.format === 'webnovel') st.delete(b.id); }`); await poke(); await page.evaluate(() => localStorage.removeItem('kr.ext.installed')); await hub(); await settings();
+    ok('nothing followed and no extension: the card, its chip and the search hit are all gone', !(await updCardShown()) && !(await chipShown()));
+    siteRequests = 0; await page.evaluate(() => { localStorage.setItem('kr.sources.checkedAt', '1'); document.dispatchEvent(new Event('visibilitychange')); }); await settle(6500);
+    ok('… and zero requests', siteRequests === 0);
     if (foreign) console.log('  requests refused (not the app, not the mock):', foreign, [...foreignUrls]);
     ok('no request went anywhere but the app and the mock site', foreign === 0);
   } catch (e) { ok('ran to the end: ' + String(e.message).split('\n')[0], false); }

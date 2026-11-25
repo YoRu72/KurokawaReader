@@ -212,6 +212,7 @@ function hunt({ phone, rtl, lang }) {
   const out = []; const vw = document.documentElement.clientWidth;
   const desc = (e) => { let s = e.tagName.toLowerCase(); if (e.id) s += '#' + e.id; const c = [...e.classList].slice(0, 2).join('.'); if (c) s += '.' + c; const tx = (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 70); if (e.tagName === 'INPUT') s += `[${e.type}]<${e.parentElement ? e.parentElement.tagName.toLowerCase() + '.' + [...e.parentElement.classList].join('.') : ''}`; return s + (tx ? ` «${tx}»` : ''); };
   const vis = (e) => { const r = e.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return false; const cs = getComputedStyle(e); if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) return false; for (let a = e; a; a = a.parentElement) { if (a.hidden || getComputedStyle(a).display === 'none') return false; } return true; };
+  const ownClearRule = [...document.styleSheets].some((ss) => { try { return [...ss.cssRules].some((r) => /data-own-clear[^{]*::-webkit-search-cancel-button/.test(r.selectorText || '') && r.style.display === 'none'); } catch { return false; } });
   const add = (kind, e, extra) => out.push({ kind, what: desc(e) + (extra ? ' ' + extra : '') });
   const root = document.documentElement;
   if (root.scrollWidth > root.clientWidth + 1 || document.body.scrollWidth > root.clientWidth + 1) out.push({ kind: 'overflow', what: `page ${Math.max(root.scrollWidth, document.body.scrollWidth)} > ${root.clientWidth}` });
@@ -239,6 +240,11 @@ function hunt({ phone, rtl, lang }) {
     }
     if (e.tagName === 'INPUT' && e.type === 'checkbox' && cs.appearance !== 'none' && cs.webkitAppearance !== 'none' && !e.closest('.sr-only')) add('native-checkbox', e);
     if (e.tagName === 'INPUT' && e.type === 'number' && cs.appearance !== 'textfield' && cs.webkitAppearance !== 'textfield' && getComputedStyle(e, '::-webkit-inner-spin-button').webkitAppearance !== 'none') add('native-spinner', e);
+    if (e.tagName === 'INPUT' && e.type === 'search') {
+      // (The pseudo-element's computed style cannot be read reliably, so: the field carries no native look, and the app-wide rule that hides the browser's clear button on fields with their own exists.)
+      if (cs.appearance !== 'none') add('native-search-look', e);
+      if (e.hasAttribute('data-own-clear') && !ownClearRule) add('double-clear-button', e);
+    }
     if (!e.children.length && /[٠-٩۰-۹]/.test(e.textContent || '') && !(e.closest('.segmented') && (e.textContent || '').trim() === '١٢٣')) add('eastern-digits', e);
     if (rtl && /^(H1|H2|H3)$/.test(e.tagName) && cs.direction === 'ltr' && /[؀-ۿ]/.test(e.textContent || '')) add('ltr-title-in-rtl', e);
   }
@@ -256,6 +262,8 @@ function hunt({ phone, rtl, lang }) {
   for (const [p, es] of rows) {
     const bs = es.map((e) => ({ e, r: e.getBoundingClientRect() }));
     for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
+      // (A clear button laid inside its search field, by design, over the end of the field.)
+      if ([bs[i].e, bs[j].e].some((x) => x.classList.contains('icon-btn') && getComputedStyle(x).position === 'absolute') && [bs[i].e, bs[j].e].some((x) => x.tagName === 'INPUT')) continue;
       const a = bs[i].r, b = bs[j].r; if (Math.abs(a.top - b.top) > 8 && Math.abs(a.bottom - b.bottom) > 8) continue;
       const gap = Math.max(b.left - a.right, a.left - b.right); const ov = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
       if (p.closest('.segmented, .seg')) continue; const icons = bs[i].e.classList.contains('icon-btn') && bs[j].e.classList.contains('icon-btn'); if (ov > 4 && gap < (icons ? 1 : 4)) add('touching', bs[j].e, `in ${p.tagName.toLowerCase()}.${[...p.classList].join('.')} with ${desc(bs[i].e)} gap ${Math.round(gap)}`);

@@ -54,6 +54,8 @@ const repoB = { key: 'rb', url: 'https://b.test/i.json', given: 'https://b.test/
     ok('chips: Installed, Updates and the languages (more than one)', chips.includes('installed') && chips.includes('updates') && chips.filter((c) => c.startsWith('lang:')).length === 3);
     await page.click('.ext-filters [data-chip="updates"]'); await page.waitForTimeout(200); r = await rows(); ok('«Updates» chip: only the one to update', r.length === 1 && r[0].state === 'update');
     await page.click('.ext-filters [data-chip="updates"]'); await page.click('.ext-filters [data-chip="installed"]'); await page.waitForTimeout(200); r = await rows(); ok('«Installed» chip: installed and to update', r.length === 2);
+    const own = await page.evaluate(() => { const i = document.querySelector('.ext-search-field'); const c = document.querySelector('.ext-search .src-search-row .icon-btn'); const a = i.getBoundingClientRect(), b = c.getBoundingClientRect(); return { type: i.type, attr: i.hasAttribute('data-own-clear'), rule: [...document.styleSheets].some((ss) => { try { return [...ss.cssRules].some((r) => /data-own-clear[^{]*::-webkit-search-cancel-button/.test(r.selectorText || '') && r.style.display === 'none'); } catch { return false; } }), appearance: getComputedStyle(i).appearance, inside: b.width > 0 && b.left >= a.left - 1 && b.right <= a.right + 1 && b.top >= a.top - 1 && b.bottom <= a.bottom + 1 }; });
+    ok('one clear control: the browser\'s own is off and ours sits inside the field\'s box', own.type === 'search' && own.attr && own.rule && own.appearance === 'none' && own.inside); if (!(own.type === 'search' && own.attr && own.rule && own.appearance === 'none' && own.inside)) console.log(own);
     await page.click('.ext-search .src-search-row .icon-btn'); await page.waitForTimeout(200); ok('clear (×) empties the field and the filters', !(await page.$('.ext-hit')));
     // actions
     await type('shared'); const before = net;
@@ -64,7 +66,7 @@ const repoB = { key: 'rb', url: 'https://b.test/i.json', given: 'https://b.test/
     await page.click('.ext-hit .icon-btn[data-icon="more"]'); await page.waitForSelector('.sheet .dest-row.danger'); ok('the row\'s menu offers removal', true); await page.keyboard.press('Escape'); await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
     // many results: batches
     await type(''); await page.click('.ext-filters [data-chip^="lang:"]'); await page.waitForTimeout(200);
-    if (SHOTS) { await type(LANG === 'ar' ? 'ا' : 'a'); await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(700); await page.screenshot({ path: path.join(SHOTS, `S4b-extsearch-${LANG}.png`) }); }
+    if (SHOTS) { await type(LANG === 'ar' ? 'ا' : 'a'); await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(700); await page.screenshot({ path: path.join(SHOTS, `S4c-extsearch-${LANG}.png`) }); }
     // PC (a pointer that is not touch): «/» and Ctrl+F reach the field; a long list renders in batches.
     const pcx = await browser.newContext({ ...devices['Desktop Chrome'], locale: LANG, colorScheme: 'dark', serviceWorkers: 'block' }); const pc = await pcx.newPage();
     await pc.route('**/*', (r) => { const u = r.request().url(); return u.startsWith(APP) ? r.continue() : r.abort(); });

@@ -1949,6 +1949,7 @@ export const ar: Strings = {
   neverAuto: 'أبدًا (عند الطلب وحده)',
   retry: 'إعادة المحاولة',
   srcLastChecked: 'آخر تحقق {when}.',
+  notCheckedYet: 'لم يُجرَ تحقّقٌ بعد',
   neverChecked: 'لم يُتحقق بعد.',
   checkNow: 'تحقق الآن',
   checkingBook: 'جارٍ التحقق من «{title}»…',

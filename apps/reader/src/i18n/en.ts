@@ -1945,6 +1945,7 @@ export const en = {
   neverAuto: 'Never (only when asked)',
   retry: 'Try again',
   srcLastChecked: 'Last checked {when}.',
+  notCheckedYet: 'Not checked yet',
   neverChecked: 'Not checked yet.',
   checkNow: 'Check now',
   checkingBook: 'Checking “{title}”…',
