@@ -2668,6 +2668,7 @@ export const en = {
   autoBookNever: "Never",
   gatherTheseChapters: "These chapters",
   teAction: "Save the translation as EPUB",
+  teSaveGo: "Save",
   teNone: "No translation of this book is saved yet.",
   teNoneLang: "No saved translation matches the current AI service, model and instructions.",
   teReading: "Reading the book…",

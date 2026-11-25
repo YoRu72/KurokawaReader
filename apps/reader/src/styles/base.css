@@ -439,7 +439,7 @@ html[data-card-look='list'] .book-card:hover .cover { transform: none; }
 .selection-bar .spacer { flex: 1; }
 .selection-bar .sel-actions { display: flex; gap: 4px; justify-content: space-between; }
 .selection-bar .sel-act { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border-radius: 18px; font-size: 11.5px; color: var(--md-on-surface-variant); }
-.selection-bar .sel-act span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.selection-bar .sel-act span { white-space: normal; overflow: hidden; max-width: 100%; text-align: center; line-height: 1.15; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }   /* (a phone's five columns: a longer label goes on a second line, not cut) */
 .selection-bar .sel-act svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .selection-bar .sel-act:hover:not(:disabled) { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 .selection-bar .sel-act:disabled { opacity: .4; }
@@ -450,6 +450,7 @@ html[data-card-look='list'] .book-card:hover .cover { transform: none; }
   .selection-bar .sel-head { padding-inline-start: 10px; }
   .selection-bar .sel-actions { gap: 4px; }
   .selection-bar .sel-act { flex-direction: row; gap: 8px; padding: 8px 12px; font-size: 13px; }
+  .selection-bar .sel-act span { display: block; white-space: nowrap; text-overflow: ellipsis; }
   .selection-bar .sel-act svg { width: 18px; height: 18px; }
 }
 @keyframes pop { from { transform: translateX(-50%) translateY(16px) scale(.96); opacity: 0; } }
@@ -823,6 +824,8 @@ html[dir='rtl'] .upd-arrow svg { transform: scaleX(-1); }
 /* Settings: sections, collapsing, search */
 .settings-head { position: sticky; top: 0; z-index: 5; padding: 8px 0 6px; margin: -8px 0 10px; background: linear-gradient(var(--md-surface) 80%, transparent); }
 .settings-search { width: 100%; margin-bottom: 10px; }
+.settings-body > .card { scroll-margin-top: 132px; }   /* (a chip's scroll puts the section's heading below the sticky search and chips, not under them) */
+html.pc .settings-body > .card { scroll-margin-top: 0; }
 .settings-nav { padding-bottom: 4px; }
 .card .card-title { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; -webkit-user-select: none; }
 .card .card-title svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; transition: transform var(--dur-med) var(--ease-spring); }
@@ -1527,6 +1530,8 @@ html[dir='rtl'] :not(.kr-content, .kr-content *, kbd, .key-cap) { letter-spacing
 /* Controls and lists are not text to copy: a hold selects an item, not its letters. */
 .book-card, .book-tile, .chapter-list, .plain-list, .dest-row, .chip, .sel-act, .selection-bar, .sheet-actions, .segmented, .tool-bar, .stars, .track-hit, .page-tile, .strip-cell, .library-tools, .folder-chips, .settings-nav, .topbar, .pdf-bar, .ink-bar { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .conv-opts { margin: 8px 0 10px; }
+.conv-images { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; margin: 4px 0; }
+.conv-images .label { text-transform: none; letter-spacing: normal; font-size: 15px; color: var(--md-on-surface); }
 .conv-pdf-opts { display: contents; }
 .conv-pdf-opts[hidden] { display: none; }
 .conv-docx-opts { margin: 0 0 12px; gap: 6px; }
@@ -2632,6 +2637,8 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .gather-sheet .gather-volume { padding: 10px 14px; border-radius: var(--sh-md); background: var(--md-surface-container-high); font-size: 14px; }
 .gather-sheet .gather-scope { margin: 2px 0; }
 .gather-sheet .sheet-actions.gather-actions { flex-direction: column; align-items: stretch; gap: 10px; }
+.gather-sheet .sheet-actions.gather-actions { padding-inline: 22px; }   /* (the same left and right edges as the scope row above: the body's own padding) */
+html.pc .gather-sheet .sheet-actions.gather-actions { padding-inline: 28px; }
 .gather-acts-row { display: flex; gap: 10px; }
 .gather-sheet .gather-acts-row .btn { flex: 1 1 0; min-width: 0; padding-inline: 12px; text-align: center; line-height: 1.2; height: auto; min-height: 48px; white-space: normal; overflow-wrap: normal; }
 /* (Labels that do not fit side by side: src/ui/dom.ts stackWhenCramped puts the buttons one under another, the first on top.) */
@@ -2697,7 +2704,7 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .yg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .yg-stepper { display: flex; align-items: center; gap: 8px; }
 .yg-step { width: 44px; height: 44px; padding: 0; font-size: 20px; line-height: 1; }
-.yg-input { width: 84px; height: 44px; box-sizing: border-box; text-align: center; padding: 0 8px; }
+input.yg-input { width: 112px; height: 44px; box-sizing: border-box; text-align: center; padding: 0 6px; font-size: 15px; }   /* (wide enough for «No goal» as the placeholder, uncut) */
 .yg-progress { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
 .yg-ring { width: 72px; height: 72px; flex: none; }
 .yg-ring circle { fill: none; stroke-width: 8; }
@@ -2740,3 +2747,8 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .upd-check small { display: block; }
 .updates-sheet .upd-state .upd-followed { opacity: .85; }
 .upd-row .icon-btn { flex: none; min-width: 40px; min-height: 40px; }
+
+/* The highlight's sheet (its note, its colour): «Remove highlight» and «Done» as wide as each other, as high as a finger needs, with the same edges as the body. */
+.hl-sheet .sheet-actions { padding-inline: 22px; }
+html.pc .hl-sheet .sheet-actions { padding-inline: 28px; }
+.hl-sheet .sheet-actions .btn { flex: 1 1 0; min-width: 0; min-height: 44px; justify-content: center; white-space: normal; text-align: center; }

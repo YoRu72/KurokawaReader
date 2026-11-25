@@ -5,6 +5,8 @@
 // the whole library as a shelf; a page split at the chapters starting on it; the back button returning to
 // the view a book was opened from. node tests/sources/flow.cjs <dir with alice-in-wonderland.epub>
 const { chromium, devices } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
+// (The pictures go to the temp folder, not into the repository.)
+const SHOTDIR = require('path').join(require('os').tmpdir(), 'kr-sources-shots'); require('fs').mkdirSync(SHOTDIR, { recursive: true });
 const DIST = path.resolve(__dirname, '../../dist'); const BOOKS = path.resolve(process.argv[2] || '.');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.ttf': 'font/ttf' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
@@ -34,7 +36,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('back from the sources: the settings, the Sources section still open and in view', settingsBack.hash === '#/settings' && settingsBack.open && settingsBack.visible);
     if (!(settingsBack.hash === '#/settings' && settingsBack.open && settingsBack.visible)) console.log('  settings:', JSON.stringify(settingsBack));
     await page.click('button:has-text("Browse: the Internet Archive, Shamela and your own sources")'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
-    await page.screenshot({ path: path.join(__dirname, 'hub.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'hub.png') });
     // archive.org: the default shelf.
     await page.click('.source-card >> nth=0 >> .source-head'); await page.waitForSelector('.src-grid .src-card', { timeout: 15000 }); await page.waitForTimeout(300);
     ok('archive shelf shows books (lending-only left out)', (await page.$$('.src-grid .src-card')).length === 4);
@@ -43,7 +45,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     const marks = await page.evaluate(() => [...document.querySelectorAll('.src-card')].map((c) => [...c.querySelectorAll('.src-fmt')].map((m) => (m.classList.contains('missing') ? '-' : '+') + m.textContent).join(' ')));
     ok('cards mark the formats (EPUB present or not available, in red)', marks.length === 4 && marks.filter((m) => /^\+EPUB \+PDF$/.test(m)).length === 1 && marks.filter((m) => /^-EPUB \(not available\) \+PDF$/.test(m)).length === 2 && marks.includes('+EPUB'));
     if (marks.length !== 4) console.log('  marks:', JSON.stringify(marks));
-    await page.screenshot({ path: path.join(__dirname, 'archive.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'archive.png') });
     // A tag narrows.
     await page.click('.src-tags .chip:has-text("Fantasy")'); await page.waitForTimeout(800);
     ok('tag narrows to two', (await page.$$('.src-grid .src-card')).length === 2);
@@ -63,7 +65,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('book page marks EPUB not available, PDF present', await page.evaluate(() => { const m = [...document.querySelectorAll('.src-actions .src-fmt')].map((x) => x.className.replace('src-fmt ', '') + ':' + x.textContent); return m.join(' ') === 'missing:EPUB (not available) ok:PDF'; }));
     await page.click('.src-parts-toggle'); await page.waitForTimeout(200);
     ok('each part on its own, with its size', (await page.$$('.src-part-list .src-file:visible')).length === 3 && /KB/.test(await page.$eval('.src-part-list .src-file small', (e) => e.textContent)));
-    await page.screenshot({ path: path.join(__dirname, 'archive-parts.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'archive-parts.png') });
     await page.click('.src-parts button:has-text("separate books")'); await page.waitForSelector('.src-parts .btn.primary', { timeout: 60000 });
     ok('fetched as separate books', /separate books/.test(await page.$eval('.src-parts .btn.primary', (e) => e.textContent)));
     await page.click('.src-parts button:has-text("merged")'); await page.waitForFunction(() => document.querySelectorAll('.src-parts .btn.primary').length === 2, null, { timeout: 60000 });
@@ -82,18 +84,18 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('the All shelf shows the books of every category, each once', await page.$$eval('.src-grid .src-card', (e) => e.length >= 2 && new Set(e.map((x) => x.querySelector('.src-title')?.textContent)).size === e.length) && (await page.$eval('.src-shelves .chip', (e) => e.classList.contains('on'))));
     await page.click('.src-shelves .chip >> nth=1'); await page.waitForFunction(() => document.querySelectorAll('.src-grid .src-card').length === 2 && document.querySelectorAll('.src-shelves .chip')[1].classList.contains('on'), null, { timeout: 15000 });
     ok('a category lists its books', (await page.$$('.src-grid .src-card')).length === 2);
-    await page.screenshot({ path: path.join(__dirname, 'shamela.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'shamela.png') });
     // A book's page: contents, read online.
     await page.click('.src-grid .src-card >> nth=1'); await page.waitForSelector('.src-chapters li', { timeout: 15000 }); await page.waitForTimeout(300);
     ok('book page shows the contents', (await page.$$('.src-chapters li')).length >= 5);
     ok('book page shows pages and card', await page.evaluate(() => /pages/.test(document.querySelector('.src-chips')?.textContent || '') && /الناشر/.test(document.querySelector('.src-meta')?.textContent || '')));
-    await page.screenshot({ path: path.join(__dirname, 'shamela-book.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'shamela-book.png') });
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.reader-scroll .kr-shamela', { timeout: 20000 });
     await page.waitForFunction(() => document.querySelectorAll('.kr-shamela .kr-page:not(.pending)').length >= 2 && !!document.querySelector('.kr-shamela .kr-page[data-page="1"]:not(.pending) .kr-page-body'), null, { timeout: 20000 });
     const shown = await page.evaluate(() => ({ pages: document.querySelectorAll('.kr-shamela .kr-page').length, loaded: document.querySelectorAll('.kr-shamela .kr-page:not(.pending)').length, first: document.querySelector('.kr-shamela .kr-page[data-page="1"]:not(.pending) .kr-page-body')?.textContent?.slice(0, 40) }));
     ok('reads online: pages arrive as scrolled', shown.pages >= 92 && shown.loaded >= 2 && /بِسم الله|بَيَان/.test(shown.first || ''));
     if (!(shown.pages >= 92 && shown.loaded >= 2)) console.log('  shown:', JSON.stringify(shown));
-    await page.screenshot({ path: path.join(__dirname, 'shamela-read.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'shamela-read.png') });
     // Scroll on: more pages load.
     // Reading on — the next chapters, one after another (the reader shows a chapter at a time), or scrolled to
     // the first page not here yet when it shows the whole book: the pages come as they are reached.
@@ -180,7 +182,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     const root = await page.evaluate(() => ({ head: document.querySelector('.series-head h2')?.textContent, folders: [...document.querySelectorAll('.src-card.folder .src-title')].map((e) => e.textContent), rows: [...document.querySelectorAll('.vol-row')].map((r) => `${r.querySelector('.vol-title')?.textContent}|${r.querySelector('.vol-sub')?.textContent}`) }));
     ok('the root: its two folders as cards, its two books as rows after them, no series\' card over them', root.head === undefined && root.folders.join() === 'Alpha Series,Beta' && root.rows.length === 2 && /^readme\|.*1\.5 KB/.test(plain(root.rows[0])) && /^sample\|.*1\.2 MB/.test(plain(root.rows[1])));
     if (root.rows.length !== 2 || root.head !== undefined) console.log('  root:', JSON.stringify(root));
-    await page.screenshot({ path: path.join(__dirname, 'folder.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'folder.png') });
     // Into a subfolder (nginx's <pre> listing): a series' page, every volume with its size, its cover and contents read from the file by range.
     await page.click('.src-card.folder >> nth=0'); await page.waitForFunction(() => /Alpha Series/.test(document.querySelector('.topbar .title')?.textContent || ''), null, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelectorAll('.vol-row .vol-cover img').length === 2 && document.querySelectorAll('.vol-row .vol-toc').length === 2, null, { timeout: 30000 });
@@ -206,7 +208,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     if ((await page.evaluate(() => location.hash)) !== here) console.log('  not back at', here);
     const got = await (await fetch('http://localhost:5401/__otl/ranges')).json();
     ok('… by ranges of the files (never a whole volume)', got.some((r) => /^alice-in-wonderland\.epub \d+-\d+$/.test(r)) && got.every((r) => { const [a, b] = r.split(' ')[1].split('-').map(Number); return b - a < 1024 * 1024; }));
-    await page.screenshot({ path: path.join(__dirname, 'folder-series.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'folder-series.png') });
     // Back: the root folder, then the hub.
     await page.evaluate(() => document.querySelector('.view .topbar button[data-icon="back"]').click()); await page.waitForTimeout(600);
     ok('back from a subfolder: the folder above', (await page.evaluate(() => location.hash)) === `#/sources/${dirId}` && (await page.$$('.src-card.folder')).length === 2);
@@ -303,7 +305,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('the shelves of the top: All, Recently updated, New volumes, In my library', (await page.$$eval('.src-shelves .chip', (cs) => cs.map((c) => c.textContent))).join() === 'All,Recently updated,New volumes,In my library');
     await page.waitForFunction(() => document.querySelectorAll('.src-card.folder .src-cover.has-img img').length >= 6, null, { timeout: 60000 });
     ok('the first volume\'s cover on each series as it comes near', (await page.$$('.src-card.folder .src-cover.has-img img')).length >= 6);
-    await page.screenshot({ path: path.join(__dirname, 'otl.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'otl.png') });
     const otlHash = await page.evaluate(() => location.hash);
     const hits = async () => (await fetch('http://localhost:5401/__otl/files')).json();
     const postsNow = async () => (await fetch('http://localhost:5401/__otl/posts')).json();
@@ -374,7 +376,7 @@ const server = http.createServer((req, res) => { let f = path.join(DIST, decodeU
     ok('another edition chosen', await page.$eval('.vol-row >> nth=1', (r) => r.querySelector('.vol-editions .chip.on')?.textContent === 'Kobo'));
     await page.click('.vol-row >> nth=1 >> .vol-actions button'); await page.waitForSelector('.vol-row >> nth=1 >> .vol-actions .btn.primary', { timeout: 60000 });
     ok('… fetched: the row opens it, its chip marked', await page.$eval('.vol-row >> nth=1', (r) => r.querySelector('.vol-editions .chip.have')?.textContent === 'Kobo'));
-    await page.screenshot({ path: path.join(__dirname, 'otl-series.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'otl-series.png') });
     // Side folders of a series ("!Side Stories", a scan group's) after its volumes; a volume "01.5" with its subtitle.
     await page.goto(base + otlHash.replace(/\?.*$/, '') + '?shelf=' + encodeURIComponent('Ascendance%20of%20a%20Bookworm')); await page.waitForSelector('.series-block', { timeout: 20000 }); await page.waitForTimeout(300);
     ok('side folders after the volumes, named plainly', (await page.$$eval('.src-card.folder .src-title', (es) => es.map((e) => e.textContent))).join() === 'Ozymandias,Side Stories');

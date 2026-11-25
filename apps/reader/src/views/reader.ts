@@ -1804,7 +1804,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const hl = doc?.book.highlights.find((x) => x.id === id);
     if (!doc || !hl) return;
     e.stopPropagation();
-    const sheet = openSheet(t('highlight'), t('close'));
+    const sheet = openSheet(t('highlight'), t('close')); sheet.el.classList.add('hl-sheet');
     sheet.body.style.fontFamily = 'var(--font-ui)';
     const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '3', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
     ta.value = hl.note ?? '';
@@ -2994,7 +2994,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   }
 
   function pdfHighlightSheet(hl: PdfHighlight): void {
-    const sheet = openSheet(t('highlight'), t('close'));
+    const sheet = openSheet(t('highlight'), t('close')); sheet.el.classList.add('hl-sheet');
     sheet.body.style.fontFamily = 'var(--font-ui)';
     const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '3', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
     ta.value = hl.note ?? '';

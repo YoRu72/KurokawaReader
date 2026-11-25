@@ -38,7 +38,7 @@ const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: 
 const TITLE_AR = 'Mist Gate Vol. 2 (العربية)';
 (async () => {
   await new Promise((r) => server.listen(0, r)); const port = server.address().port;
-  const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], viewport: { width: 412, height: 915 }, colorScheme: 'dark', locale: LANG, acceptDownloads: true }); const p = await ctx.newPage();
+  const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'], viewport: { width: 412, height: 915 }, ...(process.env.DSF ? { deviceScaleFactor: +process.env.DSF } : {}), colorScheme: 'dark', locale: LANG, acceptDownloads: true }); const p = await ctx.newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   let trReqs = 0;
   await p.route('https://ai.test/v1/chat/completions', async (r) => {
@@ -82,6 +82,8 @@ const TITLE_AR = 'Mist Gate Vol. 2 (العربية)';
     await openSaved(); await p.waitForSelector('.ai-epub:not([disabled])', { timeout: 8000 }); await p.click('.ai-epub');
     await p.waitForSelector('.tre-sheet .tre-form:not([hidden])', { timeout: 60000 }); await p.waitForTimeout(300);
     if (opts.shot) await shot(p, opts.shot);
+    if (!grab.checked) { grab.checked = true; const [ti, bt] = await p.evaluate(() => [document.querySelector('.tre-sheet .sheet-head h3').textContent, document.querySelector('.tre-save').textContent.trim()]); if (AR) { const ws = await p.evaluate(() => [...document.querySelectorAll('.tre-sheet .sheet-head h3, .tre-save, .tre-cancel, .tre-contents button')].map((e) => { const c = getComputedStyle(e); return Math.round(parseFloat(c.wordSpacing) / parseFloat(getComputedStyle(document.body).fontSize) * 100) / 100; })); ok('Arabic: the export sheet keeps the interface word spacing (.16em) inside the reading view', ws.length > 3 && ws.every((x) => Math.abs(x - 0.16) <= 0.01), ws); }
+    ok('the confirm button says export where the title does (Arabic), save otherwise', AR ? (ti.includes('تصدير') && bt === 'تصدير') : bt === 'Save', [ti, bt]); }
     if (opts.contents) await p.click(`.tre-contents button[data-v="${opts.contents}"]`);
     if (opts.missing) await p.click(`.tre-missing-seg button[data-v="${opts.missing}"]`);
     if (opts.glossary) await p.click('.tre-gloss .switch');

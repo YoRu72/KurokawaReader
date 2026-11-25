@@ -879,6 +879,7 @@ export const ko: Partial<Strings> = {
   autoBookNever: "안 함",
   gatherTheseChapters: "이 장들",
   teAction: "번역을 EPUB으로 저장",
+  teSaveGo: "저장",
   teNone: "이 책의 저장된 번역이 아직 없습니다.",
   teNoneLang: "현재 AI 서비스, 모델, 지침과 일치하는 저장된 번역이 없습니다.",
   teReading: "책을 읽는 중…",

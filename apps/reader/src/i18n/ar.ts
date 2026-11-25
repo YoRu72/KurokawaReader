@@ -2671,6 +2671,7 @@ export const ar: Strings = {
   autoBookNever: "أبدًا",
   gatherTheseChapters: "هذه الفصول",
   teAction: "تصدير الترجمة",
+  teSaveGo: "تصدير",
   teNone: "لا ترجمة محفوظة لهذا الكتاب بعد.",
   teNoneLang: "لا ترجمة محفوظة تطابق خدمة الذكاء الاصطناعي الحالية ونموذجها وتعليماتها.",
   teReading: "جارٍ قراءة الكتاب…",

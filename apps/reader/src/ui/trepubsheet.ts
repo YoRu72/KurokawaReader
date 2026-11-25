@@ -27,7 +27,7 @@ export function translatedEpubSheet(book: Book, hooks: TrEpubHooks = {}): void {
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
   const form = h('div', { class: 'tre-form', hidden: true });
   const cancel = h('button', { type: 'button', class: 'btn text tre-cancel', onclick: () => { if (busy) { sig.stop = true; return; } sh.close(); } }, t('cancel')) as HTMLButtonElement;
-  const save = h('button', { type: 'button', class: 'btn primary tre-save', disabled: true, onclick: () => void go() }, icon('download'), t('save')) as HTMLButtonElement;
+  const save = h('button', { type: 'button', class: 'btn primary tre-save', disabled: true, onclick: () => void go() }, icon('download'), t('teSaveGo')) as HTMLButtonElement;
   sh.actions.append(cancel, save); stackWhenCramped(sh.actions);
   sh.body.append(status, track, form);
 

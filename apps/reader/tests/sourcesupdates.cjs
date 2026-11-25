@@ -36,6 +36,8 @@ const T = { en: { never: 'Not checked yet', upToDate: 'Up to date', appUpdates: 
     // ---- A. nothing followed ----
     await hub();
     ok('nothing followed: no bell on Browse', !(await visible('.bell-btn')));
+    await settings();
+    { await page.locator('.settings-nav .chip').nth(7).tap(); await settle(1200); const g = await page.evaluate(() => { const hd = document.querySelector('.settings-head').getBoundingClientRect(); const cards = [...document.querySelectorAll('.settings-body > .card')].filter((c) => !c.classList.contains('collapsed') && c.getBoundingClientRect().height > 0); const first = cards.map((c) => c.querySelector('h3').getBoundingClientRect()).find((r) => r.bottom > hd.bottom - 4 && r.top < innerHeight); const tgt = document.getElementById(document.querySelector('.settings-nav .chip:nth-child(8)').dataset.sec).querySelector('h3').getBoundingClientRect(); return { headBottom: Math.round(hd.bottom), targetTop: Math.round(tgt.top) }; }); ok('a settings chip scrolls its section\'s heading below the sticky search and chips', g.targetTop >= g.headBottom - 1, g); }
     await page.goto(APP + '#/'); await page.waitForSelector('.library-view'); await settle(4800);
     ok('… and no red mark on the Browse button', await page.$eval('.browse-btn .alert-mark', (e) => e.hidden));
     await settings();

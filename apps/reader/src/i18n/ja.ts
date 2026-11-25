@@ -879,6 +879,7 @@ export const ja: Partial<Strings> = {
   autoBookNever: "しない",
   gatherTheseChapters: "これらの章",
   teAction: "翻訳を EPUB として保存",
+  teSaveGo: "保存",
   teNone: "この本の保存済み翻訳はまだありません。",
   teNoneLang: "現在のAIサービス・モデル・指示に一致する保存済み翻訳がありません。",
   teReading: "本を読み込み中…",

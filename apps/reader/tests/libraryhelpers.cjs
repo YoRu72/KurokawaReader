@@ -218,6 +218,7 @@ const bundle = (entry) => { const out = esbuild.buildSync({ entryPoints: [path.r
   const openStats = async () => { await p.evaluate((w) => { [...document.querySelectorAll('.library-view .topbar button')].find((x) => x.getAttribute('aria-label') === w).click(); }, W.stats); await p.waitForSelector('.year-goal'); await p.waitForTimeout(300); };
   await openStats();
   ok('no goal yet: the field is empty and says so; this year\'s two books are listed (not last year\'s, not the one marked not done)', await p.$eval('.yg-input', (e) => e.value === '') && (await p.$$('.yg-book')).length === 2 && !(await p.$('.yg-ring')), await p.$$eval('.yg-title', (e) => e.map((x) => x.textContent)));
+  ok('the empty field shows its placeholder whole (not cut)', await p.$eval('.yg-input', (e) => { const c = document.createElement('canvas').getContext('2d'); const cs = getComputedStyle(e); c.font = `${cs.fontSize} ${cs.fontFamily}`; return c.measureText(e.placeholder).width <= e.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); }));
   await p.fill('.yg-input', '12'); await p.press('.yg-input', 'Tab'); await p.waitForTimeout(300);
   const of = await p.$eval('.yg-of', (e) => e.textContent); const pace = await p.$eval('.yg-pace', (e) => e.textContent);
   ok('goal 12: «2 of 12», a ring, and the books a month still needed', /2/.test(of) && /12/.test(of) && !!(await p.$('.yg-ring .fill')) && pace.length > 0, [of, pace]);

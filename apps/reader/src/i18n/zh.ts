@@ -879,6 +879,7 @@ export const zh: Partial<Strings> = {
   autoBookNever: "从不",
   gatherTheseChapters: "这些章节",
   teAction: "将译文保存为 EPUB",
+  teSaveGo: "保存",
   teNone: "本书还没有已保存的译文。",
   teNoneLang: "没有与当前 AI 服务、模型和指令相符的已保存译文。",
   teReading: "正在读取本书…",

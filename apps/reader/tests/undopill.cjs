@@ -60,6 +60,11 @@ const wait = async (p, fn, arg, ms = 12000) => p.waitForFunction(fn, arg, { time
     await p.evaluate(() => window.__sh.close()); await wait(p, () => !document.querySelector('.toast.behind-sheet'), null, 3000);
     const vis = await p.$eval('.toast', (x) => getComputedStyle(x).visibility).catch(() => 'gone');
     ok(tag + 'back when the sheet closes, then ends by its time', vis === 'visible' && (await wait(p, () => !document.querySelector('.toast'), null, 8000)));
+    // 5b. a plain toast raised while a sheet is open sits above the sheet, never over it
+    await p.evaluate(() => { window.__sh = K.openSheet('Sheet', 'Close'); }); await p.waitForTimeout(700); await p.evaluate(() => K.toast('Adding 1 file…', 'info', 20000)); await p.waitForTimeout(300);
+    const lift = await p.evaluate(() => { const t = document.querySelector('.toast').getBoundingClientRect(), s = document.querySelector('.sheet').getBoundingClientRect(); return { toastBottom: Math.round(t.bottom), sheetTop: Math.round(s.top) }; });
+    ok(tag + 'a plain toast over an open sheet rides above it', lift.toastBottom <= lift.sheetTop, lift);
+    await p.evaluate(() => { window.__sh.close(); document.querySelectorAll('.toast').forEach((x) => x.remove()); }); await p.waitForTimeout(300);
     // 6. above a bar along the bottom
     await p.evaluate(() => { document.querySelector('.pdf-bar').style.cssText = 'display:flex;position:fixed;left:50%;transform:translateX(-50%);width:300px;height:48px;bottom:18px;z-index:31'; });
     await offer('six', 20000); await p.waitForTimeout(400);

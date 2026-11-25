@@ -151,6 +151,16 @@ export function iconButton(name: string, label: string, onClick?: (e: MouseEvent
 let toastTimer: number | undefined;
 /** A snackbar's one action («Undo», «Redo»…): `run` when tapped (the snackbar then goes). */
 export interface ToastAction { label: string; run: () => void }
+/** A plain toast raised while a sheet is open never lies over the sheet's labels and switches: above a phone's bottom sheet; under a computer's dialog
+ *  (or, with no room there, where it was). */
+function liftOverSheet(el: HTMLElement): void {
+  const sheets = [...document.querySelectorAll<HTMLElement>('.sheet:not(.as-menu)')]; const sh = sheets[sheets.length - 1];
+  if (!sh || getComputedStyle(sh).position !== 'fixed') return;
+  const top = sh.offsetTop, h = sh.offsetHeight, th = el.offsetHeight;   // (layout, not the rise animation's moving picture)
+  if (document.documentElement.classList.contains('pc')) { if (innerHeight - (top + h) >= th + 24) el.style.bottom = '16px'; return; }
+  if (h + 12 + th + 8 > innerHeight) { el.style.visibility = 'hidden'; return; }
+  el.style.bottom = `${h + 12}px`;
+}
 /** The snackbar: one at a time (a new one replaces it), said aloud (role=status). The third argument is its time,
  *  or { action, ms, onEnd }: a button on it, and longer to read (6.5 s unless said); `onEnd(acted)` once it goes —
  *  by its time, replaced, or its action taken (acted). */
@@ -162,7 +172,7 @@ export function toast(msg: string, kind: 'info' | 'error' = 'info', ms: number |
   el.__end = (acted) => { if (ended) return; ended = true; o.onEnd?.(acted); };
   window.clearTimeout(toastTimer);
   if (!o.action) {
-    document.body.appendChild(el);
+    document.body.appendChild(el); liftOverSheet(el);
     toastTimer = window.setTimeout(() => { el.__end?.(false); el.remove(); }, o.ms ?? 2200);
     return;
   }

@@ -289,7 +289,9 @@ async function convert(browser, file, mode) {
     await page.setInputFiles('input[type=file]', [file]); await page.waitForSelector('.book-card', { timeout: 60000 }); await page.waitForTimeout(300);
     const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sel-actions');
     if (!(await page.$('.sel-actions button:has-text("Convert")'))) { await page.click('.sel-actions button:has-text("More")'); await page.waitForSelector('.sheet'); await page.click('.sheet button:has-text("Convert")'); } else await page.click('.sel-actions button:has-text("Convert")');
-    await page.waitForSelector('.convert-target'); await page.click('.convert-target:has-text("Word")');
+    await page.waitForSelector('.convert-target');
+    { const g = await page.evaluate(() => { const r = document.querySelector('.conv-images'), sw = r.querySelector('.switch').getBoundingClientRect(), lb = r.querySelector('.label').getBoundingClientRect(), sh = r.closest('.sheet').getBoundingClientRect(); return { gap: Math.round(sw.left - lb.right), toEnd: Math.round(sh.right - sw.right), upper: getComputedStyle(r.querySelector('.label')).textTransform }; }); ok('the «Keep pictures» row: its switch at the end of the row, a gap after the label, the label not in capitals', g.toEnd < 60 && g.gap >= 8 && g.upper === 'none', g); }
+    await page.click('.convert-target:has-text("Word")');
     await page.waitForSelector('.convert-result:not([hidden]) button', { timeout: 120000 });
     const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('.convert-result button:has-text("Save")')]);
     const out = path.join(tmp, `${path.basename(file, '.pdf')}.${mode}.docx`); await dl.saveAs(out); if (keep) fs.copyFileSync(out, path.join(keep, path.basename(out)));
