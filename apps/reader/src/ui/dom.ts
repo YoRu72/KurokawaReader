@@ -114,6 +114,12 @@ const PATHS: Record<string, string> = {
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
   heartFill: '<path fill="currentColor" d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
   undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>',
+  // (The comic reader's reading modes: a page and the way it is read — src/views/comic.ts.)
+  modeLtr: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/>',
+  modeRtl: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M16 12H8"/><path d="m11 9-3 3 3 3"/>',
+  modeVertical: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M12 7v9"/><path d="m9 13 3 3 3-3"/>',
+  modeStrip: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M6 9h12"/><path d="M6 15h12"/>',
+  modeGap: '<rect x="6" y="2" width="12" height="9" rx="1.5"/><rect x="6" y="13" width="12" height="9" rx="1.5"/>',
   rotate: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   minus: '<path d="M5 12h14"/>',
   keyboard: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>',

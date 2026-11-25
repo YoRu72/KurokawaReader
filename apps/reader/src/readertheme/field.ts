@@ -192,4 +192,6 @@ export function licencesSheet(): void {
   const seen = new Map<string, string[]>();
   for (const d of THEMES) if (d.notice) seen.set(d.notice, [...(seen.get(d.notice) ?? []), themeName(d, say)]);
   for (const [notice, names] of seen) body.append(h('section', { class: 'licence' }, h('h4', null, names.join(', ')), h('pre', { class: 'licence-text', dir: 'ltr', style: { whiteSpace: 'pre-wrap', fontSize: '12px', lineHeight: '1.5' } }, notice)));
+  // (The comic reader's behaviour — its modes, tap zones, fit and zoom — follows the reader it is modelled on.)
+  body.append(h('section', { class: 'licence licence-comic' }, h('h4', null, t('comicCreditTitle')), h('p', { dir: 'auto' }, t('comicCredit'))));
 }

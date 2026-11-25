@@ -181,6 +181,9 @@ export function readerView(ids: string[]): HTMLElement {
     setActiveBook(books[0].id); onDispose(() => setActiveBook(null));
     if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); op.placed(); return; }
     if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); op.placed(); return; }
+    // (A book of pictures alone — a CBZ, a zip of pictures, one picture — opens in the comic reader: src/views/comic.ts.
+    // «Open comics the old way», for this version, keeps them in the flow reader as one scroll of pictures.)
+    if (books.length === 1 && (books[0].format === 'cbz' || books[0].format === 'image') && !getSettings().comicOldWay) { const { mountComic } = await import('./comic'); await mountComic(root, books[0], onDispose, gone, op); return; }
     const pdfs = books.filter((b) => b.format === 'pdf');
     const flows = books.filter((b) => b.format !== 'pdf');
     if (pdfs.length && (flows.length || pdfs.length > 1)) toast(t('fmtPdf') + ' · ' + t('open'), 'info', 3000);

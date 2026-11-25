@@ -168,7 +168,10 @@ export function settingsView(): HTMLElement {
   // Reader options (shared with the reader panel)
   const opts = h('div');
   renderOptions(opts);
-  body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts));
+  // (The comic reader's defaults, a group of the same card: src/comic/settingsui.ts, fetched with the comic reader.)
+  const comics = h('div', { class: 'cm-settings-group' });
+  body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts, comics));
+  void import('../comic/settingsui').then((m) => m.comicSettingsGroup(comics)).catch(() => undefined);
   // Text rules (a watermark taken out, a name respelt): the list, to change or remove them.
   body.append(h('section', { class: 'card' }, h('h3', null, t('textRules')), h('p', null, t('textRulesAbout')),
     h('div', { class: 'actions-row' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/textrulesheet').then((m) => m.rulesListSheet()) }, icon('pen'), t('textRules')))));

@@ -13,6 +13,7 @@ const di = args.indexOf('--dev'); const DEV = di >= 0 ? args[di + 1] : '';
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.epub': 'application/epub+zip', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); res.end(fs.readFileSync(f)); });
+const { makeCbz } = require('./helpers/comicfixture.cjs');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-uihunt-')); const SHOTS = process.env.KR_SHOTS; if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
 // The books (made here): a Japanese text (the reading-dictionary notice), a PDF, and the two sample epubs the build ships.
@@ -65,6 +66,14 @@ const settingsSec = (i) => async (p) => {
   await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached', timeout: 15000 });
   const has = await p.evaluate((i) => !!document.getElementById('s-' + i), i); if (!has) throw new Error('SKIP');
   await p.evaluate((i) => { const nav = document.querySelector(`.settings-nav [data-sec="s-${i}"]`); if (document.documentElement.classList.contains('pc')) nav?.click(); else document.getElementById('s-' + i).classList.remove('collapsed'); }, i);
+};
+/** The made-up comic open in the comic reader, its bars shown; the zones' overlay closed unless `zones`. */
+const openComic = async (p, zones = false) => {
+  await openBook(/hunt-comic/, '.cm-view')(p);
+  await p.waitForFunction(() => window.__krComic && window.__krComic.openMs > 0, null, { timeout: 15000 });
+  if (zones) { await p.waitForSelector('.cm-zones .cm-zone', { timeout: 5000 }); return; }
+  if (await p.$('.cm-zones')) { await p.mouse.click(5, 5); await p.waitForFunction(() => !document.querySelector('.cm-zones'), null, { timeout: 3000 }); }
+  await wake(p);
 };
 const VIEWS = [
   ['library', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view .book-card', { timeout: 15000 }); }],
@@ -191,6 +200,13 @@ const VIEWS = [
     await p.waitForSelector('.year-goal .yg-ring', { timeout: 8000 }); await p.waitForTimeout(300);
   }],
   ['read-pdf', openBook(/pages/i, '.pdf-bar, .pdf-view, .pdf-pages')],
+  // The comic reader (0.67, S5a): a made-up CBZ, one page per screen with its bars, the long strip, the settings panel's two tabs, the
+  // tap zones shown (a phone's: a computer has no zone options). The strip is set as the default mode (aiClear puts the settings back).
+  ['comic-paged', async (p) => { await openComic(p); }],
+  ['comic-strip', async (p) => { seeded = true; await visual(p, { comicMode: 4 }); await p.evaluate(() => { location.hash = '#/'; }); await reloadLib(p); await openComic(p); await p.evaluate(() => window.__krComic.viewer.goTo(1, 0.4)); await p.waitForTimeout(400); }],
+  ['comic-settings-mode', async (p) => { await openComic(p); await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicMode"]', { timeout: 8000 }); await p.waitForTimeout(400); }],
+  ['comic-settings-general', async (p) => { await openComic(p); await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicMode"]', { timeout: 8000 }); await p.evaluate(() => [...document.querySelectorAll('.panel.open .panel-tabs button, .panel.open [role="tab"]')].pop().click()); await p.waitForSelector('.panel.open [data-key="comicScale"]', { timeout: 5000 }); await p.waitForTimeout(400); }],
+  ['comic-zones', async (p) => { await p.evaluate(() => localStorage.removeItem('kr.comicZonesSeen')); await openComic(p, true); }, 'phone'],
   ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
   ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
 ];
@@ -296,7 +312,8 @@ function hunt({ phone, rtl, lang }) {
   if (args.includes('--list')) { console.log(VIEWS.map((v) => v[0]).join(' ')); process.exit(0); }
   await new Promise((r) => server.listen(0, r)); const base = `http://127.0.0.1:${server.address().port}/`;
   const pdf = path.join(TMP, 'pages.pdf'); await makePdf(pdf, 12);
-  const files = [path.join(TMP, 'nihongo.txt'), pdf, ...['alice-in-wonderland.epub', 'maqamat-al-hariri.epub'].map((f) => path.join(DIST, 'samples', f)).filter((f) => fs.existsSync(f))];
+  const comic = path.join(TMP, 'hunt-comic.cbz'); fs.writeFileSync(comic, await makeCbz({ pages: 6, folders: [3, 3], wide: [4] }));
+  const files = [path.join(TMP, 'nihongo.txt'), pdf, comic, ...['alice-in-wonderland.epub', 'maqamat-al-hariri.epub'].map((f) => path.join(DIST, 'samples', f)).filter((f) => fs.existsSync(f))];
   const b = await chromium.launch(); let fails = 0; let allowedN = 0; const summary = {};
   for (const lang of LANGS) for (const dev of ['phone', 'pc'].filter((d) => !DEV || d === DEV)) {
     const phone = dev === 'phone'; const CS = process.env.KR_DARK ? { colorScheme: 'dark' } : {};

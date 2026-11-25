@@ -279,6 +279,36 @@ export interface VisualSettings {
   swipeTurn: boolean;
   /** How short or quick a sideways swipe may be and still turn (views/reader.ts SWIPE). */
   swipeSensitivity: 'low' | 'normal' | 'high';
+  /** The comic reader (src/views/comic.ts), its modes numbered as the reader it is modelled on numbers them: 1 left
+   *  to right, 2 right to left, 3 vertical (one page per screen), 4 a long strip (no gaps), 5 continuous vertical (a
+   *  gap between pages). The default mode; a book's own is kept with it (Book.prefs.comicMode — 0 or none: this). */
+  comicMode: 1 | 2 | 3 | 4 | 5;
+  /** A page turned by a tap, key or button slides (one page per screen). */
+  comicTransitions: boolean;
+  /** How a page is fitted to the screen (one page per screen). */
+  comicScale: 'fit' | 'stretch' | 'width' | 'height' | 'original' | 'smart';
+  /** Where a page larger than the screen starts: by the reading direction, or always the left, right, centre. */
+  comicZoomStart: 'auto' | 'left' | 'right' | 'center';
+  /** Zoomed in, a tap on a side moves one screen that way, and turns the page only at its edge. */
+  comicNavPan: boolean;
+  /** A wide page shown whole eases in to fill the screen's height, from where reading starts. */
+  comicLandscapeZoom: boolean;
+  /** A double tap zooms in the long strip. */
+  comicStripZoom: boolean;
+  /** The tap zones (src/comic/zones.ts: 0 default, 1 L-shaped, 2 Kindle-like, 3 edge, 4 right and left, 5 none), one
+   *  page per screen and in the strip, and their inversion. */
+  comicZonesPaged: 0 | 1 | 2 | 3 | 4 | 5;
+  comicZonesStrip: 0 | 1 | 2 | 3 | 4 | 5;
+  comicInvertPaged: 'none' | 'h' | 'v' | 'both';
+  comicInvertStrip: 'none' | 'h' | 'v' | 'both';
+  /** The page number («3 / 40») over the page. */
+  comicPageNumber: boolean;
+  /** The page between volumes (finished, the next one) at the book's end and before its start. */
+  comicBetween: boolean;
+  /** The colour behind the pages (black only, for now). */
+  comicBackground: 'black';
+  /** For one version: comics open as before, as one scroll of pictures. */
+  comicOldWay: boolean;
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -455,6 +485,8 @@ export const DEFAULTS: VisualSettings = {
   edgeGuard: false,
   swipeTurn: true,
   swipeSensitivity: 'normal',
+  comicMode: 2, comicTransitions: true, comicScale: 'fit', comicZoomStart: 'auto', comicNavPan: true, comicLandscapeZoom: true, comicStripZoom: true,
+  comicZonesPaged: 0, comicZonesStrip: 0, comicInvertPaged: 'none', comicInvertStrip: 'none', comicPageNumber: true, comicBetween: true, comicBackground: 'black', comicOldWay: false,
   titleBarKind: 'own',
   titleBarClear: false,
   titleBarName: true,
