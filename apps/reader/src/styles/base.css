@@ -2523,7 +2523,7 @@ html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
 .ai-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 .ai-panel { display: flex; flex-direction: column; gap: 10px; } .ai-panel[hidden] { display: none; }
 .ai-tr-panel { display: flex; flex-direction: column; gap: 14px; }
-.ai-sheet .sheet-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.ai-sheet .sheet-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; padding-inline: 16px; }
 .ai-tab-acts { display: contents; }
 .ai-sheet .sheet-actions .btn { min-width: 0; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Three equal columns: a label and its icon must fit inside the button (less side padding; on a narrow phone the icon goes, the label stays whole). */
