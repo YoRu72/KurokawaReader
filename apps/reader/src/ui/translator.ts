@@ -364,10 +364,8 @@ export function attachTranslator(host: TranslatorHost): Translator {
       result = await silentGather(bookId, idxs, false); return result?.ok ? 'gathered' : 'go';
     }
     if (whole ? wasAsked(askedKey(bookId, '*')) : idxs.every((i) => wasAsked(askedKey(bookId, i)))) return 'go';
-    const chars = (l: number[]) => l.filter((i) => !scanned.has(i)).reduce((a, i) => a + textsOf(chs[i]?.blocks ?? []).reduce((b, x) => b + x.length, 0), 0);
-    const cost = (sc: GatherScope) => Math.max(1, Math.ceil(chars(sc === 'book' ? range(0, chs.length - 1) : idxs) / 20000));
     const ans = await askGather({
-      scope: whole ? 'book' : 'chapter', chapters: idxs.length > 1 && !whole ? 'many' : 'one', both: !whole, cost, volume: await formerTitle(bookId), local: getSettings().aiProvider === 'local',
+      scope: whole ? 'book' : 'chapter', chapters: idxs.length > 1 && !whole ? 'many' : 'one', both: !whole, volume: await formerTitle(bookId), local: getSettings().aiProvider === 'local',
       work: async (sc, rep, sg) => { gatherSig = sg; const r = await gatherFor(bookId, sc === 'book' ? range(0, chs.length - 1) : idxs, sg, rep); result = r; return r.ok; },
     });
     if (ans.answer === 'cancel') return 'cancel';

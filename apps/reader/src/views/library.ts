@@ -32,6 +32,7 @@ const drawn = (): void => shown?.renderGrid();
 const reread = (): void => void shown?.refresh();
 
 export function libraryView(): HTMLElement {
+  let offPending: (() => void) | undefined;
   let books: Book[] = [];
   let query = '';
   // (The words asked for, in their search form — harakat, hamza and letter variants, accents and case aside;
@@ -120,7 +121,7 @@ export function libraryView(): HTMLElement {
     // the update checks start anyway — their 100 KB not loaded just to draw the library.)
     const paintMark = () => { const c = readPending(); const n = c.chapters + c.series; mark.hidden = !n; browseBtn.title = n ? `${t('sources')} · ${t('updatesWaiting')}` : t('sources'); };
     paintMark();
-    const off = onPendingChanged(() => { if (!browseBtn.isConnected) { off(); return; } paintMark(); });
+    const off = onPendingChanged(() => { if (!browseBtn.isConnected) { off(); return; } paintMark(); }); offPending = off;
     setTimeout(() => { if (browseBtn.isConnected) void import('../sources/updates').then(async (m) => writePending(await m.pendingCounts())).catch(() => undefined); }, 4000); }
   // On a computer the occasional tools fold into one named menu (each with its name), so the row is the search, the
   // order and a few buttons; a phone keeps them all as icons.
@@ -1323,7 +1324,7 @@ export function libraryView(): HTMLElement {
   const me = { renderGrid: () => renderGrid(), refresh: () => refresh() }; shown = me;
   (root as HTMLElement & { dispose?: () => void }).dispose = () => {
     if (shown === me) shown = null;
-    document.removeEventListener('keydown', onKeys); offSettings(); offBack(); clearTimeout(searchTimer); offBusy(); window.removeEventListener('kr:books', booksChanged); clearTimeout(booksTimer);
+    offPending?.(); document.removeEventListener('keydown', onKeys); offSettings(); offBack(); clearTimeout(searchTimer); offBusy(); window.removeEventListener('kr:books', booksChanged); clearTimeout(booksTimer);
     document.removeEventListener('kr:command', onCommand); window.removeEventListener('kr:library', onAsk);
     for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.removeEventListener(ev, endDrag);
   };

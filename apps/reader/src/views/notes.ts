@@ -137,5 +137,6 @@ export function notesView(): HTMLElement {
   }
 
   void render().catch((err) => toast(String((err as Error).message ?? err), 'error'));
+  (root as HTMLElement & { dispose?: () => void }).dispose = () => window.removeEventListener('keydown', onKey, true);
   return root;
 }

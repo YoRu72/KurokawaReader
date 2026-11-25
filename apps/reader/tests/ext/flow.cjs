@@ -12,7 +12,10 @@ const SITE = 'http://localhost:5403';
 (async () => {
   await new Promise((r) => server.listen(5404, r));
   const mock = spawn('node', [path.join(__dirname, 'server.cjs'), '5403'], { stdio: 'ignore' }); await new Promise((r) => setTimeout(r, 600));
-  const browser = await chromium.launch(); const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'en' }); const page = await ctx.newPage();
+  const browser = await chromium.launch(); const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'en' });
+  // (Only this machine: any other address is refused, so the catalogues are unreachable as the test assumes, wherever it runs.)
+  await ctx.route((u) => !/^(localhost|127\.0\.0\.1)$/.test(u.hostname), (r) => r.abort());
+  const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e))); page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404|503|ERR_|net::/.test(m.text())) errors.push(m.text()); });
   let fails = 0; const ok = (name, cond) => { console.log((cond ? 'ok  ' : 'FAIL'), name); if (!cond) fails++; };
   const base = 'http://localhost:5404/';
@@ -147,7 +150,7 @@ const SITE = 'http://localhost:5403';
     // Read from the site.
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
     const read = await page.evaluate(() => ({ chapters: document.querySelectorAll('.kr-webnovel .kr-novel-chapter').length, loaded: document.querySelectorAll('.kr-webnovel .kr-chap:not(.pending)').length, text: document.querySelector('.kr-webnovel .kr-chap:not(.pending)')?.textContent, ads: !!document.querySelector('.kr-webnovel .ads, .kr-webnovel script') }));
-    ok('reading: chapters laid out, the first ones fetched, ads and scripts gone', read.chapters === 6 && read.loaded >= 2 && /Chapter 1 of Alpha/.test(read.text) && !read.ads);
+    ok('reading: chapters laid out, the first ones fetched, ads and scripts gone', read.chapters === 6 && read.loaded >= 2 && /Chapter 1\s+of Alpha/.test(read.text) && !read.ads);
     await page.screenshot({ path: path.join(__dirname, 'read.png') });
     // The book is in the library with the online mark.
     await page.goto(base + '#/'); await page.waitForSelector('.library-view'); await page.waitForTimeout(600);
@@ -236,8 +239,10 @@ const SITE = 'http://localhost:5403';
     const my = await page.evaluate(() => ({ chapters: document.querySelectorAll('.novel-chapters li').length, first: document.querySelector('.novel-chapters li')?.textContent, status: document.querySelector('.src-chips')?.textContent }));
     ok('Mangayomi novel: chapters in reading order, status', my.chapters === 4 && /Chapter 1/.test(my.first) && /Completed/.test(my.status));
     // Chapters picked (a long press), the ones between added, fetched for offline: marked afterwards.
-    await page.dispatchEvent('.novel-chapters li:nth-child(2) button', 'contextmenu'); await page.waitForTimeout(150);
-    await page.dispatchEvent('.novel-chapters li:nth-child(4) button', 'contextmenu'); await page.waitForTimeout(150);
+    // (A right-click, which brings its own pointer events: a second bare «contextmenu» a moment after a hold is taken for that
+    // hold's duplicate and dropped on purpose — src/ui/hold.ts.)
+    await page.click('.novel-chapters li:nth-child(2) button', { button: 'right' }); await page.waitForTimeout(150);
+    await page.click('.novel-chapters li:nth-child(4) button', { button: 'right' }); await page.waitForTimeout(150);
     const picked2 = (await page.$$('.novel-chapters button.on')).length;
     await page.click('.chapter-sel button[title="Select the chapters between"]'); await page.waitForTimeout(150);
     const picked3 = (await page.$$('.novel-chapters button.on')).length;
@@ -268,7 +273,7 @@ const SITE = 'http://localhost:5403';
     ok('chapters marked read and bookmarked; hide read, bookmarked only, newest first', /read/.test(marked[0]) && /read/.test(marked[1]) && /\*/.test(marked[3]) && unreadOnly === marked.length - 2 && starredOnly.length === 1 && /\*/.test(starredOnly[0]) && !/Chapter 1\b/.test(lastFirst));
     if (!(unreadOnly === marked.length - 2 && starredOnly.length === 1)) console.log('  rows', marked, unreadOnly, starredOnly, lastFirst);
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
-    ok('Mangayomi chapter text read', /Chapter 1 of Beta/.test(await page.$eval('.kr-webnovel .kr-chap:not(.pending)', (e) => e.textContent).catch(() => '')));
+    ok('Mangayomi chapter text read', /Chapter 1\s+of Beta/.test(await page.$eval('.kr-webnovel .kr-chap:not(.pending)', (e) => e.textContent).catch(() => '')));
     // Extension settings sheet.
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=1 >> .ext-card:not(.off)'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 });
     await page.click('.topbar-actions button[aria-label="Extension settings"]'); await page.waitForSelector('.sheet'); await page.waitForTimeout(200);
@@ -285,5 +290,5 @@ const SITE = 'http://localhost:5403';
     page.once('dialog', (d) => d.accept());
     await page.click('.repo-section >> nth=2 >> .repo-head button[data-icon="more"]'); await page.waitForSelector('.sheet'); await page.click('.sheet .btn.danger'); await page.waitForTimeout(600);
     ok('repo removed', (await page.$$('.repo-section')).length === 2);
-  } finally { console.log(`\n${fails ? fails + ' failed' : 'all passed'}; errors`, errors); await browser.close(); server.close(); mock.kill(); }
+  } finally { console.log(`\n${fails ? fails + " failed" : "all passed"}; errors`, errors); await browser.close(); server.close(); mock.kill(); process.exitCode = fails || errors.length ? 1 : 0; }
 })();

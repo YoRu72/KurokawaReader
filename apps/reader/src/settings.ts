@@ -12,7 +12,7 @@ export type UiMode = 'system' | 'light' | 'dark' | 'page';
 export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'olive' | 'sand' | 'mono' | 'custom';
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'merriweather' | 'termes' | 'lora' | 'literata' | 'garamond' | 'crimson' | 'gelasio' | 'vollkorn' | 'bitter' | 'sourceserif' | 'atkinson' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
-export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
+export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'publisher' | (string & {});
 export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen' | 'dayNight' | 'statusLine';
 /** The reading bar's items as it came before they could be chosen: the chapter and the page in it at the start;
  *  the minutes left (once a reading speed is known), the clock, the battery and the book's percentage at the end. The
@@ -521,6 +521,7 @@ function load(): VisualSettings {
   try {
     const raw = localStorage.getItem(KEY);
     const s: VisualSettings = raw ? { ...DEFAULTS, ...buttonsMigrated(barItemsMigrated(JSON.parse(raw) as Partial<VisualSettings>)) } : { ...DEFAULTS };
+    if (s.arabicFont === 'mohanad') s.arabicFont = 'uthman';
     // 0.18: the add-books button moved from the top bar to the folder row (sync took its place).
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
@@ -757,7 +758,6 @@ const ARABIC: Record<string, string> = {
   uthman: "'Uthman TN1'",
   sultan: "'Sultan'",
   naskh: "'Noto Naskh Arabic'",
-  mohanad: "'AL-Mohanad'",
   publisher: 'inherit',
 };
 const CJK: Record<string, string> = {
@@ -927,7 +927,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   else root.style.setProperty('--r-bg-image', 'none');
   applyChrome(s);
   const latin = familyFor(s.latinFont, LATIN);
-  const arabic = familyFor(s.arabicFont, ARABIC);
+  const arabic = familyFor(s.arabicFont === 'mohanad' ? 'uthman' : s.arabicFont, ARABIC);   // ('mohanad', once offered, drew no Arabic letters: a kept choice of it reads in the default font)
   warmFonts(s);
   const fallback = "'Noto Naskh Arabic', Georgia, serif";
   root.style.setProperty('--r-font', s.latinFont === 'publisher' ? 'inherit' : `${latin}, ${arabic}, ${fallback}`);

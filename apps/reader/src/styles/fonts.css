@@ -211,12 +211,6 @@
    Arabic-Indic ones; leave both out of its range so they fall through to Inter
    (Arabic digits are produced explicitly with localDigits()). */
 @font-face {
-  font-family: 'AL-Mohanad';
-  src: url('../assets/fonts/AL-Mohanad.woff2') format('woff2');
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
   font-family: 'Sultan';
   src: url('../assets/fonts/Sultan-Medium.woff2') format('woff2');
   font-weight: 400 600;
@@ -236,6 +230,13 @@
   --font-read-rtl: var(--font-read-arabic), var(--font-read-latin), 'Noto Naskh Arabic', serif;
 }
 html[dir='rtl'] { --font-ui: var(--font-ui-ar); }
+/* Sultan's space is 0.110 em (Inter's is 0.281 em), so Arabic interface words look glued: the interface gets a wider gap.
+   Not the book's text (.kr-content states its own word-spacing, the reader's setting), not the PDF text layer (pdf.js places
+   each span by its measured width: an inherited gap would shift selection), not code, not Latin text kept left-to-right.
+   (Canvas drawing and measuring ignore this: a context has its own wordSpacing.) */
+html[dir='rtl'] body { word-spacing: .16em; }
+:where(html[dir='rtl']) :where(button, input, select, textarea) { word-spacing: inherit; }   /* (the browser's own form-control style says «normal») */
+:where(html[dir='rtl']) :is(pre, code, kbd, samp, input[type='url'], input[type='email'], input[type='password'], input[type='number'], .hex-input, .css-box, .cover-log, .sync-uri, .al-token, .pdf-page, .pdf-page *, .textLayer, .textLayer *, .annotationLayer, .annotationLayer *, .comic-reader, .comic-reader *, [dir='ltr']):not(.kr-content, .kr-content *) { word-spacing: normal; }
 /* Chinese, Japanese and Korean interfaces use the platform's own CJK sans; reading text in those scripts falls back to it too. */
 html[lang^='ja'], html[lang^='zh'], html[lang^='ko'] { --font-ui: var(--font-cjk); }
 .kr-content :is([lang^='ja'], [lang^='zh'], [lang^='ko']), .kr-content[lang^='ja'], .kr-content[lang^='zh'], .kr-content[lang^='ko'], .reader[data-lang^='ja'] .kr-content, .reader[data-lang^='zh'] .kr-content, .reader[data-lang^='ko'] .kr-content { font-family: var(--r-font), var(--font-cjk); }

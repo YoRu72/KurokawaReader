@@ -70,12 +70,12 @@ const T = { title: AR ? 'أتودّ جمع المصطلحات؟' : 'Would you li
   const before0 = reqs.length; await press(); await waitSheet();
   ok('a translation started with the setting on «Ask»: the question appears, nothing asked of the service yet', !!(await sheet()) && reqs.length === before0);
   const q = await p.evaluate(() => { const s = document.querySelector('.gather-sheet'); const r = (e) => e.getBoundingClientRect(); const row = [...s.querySelectorAll('.gather-acts-row .btn')]; const nv = s.querySelector('.gather-never'); const seg = [...s.querySelectorAll('.gather-scope button')];
-    return { title: s.querySelector('.sheet-head h3').textContent, btns: row.map((x) => [Math.round(r(x).width), Math.round(r(x).height), x.textContent]), never: [Math.round(r(nv).width), Math.round(r(nv).height), nv.textContent], scope: seg.map((x) => [x.textContent, x.getAttribute('aria-pressed'), Math.round(r(x).height)]), cost: s.querySelector('.gather-cost').textContent, why: s.querySelector('.gather-why').textContent, over: s.scrollWidth > s.clientWidth + 1, order: [...s.querySelectorAll('.sheet-actions button')].map((x) => x.className.match(/gather-(go|skip|never)/)?.[1]), vol: !!s.querySelector('.gather-volume') }; });
+    return { title: s.querySelector('.sheet-head h3').textContent, btns: row.map((x) => [Math.round(r(x).width), Math.round(r(x).height), x.textContent]), never: [Math.round(r(nv).width), Math.round(r(nv).height), nv.textContent], scope: seg.map((x) => [x.textContent, x.getAttribute('aria-pressed'), Math.round(r(x).height)]), cost: !!s.querySelector('.gather-cost'), why: !!s.querySelector('.gather-why'), over: s.scrollWidth > s.clientWidth + 1, order: [...s.querySelectorAll('.sheet-actions button')].map((x) => x.className.match(/gather-(go|skip|never)/)?.[1]), vol: !!s.querySelector('.gather-volume') }; });
   console.log('question:', JSON.stringify(q));
-  ok('titled «Would you like to gather the terms?», one line why', q.title === T.title && q.why.length > 10);
+  ok('titled «Would you like to gather the terms?», no explanation line (the owner removed it)', q.title === T.title && !q.why);
   ok('the three actions in their order: gather, translate without, don\'t ask again', q.order.join() === 'go,skip,never' && q.btns[0][2] === T.go && q.btns[1][2] === T.skip && q.never[2] === T.never, q);
   ok('the two buttons as wide as each other, every target at least 40 px high', Math.abs(q.btns[0][0] - q.btns[1][0]) <= 1 && q.btns.every((x) => x[1] >= 40) && q.never[1] >= 40 && q.scope.every((x) => x[2] >= 40), q);
-  ok('the scope: this chapter chosen first, the whole book offered; the cost said plainly (the AI service, requests)', q.scope.length === 2 && q.scope[0][1] === 'true' && q.scope[1][1] === 'false' && /\d/.test(q.cost) && !q.over, q.cost);
+  ok('the scope: this chapter chosen first, the whole book offered; no cost line (the owner removed it)', q.scope.length === 2 && q.scope[0][1] === 'true' && q.scope[1][1] === 'false' && !q.cost && !q.over, q.cost);
   ok('no glossary of a former volume: no such line', !q.vol);
   await shot(p, `S3-gather-${LANG}.png`);
   await p.keyboard.press('Escape'); await quiet(1500);

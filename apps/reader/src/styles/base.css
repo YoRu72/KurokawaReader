@@ -202,7 +202,7 @@ html[dir='rtl'] .display, html[dir='rtl'] .headline { letter-spacing: 0; font-we
 .topbar .title small { display: block; font-weight: 400; font-size: 12.5px; color: var(--md-on-surface-dim); letter-spacing: 0; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.01em; }
 .brand img { width: 30px; height: 30px; border-radius: 9px; }
-html[dir='rtl'] .brand { font-size: 19px; word-spacing: .12em; letter-spacing: 0; }
+html[dir='rtl'] .brand { font-size: 19px; letter-spacing: 0; }   /* (its word gap is the interface's: fonts.css) */
 /* The name shrinks with a narrow screen and, if it still cannot fit, ends in an ellipsis rather than losing letters. */
 .brand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 430px) { .library-view .topbar .brand-name { display: none; } }
@@ -305,6 +305,7 @@ html[dir='rtl'] .switch input:checked + i::after { transform: translateX(-20px);
 /* Many choices of one kind (the alignment): separate pills of one width, height and shape, wrapping in even columns. */
 .segmented.pills { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 6px; }
 .segmented.pills button, .segmented.pills button:first-child, .segmented.pills button:last-child { border-radius: var(--sh-full); height: 44px; padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[dir='rtl'] .segmented.pills button { padding-inline: 6px; }   /* (the wider Arabic word gap: a label that just fitted must still) */
 
 /* ---------- Library ---------- */
 .library-body { flex: 1; overflow: auto; padding: 8px 20px 0; padding-bottom: calc(110px + var(--safe-bottom)); }
@@ -2625,9 +2626,9 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .gloss-card .gc-actions .btn { flex: 1 1 0; min-width: 0; min-height: 44px; justify-content: center; white-space: normal; }
 .gloss-card .gc-actions .btn[hidden] { display: none; }
 
-/* «Gather the names first?» (src/ui/gather.ts): the scope, what it costs, two actions side by side as wide as each other, and a quiet one under them. */
+/* «Gather the names first?» (src/ui/gather.ts): the scope, two actions side by side as wide as each other, and a quiet one under them. */
 .gather-sheet .sheet-body { display: grid; gap: 12px; }
-.gather-sheet .gather-why, .gather-sheet .gather-volume, .gather-sheet .gather-cost { margin: 0; }
+.gather-sheet .gather-volume, .gather-sheet .gather-cost { margin: 0; }
 .gather-sheet .gather-volume { padding: 10px 14px; border-radius: var(--sh-md); background: var(--md-surface-container-high); font-size: 14px; }
 .gather-sheet .gather-scope { margin: 2px 0; }
 .gather-sheet .sheet-actions.gather-actions { flex-direction: column; align-items: stretch; gap: 10px; }

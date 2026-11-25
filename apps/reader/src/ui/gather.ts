@@ -44,8 +44,6 @@ export interface GatherAsk {
   scope: GatherScope; chapters: 'one' | 'many';
   /** Whether the other scope is offered (a whole-book translation offers none: the whole book is what is read). */
   both: boolean;
-  /** About how many requests each scope costs. */
-  cost: (s: GatherScope) => number;
   /** The glossary of a former volume in use (its title): the sheet says so and asks to check for new names. */
   volume?: string;
   /** The names are found by a model on this device (no requests spent). */
@@ -57,7 +55,7 @@ export interface GatherAsk {
 export type GatherAnswer = { answer: 'gather' | 'skip' | 'never' | 'cancel'; scope: GatherScope };
 const iso = (x: string) => `⁨${x}⁩`;
 
-/** The sheet: «Gather the names first?» — the scope, a line on what it costs, and three actions. Closed any other way, the
+/** The sheet: «Gather the names first?» — the scope and three actions. Closed any other way, the
  *  answer is «cancel» and nothing starts. */
 export function askGather(o: GatherAsk): Promise<GatherAnswer> {
   return new Promise((resolve) => {
@@ -65,13 +63,12 @@ export function askGather(o: GatherAsk): Promise<GatherAnswer> {
     const finish = (answer: GatherAnswer['answer']): void => { if (done) return; done = true; resolve({ answer, scope }); sh.close(); };
     const sh = openSheet(t('gatherTitle'), t('close'), { stack: true, onClose: () => { sig.stop = true; if (!done) { done = true; resolve({ answer: 'cancel', scope }); } } });
     sh.el.classList.add('gather-sheet'); sh.body.style.fontFamily = 'var(--font-ui)';
-    const cost = h('p', { class: 'hint gather-cost' });
-    const paintCost = (): void => { cost.textContent = o.local ? t('gatherUsesLocal') : t('gatherUsesAi', { n: String(o.cost(scope)) }); };
+    // (Only a model on this device is told of; the service's cost is not stated.)
+    const local = o.local ? h('p', { class: 'hint gather-cost' }, t('gatherUsesLocal')) : null;
     const seg = h('div', { class: 'segmented gather-scope', role: 'group', 'aria-label': t('gatherScopeLabel') });
     const opts: [GatherScope, string][] = [['chapter', o.chapters === 'many' ? t('gatherTheseChapters') : t('gatherThisChapter')], ['book', t('gatherWholeBook')]];
     const paintSeg = (): void => { seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String((b as HTMLElement).dataset.scope === scope))); };
-    for (const [k, l] of opts) seg.append(h('button', { type: 'button', dataset: { scope: k }, 'aria-pressed': String(k === scope), onclick: () => { scope = k; paintSeg(); paintCost(); } }, l));
-    paintCost();
+    for (const [k, l] of opts) seg.append(h('button', { type: 'button', dataset: { scope: k }, 'aria-pressed': String(k === scope), onclick: () => { scope = k; paintSeg(); } }, l));
     // (Gathering: the sheet shows its progress; failed, it says so in one line and offers «Translate without».)
     const gather = async (): Promise<void> => {
       const line = h('span', null, t('gatherWorking'));
@@ -84,9 +81,8 @@ export function askGather(o: GatherAsk): Promise<GatherAnswer> {
       sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary gather-skip', onclick: () => finish('skip') }, t('gatherSkip')));
     };
     sh.body.append(
-      h('p', { class: 'gather-why' }, t('gatherWhy')),
       ...(o.volume ? [h('p', { class: 'gather-volume', role: 'status' }, t('gatherVolumeInUse', { title: iso(o.volume) }))] : []),
-      ...(o.both ? [seg] : []), cost);
+      ...(o.both ? [seg] : []), ...(local ? [local] : []));
     sh.actions.classList.add('gather-actions');
     const actsRow = h('div', { class: 'gather-acts-row' },
         h('button', { type: 'button', class: 'btn primary gather-go', onclick: () => void gather() }, o.volume ? t('gatherCheckVolume') : t('gatherGo')),
