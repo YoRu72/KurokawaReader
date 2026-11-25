@@ -38,6 +38,9 @@ export async function sniffFormat(file: Blob, fileName: string): Promise<Format>
   if (ascii.startsWith('%PDF')) return 'pdf';
   if (String.fromCharCode(...new Uint8Array(await file.slice(60, 68).arrayBuffer())) === 'BOOKMOBI') return 'mobi';
   if (ascii.startsWith('ID3') || ascii.startsWith('fLaC') || ascii.startsWith('OggS') || (ascii.slice(4, 8) === 'ftyp' && /M4[AB]|mp4|isom/.test(ascii.slice(8, 12)))) return 'audio';
+  // (Archives of pictures by their first bytes, whatever the name says: RAR, 7-Zip, a tar — told apart in src/comic/archives.ts.)
+  if (ascii.startsWith('Rar!\x1a\x07') || ascii.startsWith('7z\xbc\xaf\x27\x1c')) return 'cbz';
+  if (file.size > 512 && String.fromCharCode(...new Uint8Array(await file.slice(257, 262).arrayBuffer())) === 'ustar') return 'cbz';
   if (head[0] === 0x50 && head[1] === 0x4b) {
     // Some zip: look inside for the tell-tale parts.
     try {
@@ -51,7 +54,10 @@ export async function sniffFormat(file: Blob, fileName: string): Promise<Format>
       if (names.some((n) => n.startsWith('ppt/'))) return 'pptx';
       if (names.some((n) => n === 'content.xml')) return 'odt';
       if (names.some((n) => /\.(jpe?g|png|webp)$/i.test(n))) return 'cbz';
-    } catch { /* ignore */ }
+    } catch {
+      // (A protected zip of pictures: JSZip stops at the directory — opened through libarchive on import.)
+      if (/\.zip$/i.test(fileName)) { try { const { zipIsProtected } = await import('../comic/pages'); if (await zipIsProtected(file)) return 'cbz'; } catch { /* ignore */ } }
+    }
   }
   if (/^\xff\xd8|^\x89PNG|^GIF8|^RIFF/.test(ascii)) return 'image';
   if (ascii.trimStart().startsWith('<')) {

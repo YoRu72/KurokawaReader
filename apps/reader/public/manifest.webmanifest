@@ -64,6 +64,15 @@
         ],
         "application/vnd.comicbook+zip": [
           ".cbz"
+        ],
+        "application/vnd.comicbook-rar": [
+          ".cbr"
+        ],
+        "application/x-cb7": [
+          ".cb7"
+        ],
+        "application/x-cbt": [
+          ".cbt"
         ]
       }
     }

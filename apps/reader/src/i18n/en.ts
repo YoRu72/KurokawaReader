@@ -2858,6 +2858,17 @@ export const en = {
   comicOrientFree: "Free",
   comicShiftOn: "Pairs shifted by one page",
   comicShiftOff: "Pairs as before",
+  archPreparing: "Preparing «{name}»",
+  archPages: "{n} / {total} pages",
+  archProtected: "Protected archive",
+  archPasswordPrompt: "This archive is protected. Password:",
+  archPasswordWrong: "Wrong password",
+  archNoPictures: "This archive holds no pictures.",
+  archOpenInArchives: "Open in Archives",
+  archFailed: "Could not prepare «{name}». The file was left as it was.",
+  archTooBig: "«{name}» is too large to prepare on this device. The file was left as it was.",
+  archMadeFrom: "Made from",
+  archCredit: "Comics in RAR, 7z and tar archives are read with libarchive.js (MIT) and libarchive (BSD 2-Clause).",
 };
 
 export type Strings = typeof en;

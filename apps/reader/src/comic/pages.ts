@@ -108,6 +108,12 @@ async function entryBlob(file: Blob, e: Entry): Promise<Blob | null> {
   } catch { return null; }
 }
 
+/** Whether a zip holds protected (encrypted) entries — JSZip and this reader cannot open it; src/comic/repack.ts can. */
+export async function zipIsProtected(file: Blob): Promise<boolean> {
+  const dir = await readDirectory(file).catch(() => null);
+  return !!dir && dir.some((e) => e.flags & 1);
+}
+
 interface SizeCache { n: number; s: ([number, number] | 0)[] }
 
 /** Open a book of pictures. `kind`: 'image' for one picture, else a zip of them. `cache` keeps sizes per book. */

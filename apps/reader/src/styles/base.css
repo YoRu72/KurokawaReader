@@ -1282,6 +1282,7 @@ html.pc:not(.rail-off)[dir='rtl'] .toast { left: calc(50% - var(--rail-w) / 2); 
 
 /* ---------- Jobs (conversions going on in the background) ---------- */
 .job-chip { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + var(--safe-bottom)); z-index: 60; display: inline-flex; align-items: center; gap: 10px; max-width: min(88vw, 420px); padding: 8px 16px 8px 10px; border-radius: var(--sh-full); background: var(--md-inverse-surface); color: var(--md-inverse-on-surface); box-shadow: var(--el-3); font: 600 13.5px var(--font-ui); animation: rise var(--dur-med) var(--ease-emph-decel); }
+.job-chip { min-height: 40px; }
 .job-chip span:not(.job-ring) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .job-chip b { font-variant-numeric: tabular-nums; }
 .job-chip svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; flex: 0 0 auto; }
@@ -2637,6 +2638,10 @@ html[dir='rtl'] .gloss-card .gc-arrow svg { transform: scaleX(-1); }
 .gather-sheet .gather-acts-row.stack .btn { flex: none; width: 100%; }
 .confirm-sheet .sheet-actions.stack { flex-direction: column-reverse; flex-wrap: nowrap; }
 .confirm-sheet .sheet-actions.stack .btn { flex: none; width: 100%; min-height: 48px; height: auto; }
+/* (The password dialog's two buttons, as the confirmation's: equal widths side by side, stacked when a label does not fit.) */
+.password-sheet .sheet-actions .btn { flex: 1 1 0; padding-inline: 14px; box-sizing: border-box; min-width: 0; justify-content: center; white-space: normal; text-align: center; }
+.password-sheet .sheet-actions.stack { flex-direction: column-reverse; flex-wrap: nowrap; }
+.password-sheet .sheet-actions.stack .btn { flex: none; width: 100%; min-height: 48px; height: auto; }
 .gather-actions .gather-never { width: 100%; height: auto; min-height: 44px; line-height: 1.25; }
 /* The translator's new options (the AI settings, the glossary options): a three-way choice under its label. */
 .tr-three { display: grid; gap: 8px; margin-top: 4px; }

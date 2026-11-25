@@ -116,6 +116,27 @@
       },
       {
         "ext": [
+          "cbr"
+        ],
+        "name": "Comic archive (RAR)",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "cb7"
+        ],
+        "name": "Comic archive (7z)",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "cbt"
+        ],
+        "name": "Comic archive (tar)",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
           "otf"
         ],
         "name": "OpenType font",

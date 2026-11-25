@@ -13,19 +13,21 @@ const MIMES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/vnd.oasis.opendocument.text', 'application/x-fictionbook+xml', 'application/vnd.comicbook+zip', 'application/x-cbz',
+  'application/vnd.oasis.opendocument.text', 'application/x-fictionbook+xml', 'application/vnd.comicbook+zip', 'application/x-cbz', 'application/vnd.comicbook-rar', 'application/x-cbr', 'application/x-cb7', 'application/x-cbt',
   'text/plain', 'text/markdown', 'text/html', 'text/csv', 'text/comma-separated-values',
   'application/x-mobipocket-ebook', 'application/vnd.amazon.ebook', 'application/vnd.amazon.mobi8-ebook', 'application/x-mobi8-ebook', 'application/apkg', 'application/vnd.anki',
   'audio/mpeg', 'audio/mp4', 'audio/x-m4b', 'audio/aac', 'audio/ogg', 'audio/opus', 'audio/flac', 'audio/x-flac', 'audio/wav',
   'font/ttf', 'font/otf', 'font/woff', 'font/woff2', 'application/x-font-ttf', 'application/x-font-opentype', 'application/font-sfnt', 'application/vnd.ms-opentype', 'application/font-woff', 'application/zip', 'application/x-zip-compressed',
+  // (Archives of other kinds, offered only when shared to the app — like a ZIP: a comic in a RAR, 7z or tar, told by its content on import.)
+  'application/x-rar-compressed', 'application/vnd.rar', 'application/x-7z-compressed', 'application/x-tar',
 ];
-const EXTS = ['mobi', 'azw', 'azw3', 'prc', 'apkg', 'colpkg', 'mp3', 'm4a', 'm4b', 'flac', 'ogg', 'opus', 'epub', 'pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'html', 'htm', 'fb2', 'odt', 'cbz', 'csv', 'ttf', 'otf', 'woff', 'woff2', 'zip'];
+const EXTS = ['mobi', 'azw', 'azw3', 'prc', 'apkg', 'colpkg', 'mp3', 'm4a', 'm4b', 'flac', 'ogg', 'opus', 'epub', 'pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'html', 'htm', 'fb2', 'odt', 'cbz', 'cbr', 'cb7', 'cbt', 'csv', 'ttf', 'otf', 'woff', 'woff2', 'zip', 'rar', '7z', 'tar'];
 
 const data = (attrs) => `        <data ${attrs} />`;
 // (A ZIP is opened only when shared to the app — a zip of fonts — not from "Open with": an APK is a ZIP to some
 // file managers and installers, and the reader appeared in the menu of every APK.)
-const VIEW_MIMES = MIMES.filter((m) => !/zip-compressed|^application\/zip$/.test(m));
-const VIEW_EXTS = EXTS.filter((e) => e !== 'zip');
+const VIEW_MIMES = MIMES.filter((m) => !/zip-compressed|^application\/zip$|x-rar-compressed|vnd\.rar|x-7z-compressed|x-tar$/.test(m));
+const VIEW_EXTS = EXTS.filter((e) => !['zip', 'rar', '7z', 'tar'].includes(e));
 const intentFilters = `
       <!-- Open documents from other apps (file managers, WhatsApp, browsers…) -->
       <intent-filter>

@@ -46,6 +46,7 @@ export function showBookInfo(i: BookInfoInput): void {
     h('div', { style: { fontSize: '17px', fontWeight: '600', marginBottom: '10px' }, dir: 'auto' }, book.title, book.author ? h('span', { style: { fontWeight: '400', color: 'var(--md-on-surface-dim)' } }, ` — ${book.author}`) : null),
     row(t('format'), `${book.format.toUpperCase()} · ${book.fileName}`),
     row(t('size'), formatBytes(book.size)),
+    row(t('archMadeFrom'), book.madeFrom),
     row(t('added'), formatDate(book.addedAt)),
     i.pages != null ? row(t('pages'), i.pages) : null,
     i.currentPage != null ? row(t('currentPage'), i.currentPage) : null,

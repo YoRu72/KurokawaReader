@@ -315,6 +315,7 @@ export function askPassword(o: { title: string; hint: string; wrong?: boolean; o
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
     sh.body.append(h('p', { class: 'hint' + (o.wrong ? ' error' : ''), role: o.wrong ? 'alert' : undefined }, o.hint), h('label', { class: 'field' }, h('span', null, o.label), input));
     sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => sh.close() }, o.cancel), h('button', { type: 'button', class: 'btn primary', onclick: submit }, o.open));
+    stackWhenCramped(sh.actions);
     setTimeout(() => input.focus(), 30);
   });
 }

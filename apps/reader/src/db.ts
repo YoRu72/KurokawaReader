@@ -113,6 +113,8 @@ export interface Book {
   /** The cover the file came with, kept while a picture of the reader's own is in its place (`null`: it had none). */
   coverOrig?: Blob | null;
   pageCount?: number;
+  /** A comic made into a CBZ on import from another archive: «RAR», «7Z», «TAR»… (the details view says so). */
+  madeFrom?: string;
   progress?: Locator;
   progressAt?: number;
   /** Marked read (or marked not read though its progress is at the end); unset: by progress. */

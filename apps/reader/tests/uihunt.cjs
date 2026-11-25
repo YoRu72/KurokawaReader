@@ -25,6 +25,21 @@ async function makePdf(file, pages) {
   fs.writeFileSync(file, await d.save());
 }
 
+
+// Comics in archives (0.67, S5c): a long tar held half-way (the archive worker's «next» slowed), a protected zip waiting for its password, and a tar of
+// text only (its message). archClear gives the job up, closes what is open and lets the page's Worker go back to its own; nothing is left in the library.
+let archSeeded = false; const arch = {};
+const archGive = async (p, file) => {
+  await p.setInputFiles('.library-view input[type=file]', file);
+  if (await p.waitForSelector('.sheet .dest-list', { timeout: 3000 }).then(() => true, () => false)) { await p.evaluate(() => [...document.querySelectorAll('.sheet:has(.dest-list) .sheet-actions button')].pop()?.click()); await p.waitForTimeout(200); }
+};
+const archSlow = (p) => p.evaluate(() => { if (window.__realWorker) return; const W = window.Worker; window.__realWorker = W; window.Worker = function (url, o) { const w = new W(url, o); if (String(url).includes('archiveworker')) { const post = w.postMessage.bind(w); w.postMessage = (m, t) => { if (m && m.op === 'next') setTimeout(() => post(m, t), 60); else post(m, t); }; } return w; }; });
+const archClear = async (p) => {
+  await p.evaluate(() => { document.querySelector('.job-chip')?.click(); }); await p.waitForTimeout(150);
+  await p.evaluate(() => { document.querySelector('.job-row .btn')?.click(); document.querySelector('.password-sheet .btn.text')?.click(); delete window.kurokawaDesktop; if (window.__realWorker) { window.Worker = window.__realWorker; delete window.__realWorker; } });
+  await p.waitForTimeout(500); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+};
+
 const SETTING_COUNT = 26; // the sections of Settings, counted by position (s-0 ...); one that is not on this device is skipped
 const lib = (hash) => async (p) => { await p.evaluate((h) => { location.hash = h; }, hash); };
 // kind of book -> a function opening it on the reading screen (the id from the library's own store)
@@ -221,6 +236,11 @@ const VIEWS = [
   ['comic-longpress', async (p) => { await openComic(p); await p.evaluate(() => document.querySelector('.reader-view').classList.add('immersive')); const vp = p.viewportSize(); await p.mouse.move(vp.width / 2, vp.height / 2); await p.mouse.down(); await p.waitForSelector('.cm-page-menu', { timeout: 4000 }); await p.mouse.up(); await p.waitForTimeout(400); }],
   ['comic-spread-pc', async (p) => { seeded = true; await visual(p, { comicDual: 'always' }); await p.evaluate(() => { location.hash = '#/'; }); await reloadLib(p); await openComic(p); await p.waitForFunction(() => window.__krComic.source.pages.every((x) => x.width && x.height), null, { timeout: 10000 }); await p.evaluate(() => window.__krComic.viewer.goTo(1)); await p.waitForTimeout(600); }, 'pc'],
   ['comic-zones', async (p) => { await p.evaluate(() => localStorage.removeItem('kr.comicZonesSeen')); await openComic(p, true); }, 'phone'],
+  // (0.67, S5c: a comic in a RAR / 7z / tar — the job while it works, the password it may ask for, the message when it holds no pictures.)
+  ['archive-preparing', async (p) => { archSeeded = true; await archSlow(p); await archGive(p, arch.long); await p.waitForFunction(() => /[1-9]\d* \/ 300|300 \/ [1-9]/.test(document.querySelector('.job-chip')?.textContent ?? ''), null, { timeout: 30000 }); await p.evaluate(() => document.querySelector('.job-chip').click()); await p.waitForSelector('.job-row .btn', { timeout: 8000 }); await p.waitForTimeout(500); }],
+  ['archive-password', async (p) => { archSeeded = true; await archGive(p, arch.locked); await p.waitForSelector('.password-sheet input[type=password]', { timeout: 15000 }); await p.waitForTimeout(500); }],
+  ['archive-password-wrong', async (p) => { archSeeded = true; await archGive(p, arch.locked); await p.waitForSelector('.password-sheet input[type=password]', { timeout: 15000 }); await p.fill('.password-sheet input[type=password]', 'not-it'); await p.keyboard.press('Enter'); await p.waitForSelector('.password-sheet .hint.error', { timeout: 15000 }); await p.waitForTimeout(500); }],
+  ['archive-nopictures', async (p) => { archSeeded = true; await p.evaluate(() => { window.kurokawaDesktop = { archiveList() {}, async archivePickFile() { return []; } }; }); await archGive(p, arch.notes); await p.waitForSelector('.toast .toast-action', { timeout: 15000 }); await p.waitForTimeout(500); }],
   ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
   ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
 ];
@@ -326,6 +346,10 @@ function hunt({ phone, rtl, lang }) {
   if (args.includes('--list')) { console.log(VIEWS.map((v) => v[0]).join(' ')); process.exit(0); }
   await new Promise((r) => server.listen(0, r)); const base = `http://127.0.0.1:${server.address().port}/`;
   const pdf = path.join(TMP, 'pages.pdf'); await makePdf(pdf, 12);
+  { const fx = require('./helpers/archivefixture.cjs'); const w = (n, b) => { const f = path.join(TMP, n); fs.writeFileSync(f, b); return f; };
+    arch.long = w('hunt long archive.cbt', await fx.makeTar(fx.pagesOf({ pages: 300, width: 100, height: 150, system: false, shuffle: false })));
+    arch.locked = w('hunt locked.cbz', fx.makeZipCrypt(fx.pagesOf({ pages: 4, width: 100, height: 150 }), 'right-one'));
+    arch.notes = w('hunt notes.cbt', await fx.makeTar([{ name: 'a.txt', data: Buffer.from('one') }, { name: 'b.txt', data: Buffer.from('two') }])); }
   const comic = path.join(TMP, 'hunt-comic.cbz'); fs.writeFileSync(comic, await makeCbz({ pages: 6, folders: [3, 3], wide: [4] }));
   const files = [path.join(TMP, 'nihongo.txt'), pdf, comic, ...['alice-in-wonderland.epub', 'maqamat-al-hariri.epub'].map((f) => path.join(DIST, 'samples', f)).filter((f) => fs.existsSync(f))];
   const b = await chromium.launch(); let fails = 0; let allowedN = 0; const summary = {};
@@ -353,7 +377,7 @@ function hunt({ phone, rtl, lang }) {
         }
         if (SHOTS) await p.screenshot({ path: path.join(SHOTS, `hunt-${name}-${dev}-${lang}.png`) });
       } catch (e) { if (e.message === 'SKIP') continue; console.log(`ERR   ${lang} ${dev} ${name}: ${String(e.message).split('\n')[0]}`); fails++; }
-      finally { if (srcSeeded) { srcSeeded = false; await sourcesClear(p).catch(() => undefined); await p.reload().catch(() => undefined); await p.waitForSelector('.library-view', { timeout: 15000 }).catch(() => undefined); } if (dataSeeded) { dataSeeded = false; await dataClear(p).catch(() => undefined); } if (seeded) { seeded = false; await aiClear(p).catch(() => undefined); } }
+      finally { if (srcSeeded) { srcSeeded = false; await sourcesClear(p).catch(() => undefined); await p.reload().catch(() => undefined); await p.waitForSelector('.library-view', { timeout: 15000 }).catch(() => undefined); } if (dataSeeded) { dataSeeded = false; await dataClear(p).catch(() => undefined); } if (archSeeded) { archSeeded = false; await archClear(p).catch(() => undefined); } if (seeded) { seeded = false; await aiClear(p).catch(() => undefined); } }
     }
     if (phone && (!ONLY || ONLY === 'narrowcards')) { // narrow cards: 2-5 columns at 360 / 390 / 412 px: the marks sit inside the cover and never overlap, the stars stay in the card, nothing is clipped
       try {

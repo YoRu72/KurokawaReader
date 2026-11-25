@@ -611,6 +611,7 @@ export function libraryView(): HTMLElement {
         [t('lastOpened'), formatDate(book.lastOpenedAt)],
         [t('progress'), isDone(book) ? t('doneBadge') : `${Math.round((book.progress?.pct ?? 0) * 100)}%`],
       ];
+      if (book.madeFrom) rows.push([t('archMadeFrom'), book.madeFrom]);
       if (book.pageCount) rows.push([t('pages'), String(book.pageCount)]);
       if (book.tags?.length) rows.push([t('tags'), book.tags.join(' · ')]);
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
