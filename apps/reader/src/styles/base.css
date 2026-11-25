@@ -573,7 +573,7 @@ html[dir='rtl'] .sheet-head { padding: 6px 22px 6px 12px; }
 .sheet-body .pos { font-family: var(--font-ui); color: var(--md-primary); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-top: 12px; }
 .sheet-body ol { padding-inline-start: 20px; margin: 4px 0; }
 .sheet-body .ar { font-family: var(--font-read-rtl); direction: rtl; font-size: 20px; }
-.sheet-actions { display: flex; gap: 8px; padding: 10px 16px 14px; flex-wrap: wrap; align-items: center; }
+.sheet-actions { display: flex; gap: 8px; padding: 10px 22px 14px; flex-wrap: wrap; align-items: center; }
 .sheet-actions select { height: 40px; }
 
 /* Snackbar */
