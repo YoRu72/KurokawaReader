@@ -4,7 +4,7 @@
 // button), moving with them while it is shown; a sheet opened over it hides it (its time standing still).
 
 /** What may lie along the bottom: the pill rides above whichever of these it would cover. */
-const BOTTOM = '.fab, .selection-bar, .float-toolbar, .pdf-bar, .ink-bar, .read-status';
+const BOTTOM = '.fab, .selection-bar, .float-toolbar, .pdf-bar, .ink-bar, .read-status, .tr-pill, .tr-mini';
 const seen = (b: HTMLElement): boolean => { if (b.hidden || !b.getClientRects().length) return false; const cs = getComputedStyle(b); return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0'; };
 /** The pill placed above the bottom's bars and buttons it would cover (its own CSS place when nothing is in the way). */
 export function placePill(el: HTMLElement): void {
@@ -12,10 +12,11 @@ export function placePill(el: HTMLElement): void {
   // (A sheet opened over the page after the pill: the pill is the page's, and would lie over the sheet's switches and
   // buttons — it waits out of sight, its time standing still (ui/undo.ts), and comes back when the sheet closes. A pill offered from
   // inside a sheet — an Undo for something done there — stays.)
-  if (el.dataset.sheetAt === undefined) el.dataset.sheetAt = document.querySelectorAll('.sheet').length ? '1' : '0';
-  const sheetNow = !!document.querySelector('.sheet'); el.classList.toggle('behind-sheet', sheetNow && el.dataset.sheetAt === '0');
+  if (el.dataset.sheetAt === undefined) el.dataset.sheetAt = String(document.querySelectorAll('.sheet').length);
+  // (A pill offered inside one sheet hides when a further sheet opens over it — a confirm never lies under an old Undo.)
+  const sheets = document.querySelectorAll('.sheet').length; const sheetNow = sheets > 0; el.classList.toggle('behind-sheet', sheets > Number(el.dataset.sheetAt));
   if (sheetNow) { if (el.style.bottom) el.style.removeProperty('bottom'); return; }
-  if (el.dataset.sheetAt === '1') el.dataset.sheetAt = '0';
+  if (el.dataset.sheetAt !== '0') el.dataset.sheetAt = '0';
   const s = el.getBoundingClientRect(); let top = Infinity;
   for (const b of document.querySelectorAll<HTMLElement>(BOTTOM)) {
     if (b === el || el.contains(b) || !seen(b)) continue; const r = b.getBoundingClientRect();
@@ -51,7 +52,7 @@ export function swipeAway(el: HTMLElement, close: () => void): void {
 
 /** What the reader operates by, that a notice must never lie over: the page buttons at a chapter's end, the toolbar, the bars, a
  *  computer's page-turn arrows. */
-const CONTROLS = '.chapter-nav .cn-btn, .page-arrow, .float-toolbar, .selection-bar, .pdf-bar, .ink-bar, .read-status, .fab';
+const CONTROLS = '.chapter-nav .cn-btn, .page-arrow, .float-toolbar, .selection-bar, .pdf-bar, .ink-bar, .read-status, .fab, .tr-pill, .tr-mini';
 /** A notice (the reading dictionary's offer…) put above whatever of the reading controls it would cover, from its own CSS place
  *  upward — never over them. Called again as the page scrolls or turns; with nothing in the way it is back at its CSS place. */
 export function placeNotice(el: HTMLElement): void {

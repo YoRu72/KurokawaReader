@@ -26,7 +26,7 @@ if (!g.document) {
 }
 
 type Job = { n: number; force?: string[] };
-export type LaneIn = { t: 'open'; file: Blob; lane: number; port: MessagePort } | { t: 'page'; n: number; force?: string[] } | { t: 'word'; ids: string[] } | { t: 'close' };
+export type LaneIn = { t: 'open'; file: Blob; lane: number; port: MessagePort; edit?: boolean } | { t: 'page'; n: number; force?: string[] } | { t: 'word'; ids: string[] } | { t: 'close' };
 export type LanePage = {
   t: 'page'; n: number; model: PageModel;
   /** Fonts this lane met first on this page: their ids and what is known of them. */
@@ -35,6 +35,8 @@ export type LanePage = {
   pageFonts: string[];
   seqs: { rtl?: boolean; uses: [string, GlyphUse][] }[];
   gaps: [string, number[]][];
+  /** Fonts whose space glyph this page draws (spaceEm). */
+  drawn?: string[];
   wordFound: string[]; stickyMiss: string[];
 };
 /** `step`: how far the lane has gone in opening the document — for the app's thread, which gives up on a lane that
@@ -57,6 +59,8 @@ const store: UseStore = { seqs: new GlyphRuns(), seen: new Map(), keepAll: true,
 const queue: Job[] = [];
 const asked = new Map<number, Promise<import('pdfjs-dist').PDFPageProxy>>();
 let busy = false;
+// (The result the conversion is for — «Easy to edit» or «Exact look» — as the page told it.)
+let editMode = true;
 const post = (m: LaneOut, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
 
 const force = (ids: string[]) => {
@@ -90,7 +94,8 @@ async function open(file: Blob, port: MessagePort): Promise<void> {
 async function pump(): Promise<void> {
   if (busy || !doc) return;
   busy = true;
-  const { analysePage, askAhead, takePendingPngs, eachRunList } = await import('./pdf2docx');
+  const { analysePage, askAhead, takePendingPngs, eachRunList, p2d } = await import('./pdf2docx');
+  p2d.edit = editMode;
   try {
     while (queue.length) {
       const job = queue.shift()!;
@@ -108,7 +113,7 @@ async function pump(): Promise<void> {
         for (const [name, f] of fonts) f.wordFont = forced.has(idOf.get(name) ?? '') || undefined;
         restore = () => { for (const [name, f] of fonts) f.wordFont = (had.get(name) || forced.has(idOf.get(name) ?? '') || f.wordFont) || undefined; };
       }
-      const gapsBefore = new Map([...fonts].map(([k, f]) => [k, f.gaps?.length ?? 0]));
+      const gapsBefore = new Map([...fonts].map(([k, f]) => [k, f.gaps?.length ?? 0])); const drawnBefore = new Map([...fonts].map(([k, f]) => [k, f.drawnSp ?? 0]));
       const wordBefore = new Set([...fonts].filter(([, f]) => f.wordFont).map(([k]) => k));
       fresh = []; store.seqs = new GlyphRuns(); store.pageFonts = []; store.stickyMiss = new Set();
       let model: PageModel;
@@ -126,6 +131,7 @@ async function pump(): Promise<void> {
         pageFonts: store.pageFonts.map(id),
         seqs: Array.from({ length: store.seqs.length }, (_, si) => { const s = store.seqs.at(si); return { rtl: s.rtl, uses: s.map(([f, u]) => [id(f), u] as [string, GlyphUse]) }; }),
         gaps: [...fonts].flatMap(([k, f]) => { const was = gapsBefore.get(k) ?? 0; return (f.gaps?.length ?? 0) > was ? [[id(k), f.gaps!.slice(was)] as [string, number[]]] : []; }),
+        drawn: [...fonts].filter(([k, f]) => (f.drawnSp ?? 0) > (drawnBefore.get(k) ?? 0)).map(([k]) => id(k)),
         wordFound: [...fonts].filter(([k, f]) => f.wordFont && !wordBefore.has(k)).map(([k]) => id(k)),
         stickyMiss: [...store.stickyMiss].map(id),
       };
@@ -144,7 +150,7 @@ async function pump(): Promise<void> {
 self.addEventListener('unhandledrejection', (e) => post({ t: 'error', message: String((e as PromiseRejectionEvent).reason?.stack ?? (e as PromiseRejectionEvent).reason) }));
 self.onmessage = (e: MessageEvent<LaneIn>) => {
   const m = e.data;
-  if (m.t === 'open') { lane = m.lane; open(m.file, m.port).catch((err) => post({ t: 'error', message: String((err as Error)?.stack ?? err) })); }
+  if (m.t === 'open') { lane = m.lane; editMode = m.edit !== false; open(m.file, m.port).catch((err) => post({ t: 'error', message: String((err as Error)?.stack ?? err) })); }
   else if (m.t === 'page') { queue.push({ n: m.n, force: m.force }); void pump(); }
   else if (m.t === 'word') force(m.ids);
   // (Told when done, so the page can end this worker and its pdf.js worker at once.)

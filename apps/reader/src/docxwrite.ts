@@ -50,18 +50,21 @@ const fontsXml = (f: Fonts | string) => (typeof f === 'string' ? `<w:rFonts w:as
 
 /** A run's look (what docx's TextRun took). Sizes in half-points; `position` in half-points; `spacing` (letter
  *  spacing) in twips; `scale` a percentage. */
-export type RunProps = { font?: Fonts | string; size?: number; bold?: boolean; italic?: boolean; color?: string; rtl?: boolean; scale?: number; spacing?: number; position?: number; superScript?: boolean; eastAsiaRun?: boolean };
+export type RunProps = { font?: Fonts | string; size?: number; bold?: boolean; italic?: boolean; color?: string; rtl?: boolean; scale?: number; spacing?: number; position?: number; superScript?: boolean; eastAsiaRun?: boolean; /** underlined, in this colour (hex) */ underline?: string; strike?: boolean; /** shaded behind, this colour (hex) */ shading?: string };
 
 export function rPr(p: RunProps): string {
   let x = '';
   if (p.font) x += fontsXml(p.font);
   if (p.bold !== undefined) x += p.bold ? '<w:b/><w:bCs/>' : '<w:b w:val="false"/><w:bCs w:val="false"/>';
   if (p.italic !== undefined) x += p.italic ? '<w:i/><w:iCs/>' : '<w:i w:val="false"/><w:iCs w:val="false"/>';
+  if (p.strike) x += '<w:strike/>';
   if (p.color) x += `<w:color w:val="${att(p.color)}"/>`;
   if (p.spacing) x += `<w:spacing w:val="${Math.round(p.spacing)}"/>`;
   if (p.scale && p.scale !== 100) x += `<w:w w:val="${Math.round(p.scale)}"/>`;
   if (p.position) x += `<w:position w:val="${Math.round(p.position)}"/>`;
   if (p.size) x += `<w:sz w:val="${Math.round(p.size)}"/><w:szCs w:val="${Math.round(p.size)}"/>`;
+  if (p.underline) x += `<w:u w:val="single" w:color="${att(p.underline)}"/>`;
+  if (p.shading) x += `<w:shd w:val="clear" w:color="auto" w:fill="${att(p.shading)}"/>`;
   if (p.superScript) x += '<w:vertAlign w:val="superscript"/>';
   if (p.rtl) x += '<w:rtl/>';
   return x ? `<w:rPr>${x}</w:rPr>` : '';
@@ -89,25 +92,36 @@ export type Align = 'start' | 'end' | 'center' | 'both' | 'distribute' | 'left' 
 export type Frame = { x: number; y: number; w: number; h: number; rule?: 'auto' | 'atLeast' | 'exact'; anchorLock?: boolean };
 /** A paragraph's properties (twips throughout). */
 export type ParaProps = {
+  /** A style of styles.xml (Title, Heading1–3: see DocxWriter.structure) and the outline level it carries. */
+  style?: string; outline?: number;
+  /** A list's item: its list (numbering.xml's w:num) and level. */
+  num?: { id: number; lvl: number };
   bidi?: boolean; widowControl?: boolean; align?: Align;
   indent?: { start?: number; end?: number; left?: number; right?: number; firstLine?: number; hanging?: number };
-  spacing?: { before?: number; after?: number; line?: number; lineRule?: 'exact' | 'auto' | 'atLeast' };
+  /** (line: twips, or 240ths of a line for auto; a string is written as it is — a token filled in later.) */
+  spacing?: { before?: number; after?: number; line?: number | string; lineRule?: 'exact' | 'auto' | 'atLeast' };
   tabs?: { type: 'left' | 'right' | 'center'; pos: number }[];
   frame?: Frame;
   /** The paragraph mark's run properties. */
   mark?: RunProps;
+  /** Rules over / under the paragraph (sz in eighths of a point, space in points). */
+  borders?: { top?: { sz: number; color: string; space: number }; bottom?: { sz: number; color: string; space: number } };
   /** Section properties this paragraph carries (the last paragraph of a section that another follows). */
   sectPr?: string;
 };
 
 export function pPr(p: ParaProps): string {
   let x = '';
+  if (p.style) x += `<w:pStyle w:val="${att(p.style)}"/>`;
   if (p.frame) { const f = p.frame; x += `<w:framePr${f.anchorLock ? ' w:anchorLock="true"' : ''} w:w="${Math.round(f.w)}" w:h="${Math.round(f.h)}" w:x="${Math.round(f.x)}" w:y="${Math.round(f.y)}" w:hAnchor="page" w:vAnchor="page" w:hRule="${f.rule ?? 'auto'}" w:wrap="none"/>`; }
   if (p.widowControl === false) x += '<w:widowControl w:val="false"/>';
+  if (p.num) x += `<w:numPr><w:ilvl w:val="${p.num.lvl}"/><w:numId w:val="${p.num.id}"/></w:numPr>`;
+  if (p.borders && (p.borders.top || p.borders.bottom)) { const e = (n: string, b?: { sz: number; color: string; space: number }) => (b ? `<w:${n} w:val="single" w:sz="${Math.round(b.sz)}" w:space="${Math.round(b.space)}" w:color="${att(b.color)}"/>` : ''); x += `<w:pBdr>${e('top', p.borders.top)}${e('bottom', p.borders.bottom)}</w:pBdr>`; }
   if (p.bidi) x += '<w:bidi/>';
-  if (p.spacing) { const s = p.spacing; x += `<w:spacing${s.after !== undefined ? ` w:after="${Math.round(s.after)}"` : ''}${s.before !== undefined ? ` w:before="${Math.round(s.before)}"` : ''}${s.line !== undefined ? ` w:line="${Math.round(s.line)}"` : ''}${s.lineRule ? ` w:lineRule="${s.lineRule}"` : ''}/>`; }
+  if (p.spacing) { const s = p.spacing; x += `<w:spacing${s.after !== undefined ? ` w:after="${Math.round(s.after)}"` : ''}${s.before !== undefined ? ` w:before="${Math.round(s.before)}"` : ''}${s.line !== undefined ? ` w:line="${typeof s.line === 'string' ? s.line : Math.round(s.line)}"` : ''}${s.lineRule ? ` w:lineRule="${s.lineRule}"` : ''}/>`; }
   if (p.indent) { const i = p.indent; x += `<w:ind${i.start !== undefined ? ` w:start="${Math.round(i.start)}"` : ''}${i.end !== undefined ? ` w:end="${Math.round(i.end)}"` : ''}${i.left !== undefined ? ` w:left="${Math.round(i.left)}"` : ''}${i.right !== undefined ? ` w:right="${Math.round(i.right)}"` : ''}${i.firstLine !== undefined ? ` w:firstLine="${Math.round(i.firstLine)}"` : ''}${i.hanging !== undefined ? ` w:hanging="${Math.round(i.hanging)}"` : ''}/>`; }
   if (p.align) x += `<w:jc w:val="${p.align}"/>`;
+  if (p.outline !== undefined) x += `<w:outlineLvl w:val="${p.outline}"/>`;
   if (p.tabs?.length) x += `<w:tabs>${p.tabs.map((t) => `<w:tab w:val="${t.type}" w:pos="${Math.round(t.pos)}"/>`).join('')}</w:tabs>`;
   if (p.sectPr) x += p.sectPr;
   if (p.mark) x += rPr(p.mark);
@@ -118,21 +132,25 @@ export const paragraph = (p: ParaProps, children: string): string => `<w:p>${pPr
 /* ---------- tables ---------- */
 
 export type Border = { style: 'none' | 'single'; size: number; color: string };
-export type CellProps = { width: number; span?: number; vMerge?: 'restart' | 'continue'; vAlign?: 'top' | 'center' | 'bottom'; fill?: string; margins?: { top: number; bottom: number; left: number; right: number } };
-export type TableProps = { width: number; columns: number[]; indent?: number; rtl?: boolean; borders: Border; layoutFixed?: boolean };
-export type RowProps = { height?: { value: number; rule: 'atLeast' | 'exact' | 'auto' } };
+export type CellProps = { width: number; span?: number; vMerge?: 'restart' | 'continue'; vAlign?: 'top' | 'center' | 'bottom'; fill?: string; margins?: { top: number; bottom: number; left: number; right: number }; borders?: { top: Border; bottom: Border; left: Border; right: Border } };
+/** float: a table at its own place on the page (twips from the page's corner), the text not wrapped round it. */
+export type TableProps = { width: number; columns: number[]; indent?: number; rtl?: boolean; borders: Border; layoutFixed?: boolean; float?: { x: number; y: number } };
+/** header: the table's header row, repeated at the top of each page the table runs onto. */
+export type RowProps = { height?: { value: number; rule: 'atLeast' | 'exact' | 'auto' }; header?: boolean };
 
 const borderXml = (name: string, b: Border) => `<w:${name} w:val="${b.style}" w:color="${att(b.color)}" w:sz="${b.size}"/>`;
 export function table(p: TableProps, rows: string): string {
   const b = p.borders;
   const borders = `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((n) => borderXml(n, b)).join('')}</w:tblBorders>`;
-  return `<w:tbl><w:tblPr>${p.rtl ? '<w:bidiVisual/>' : '<w:bidiVisual w:val="0"/>'}<w:tblW w:type="dxa" w:w="${Math.round(p.width)}"/>${p.indent !== undefined ? `<w:tblInd w:type="dxa" w:w="${Math.round(p.indent)}"/>` : ''}${borders}${p.layoutFixed !== false ? '<w:tblLayout w:type="fixed"/>' : ''}</w:tblPr><w:tblGrid>${p.columns.map((w) => `<w:gridCol w:w="${Math.round(w)}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
+  const fl = p.float ? `<w:tblpPr w:leftFromText="0" w:rightFromText="0" w:topFromText="0" w:bottomFromText="0" w:vertAnchor="page" w:horzAnchor="page" w:tblpX="${Math.round(p.float.x)}" w:tblpY="${Math.round(p.float.y)}"/><w:tblOverlap w:val="overlap"/>` : '';
+  return `<w:tbl><w:tblPr>${fl}${p.rtl ? '<w:bidiVisual/>' : '<w:bidiVisual w:val="0"/>'}<w:tblW w:type="dxa" w:w="${Math.round(p.width)}"/>${p.indent !== undefined ? `<w:tblInd w:type="dxa" w:w="${Math.round(p.indent)}"/>` : ''}${borders}${p.layoutFixed !== false ? '<w:tblLayout w:type="fixed"/>' : ''}</w:tblPr><w:tblGrid>${p.columns.map((w) => `<w:gridCol w:w="${Math.round(w)}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
 }
-export const tableRow = (p: RowProps, cells: string): string => `<w:tr>${p.height ? `<w:trPr><w:trHeight w:val="${Math.round(p.height.value)}" w:hRule="${p.height.rule}"/></w:trPr>` : ''}${cells}</w:tr>`;
+export const tableRow = (p: RowProps, cells: string): string => `<w:tr>${p.height || p.header ? `<w:trPr>${p.height ? `<w:trHeight w:val="${Math.round(p.height.value)}" w:hRule="${p.height.rule}"/>` : ''}${p.header ? '<w:tblHeader/>' : ''}</w:trPr>` : ''}${cells}</w:tr>`;
 export function tableCell(p: CellProps, content: string): string {
   let x = `<w:tcW w:type="dxa" w:w="${Math.round(p.width)}"/>`;
   if (p.span && p.span > 1) x += `<w:gridSpan w:val="${p.span}"/>`;
   if (p.vMerge) x += p.vMerge === 'restart' ? '<w:vMerge w:val="restart"/>' : '<w:vMerge/>';
+  if (p.borders) { const b = p.borders; x += `<w:tcBorders>${borderXml('top', b.top)}${borderXml('left', b.left)}${borderXml('bottom', b.bottom)}${borderXml('right', b.right)}</w:tcBorders>`; }
   if (p.fill) x += `<w:shd w:val="clear" w:color="auto" w:fill="${att(p.fill)}"/>`;
   if (p.margins) { const m = p.margins; x += `<w:tcMar><w:top w:type="dxa" w:w="${Math.round(m.top)}"/><w:left w:type="dxa" w:w="${Math.round(m.left)}"/><w:bottom w:type="dxa" w:w="${Math.round(m.bottom)}"/><w:right w:type="dxa" w:w="${Math.round(m.right)}"/></w:tcMar>`; }
   if (p.vAlign) x += `<w:vAlign w:val="${p.vAlign}"/>`;
@@ -145,7 +163,7 @@ export function tableCell(p: CellProps, content: string): string {
 /** A part of the package that holds paragraphs: the document's body, a header, a footer, the footnotes. Each
  *  keeps its own pictures (relationships are per part). */
 export class Part {
-  readonly rels: { id: string; type: string; target: string }[] = [];
+  readonly rels: { id: string; type: string; target: string; external?: boolean }[] = [];
   readonly images: { name: string; data: Uint8Array }[] = [];
   constructor(readonly doc: DocxWriter) {}
   /** A picture filed under the part: its relationship id for the drawing. */
@@ -158,7 +176,7 @@ export class Part {
     this.doc.media.set(name, data);
     return id;
   }
-  relsXml(): string { return `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${this.rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${att(r.target)}"/>`).join('')}</Relationships>`; }
+  relsXml(): string { return `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${this.rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${att(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('')}</Relationships>`; }
 }
 
 const EMU_PX = 9525; // EMU per CSS pixel (96 dpi)
@@ -212,6 +230,12 @@ export function fontEntry(name: string, d: FontDecl & { arabic?: boolean }, embe
   return `<w:font w:name="${att(name)}">${d.alt && d.alt !== name ? `<w:altName w:val="${att(d.alt)}"/>` : ''}${d.panose && /^[0-9A-F]{20}$/.test(d.panose) && d.panose !== '0'.repeat(20) ? `<w:panose1 w:val="${d.panose}"/>` : ''}<w:charset w:val="${d.charset ?? (d.arabic ? 'B2' : '00')}"/><w:family w:val="${d.family ?? 'auto'}"/><w:pitch w:val="${d.pitch ?? 'variable'}"/><w:sig w:usb0="${hex8(sig.usb[0])}" w:usb1="${hex8(sig.usb[1])}" w:usb2="${hex8(sig.usb[2])}" w:usb3="${hex8(sig.usb[3])}" w:csb0="${hex8(sig.csb[0])}" w:csb1="${hex8(sig.csb[1])}"/>${embeds}</w:font>`;
 }
 
+const R_LINK = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
+/** The heading styles of a document to edit: Word's own names (so its navigation pane, contents and outline know
+ *  them), each with its outline level; the look stays the paragraphs' own (direct formatting). */
+const STRUCTURE_STYLES = [['Title', 'Title', -1], ['Heading1', 'heading 1', 0], ['Heading2', 'heading 2', 1], ['Heading3', 'heading 3', 2]]
+  .map(([id, name, lvl]) => `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="${lvl === -1 ? 10 : 9}"/><w:qFormat/><w:pPr><w:keepNext/><w:keepLines/>${lvl === -1 ? '' : `<w:outlineLvl w:val="${lvl}"/>`}</w:pPr></w:style>`).join('')
+  + '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>';
 export class DocxWriter {
   nextRel = 100; nextDrawing = 1;
   readonly media = new Map<string, Uint8Array>();
@@ -228,6 +252,27 @@ export class DocxWriter {
   private readonly hfParts: { name: string; xml: string; part: Part; kind: 'header' | 'footer' }[] = [];
   private readonly hfRels: { id: string; type: string; target: string }[] = [];
   private nHeaders = 0; private nFooters = 0;
+  /** For a document to edit: the heading styles (Title, Heading 1–3) in styles.xml, so Word's navigation pane and
+   *  automatic contents see the headings. */
+  structure = false;
+  /** numbering.xml: each list's abstract definition and its w:num, by number (see listOf). */
+  private readonly lists: string[] = [];
+  /** A list: its levels (format, text, start, indents in twips), its w:num id (1, 2, …). */
+  listOf(levels: { fmt: string; text: string; start: number; left: number; hanging: number; font?: string }[]): number {
+    const id = this.lists.length + 1;
+    const lv = levels.map((l, i) => `<w:lvl w:ilvl="${i}"><w:start w:val="${Math.max(0, Math.round(l.start))}"/><w:numFmt w:val="${att(l.fmt)}"/><w:lvlText w:val="${att(l.text)}"/><w:lvlJc w:val="left"/><w:pPr><w:tabs><w:tab w:val="num" w:pos="${Math.round(l.left)}"/></w:tabs><w:ind w:start="${Math.round(l.left)}" w:hanging="${Math.round(l.hanging)}"/></w:pPr>${l.font ? `<w:rPr><w:rFonts w:ascii="${att(l.font)}" w:hAnsi="${att(l.font)}" w:cs="${att(l.font)}"/></w:rPr>` : ''}</w:lvl>`).join('');
+    this.lists.push(`<w:abstractNum w:abstractNumId="${id}"><w:multiLevelType w:val="${levels.length > 1 ? 'multilevel' : 'singleLevel'}"/>${lv}</w:abstractNum>`);
+    return id;
+  }
+  /** Footnotes: each note's paragraphs (footnotes.xml), by id (1, 2, …; 0 and -1 are the separators). */
+  private readonly notes: string[] = [];
+  readonly notesPart = new Part(this);
+  footnote(paras: string): number { this.notes.push(paras); return this.notes.length; }
+  /** A link out of the document: its relationship id in the part (TargetMode External). */
+  link(part: Part, url: string): string {
+    const had = part.rels.find((r) => r.target === url && r.type === R_LINK); if (had) return had.id;
+    const id = `rIdL${this.nextRel++}`; part.rels.push({ id, type: R_LINK, target: url, external: true }); return id;
+  }
   constructor(readonly opts: { title?: string; creator?: string; rtl: boolean; defaultFont: Fonts | string }) {}
   newPart(): Part { return new Part(this); }
   mediaName(data: Uint8Array, kind: 'png' | 'jpg'): string {
@@ -264,10 +309,15 @@ export class DocxWriter {
     if (s.footer) { const n = ++this.nFooters; const id = `rIdF${n}`; this.hfParts.push({ name: `footer${n}.xml`, xml: s.footer.xml, part: s.footer.part, kind: 'footer' }); this.hfRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', target: `footer${n}.xml` }); refs.footer = id; }
     // (The section's properties ride in a paragraph of their own at its end, as Word writes them — written with
     // the next section's text, once it is known not to be the last; the last section's close the body.)
-    const before = this.lastSect !== null ? `<w:p><w:pPr>${this.lastSect}</w:pPr></w:p>` : '';
+    // (For text that flows — a document to edit — that paragraph is a hairline: an empty paragraph at the type's size
+    // would add a line to the page wherever a section changes.)
+    const carrier = this.thinSections ? '<w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr>' : '';
+    const before = this.lastSect !== null ? `<w:p><w:pPr>${carrier}${this.lastSect}</w:pPr></w:p>` : '';
     this.lastSect = this.sectPrXml(s, refs);
     this.bodyOut(before + s.children.join(''));
   }
+  /** Section-carrying paragraphs as hairlines (see addSection). */
+  thinSections = false;
   private bodyOut(xml: string): void { if (xml) this.bodyBytes.push(this.enc.encode(this.fixBody(xml))); }
   /** The body's pieces as bytes, to be changed in place (decoded, changed, encoded again) by `fix`; a piece it
    *  returns as it was given stays as it is. */
@@ -305,7 +355,14 @@ export class DocxWriter {
     // (First among the parts, where the whole document was put before.)
     zip.file('word/document.xml', '');
     for (const r of this.body.rels) bodyRels.push(r);
-    zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${bodyRels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${att(r.target)}"/>`).join('')}</Relationships>`);
+    if (this.lists.length) bodyRels.push({ id: 'rIdN1', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering', target: 'numbering.xml' });
+    if (this.notes.length) bodyRels.push({ id: 'rIdFn1', type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes', target: 'footnotes.xml' });
+    zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${bodyRels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${att(r.target)}"${(r as { external?: boolean }).external ? ' TargetMode="External"' : ''}/>`).join('')}</Relationships>`);
+    if (this.lists.length) zip.file('word/numbering.xml', `${XML_HEAD}<w:numbering ${NS_ALL}>${this.lists.join('')}${this.lists.map((_, i) => `<w:num w:numId="${i + 1}"><w:abstractNumId w:val="${i + 1}"/></w:num>`).join('')}</w:numbering>`);
+    if (this.notes.length) {
+      zip.file('word/footnotes.xml', `${XML_HEAD}<w:footnotes ${NS_ALL}><w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>${this.notes.map((x, i) => `<w:footnote w:id="${i + 1}">${x || '<w:p/>'}</w:footnote>`).join('')}</w:footnotes>`);
+      if (this.notesPart.rels.length) zip.file('word/_rels/footnotes.xml.rels', this.notesPart.relsXml());
+    }
     for (const p of parts) {
       const tag = p.kind === 'header' ? 'w:hdr' : 'w:ftr';
       zip.file(`word/${p.name}`, `${XML_HEAD}<${tag} ${NS_ALL}>${p.xml || '<w:p/>'}</${tag}>`);
@@ -314,7 +371,7 @@ export class DocxWriter {
     for (const [name, data] of this.media) zip.file(`word/media/${name}`, data);
     // Styles: the document's default run and paragraph, and a Normal style.
     const df = this.opts.defaultFont;
-    zip.file('word/styles.xml', `${XML_HEAD}<w:styles xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ${NS_W} xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" mc:Ignorable="w14 w15"><w:docDefaults><w:rPrDefault><w:rPr>${fontsXml(df)}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:name w:val="Normal"/><w:qFormat/></w:style></w:styles>`);
+    zip.file('word/styles.xml', `${XML_HEAD}<w:styles xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ${NS_W} xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" mc:Ignorable="w14 w15"><w:docDefaults><w:rPrDefault><w:rPr>${fontsXml(df)}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:name w:val="Normal"/><w:qFormat/></w:style>${this.structure ? STRUCTURE_STYLES : ''}</w:styles>`);
     zip.file('word/settings.xml', `${XML_HEAD}<w:settings ${NS_ALL}><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`);
     // Fonts carried in the file: each obfuscated as Word wants it (its first 32 bytes XORed with a key the
     // table names).
@@ -345,6 +402,8 @@ export class DocxWriter {
       ['/docProps/core.xml', 'application/vnd.openxmlformats-package.core-properties+xml'],
       ['/docProps/app.xml', 'application/vnd.openxmlformats-officedocument.extended-properties+xml'],
       ...parts.map((p) => [`/word/${p.name}`, `application/vnd.openxmlformats-officedocument.wordprocessingml.${p.kind}+xml`]),
+      ...(this.lists.length ? [['/word/numbering.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml']] : []),
+      ...(this.notes.length ? [['/word/footnotes.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml']] : []),
     ];
     zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default ContentType="image/png" Extension="png"/><Default ContentType="image/jpeg" Extension="jpeg"/><Default ContentType="image/jpeg" Extension="jpg"/><Default ContentType="application/vnd.openxmlformats-package.relationships+xml" Extension="rels"/><Default ContentType="application/xml" Extension="xml"/><Default ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont" Extension="odttf"/>${overrides.map(([n, c]) => `<Override ContentType="${c}" PartName="${n}"/>`).join('')}</Types>`);
     return zip;

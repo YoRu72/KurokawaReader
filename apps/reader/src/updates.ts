@@ -212,12 +212,12 @@ export async function kurokawaInstall(kr: AndroidApk, path: string): Promise<voi
   const title = h('div', { class: 'inst-title' }, h('b', null, '…')); const meta = h('p', { class: 'hint', dir: 'auto' }, t('installerReading'));
   const bar = h('div', { class: 'wave-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('i')); const setP = (pct: number) => { bar.style.setProperty('--p', `${pct}%`); bar.setAttribute('aria-valuenow', String(pct)); };
   const status = h('p', { class: 'hint inst-status', dir: 'auto' }); const warn = h('p', { class: 'hint inst-warn', dir: 'auto', hidden: true });
-  const go = h('button', { type: 'button', class: 'btn primary', disabled: true }, icon('check'), t('install')) as HTMLButtonElement;
-  sh.body.append(h('div', { class: 'inst-card' }, title, meta, warn), bar, status, h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px', marginTop: '10px' } }, go));
+  const go = h('button', { type: 'button', class: 'btn primary inst-go', disabled: true }, t('install')) as HTMLButtonElement;
+  sh.body.append(h('div', { class: 'inst-card' }, title, meta, warn), bar, status, h('div', { class: 'inst-actions' }, go));
   let info: ApkInfo | null = null;
   try { info = await kr.apkInfo!({ path }); } catch { meta.textContent = t('installerNotApk'); return; }
   const same = info.sameApp;
-  title.replaceChildren(h('b', { dir: 'auto' }, info.label), h('small', { dir: 'ltr' }, ` ${info.installed && info.installedVersion ? `${info.installedVersion} → ` : ''}${info.version}`));
+  title.replaceChildren(h('bdi', { class: 'inst-name' }, h('b', null, info.label)), h('bdi', { class: 'inst-ver', dir: 'ltr' }, h('small', null, `${info.installed && info.installedVersion ? `${info.installedVersion} → ` : ''}${info.version}`)));
   meta.textContent = `${info.package} · ${fmtSize(info.size)}${info.bundle ? ` · ${t('installerBundle', { n: info.parts ?? 0 })}` : ''}`;
   if (info.installed && info.signerMatch === false) { warn.hidden = false; warn.textContent = t('installerSignerMismatch'); }
   else if (!same) { warn.hidden = false; warn.textContent = t('installerOtherApp', { app: info.label }); }
@@ -440,7 +440,7 @@ export function showUpdateSheet(rel: ReleaseInfo, opts: { rustSwitch?: boolean }
 }
 
 export function renderUpdateCard(container: HTMLElement): void {
-  const status = h('p', null, lastChecked() ? t('lastChecked', { d: new Date(lastChecked()).toLocaleString() }) : '');
+  const status = h('p', null, lastChecked() > 1e12 ? t('lastChecked', { d: new Date(lastChecked()).toLocaleString() }) : t('notCheckedYet'));
   const cb = h('input', { type: 'checkbox', onchange: () => updateSettings({ autoUpdateCheck: cb.checked }) }) as HTMLInputElement;
   cb.checked = getSettings().autoUpdateCheck;
   const btn = h('button', { class: 'btn small tonal', onclick: async () => {

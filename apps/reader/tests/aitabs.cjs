@@ -40,7 +40,7 @@ const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: 
   });
   await p.route('https://ai.test/**', (r) => r.request().method() === 'OPTIONS' ? r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, GET' } }) : r.fallback());
   await p.goto(`http://localhost:${port}/`);
-  await p.evaluate((lang) => { localStorage.setItem('kr.lang', lang); localStorage.setItem('kr.update.lastCheck', String(Date.now())); const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, { aiProvider: 'custom', aiBaseUrl: 'https://ai.test/v1', aiKey: 'k', aiModel: 'm', aiTarget: 'ar', aiTask: 'translate' }); localStorage.setItem('kr.visual', JSON.stringify(v)); }, LANG);
+  await p.evaluate((lang) => { localStorage.setItem('kr.lang', lang); localStorage.setItem('kr.update.lastCheck', String(Date.now())); const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, { aiProvider: 'custom', aiBaseUrl: 'https://ai.test/v1', aiKey: 'k', aiModel: 'm', aiTarget: 'ar', aiTask: 'translate', aiGatherNames: 'never' }); localStorage.setItem('kr.visual', JSON.stringify(v)); }, LANG);
   await p.reload(); await p.waitForSelector('.library-view');
   await p.setInputFiles('input[type=file]', [v1, v2]); await p.waitForSelector('.book-card', { timeout: 60000 }); await p.waitForFunction(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').count(); q.onsuccess = () => res(q.result >= 2); }; }), null, { timeout: 30000 }); await p.waitForTimeout(1000);
   const ids = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(Object.fromEntries(q.result.map((x) => [x.title, x.id]))); }; }));
@@ -108,9 +108,11 @@ const shot = async (p, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: 
   await p.click('.gloss-file[data-kind="person"]'); await p.waitForSelector('.gloss-row');
   const rows = await p.$$eval('.gloss-row .gloss-from', (e) => e.map((x) => x.value)); ok('a file opened: its terms', rows.join() === 'Lin Feng,Wen Yu', rows);
   await shot(p, 'R8-file-characters.png');
-  await p.fill('.gloss-search', 'palm'); await p.waitForTimeout(200);
-  ok('the search looks through the whole folder', (await p.$$eval('.gloss-row .gloss-from', (e) => e.map((x) => x.value))).join() === 'Iron Palm');
-  await p.fill('.gloss-search', ''); await p.click('.gloss-back'); await p.waitForSelector('.gloss-files');
+  await p.fill('.gloss-search', 'palm'); await p.waitForSelector('.gloss-hit', { timeout: 4000 });
+  ok('the search looks through the whole folder (results by file; the match marked)', (await p.$$eval('.gloss-hit .gloss-hit-from', (e) => e.map((x) => x.textContent))).join() === 'Iron Palm' && (await p.$eval('.gloss-hit .gloss-mark', (e) => e.textContent)) === 'Palm');
+  await p.click('.gloss-hit'); await p.waitForSelector('.gloss-row .gloss-from');
+  ok('a result tapped opens its file for editing, the search cleared', (await p.$eval('.gloss-search', (e) => e.value)) === '' && (await p.$eval('.gloss-file-now b', (e) => e.textContent)) === 'Skills' && (await p.$$eval('.gloss-row .gloss-from', (e) => e.map((x) => x.value))).includes('Iron Palm'));
+  await p.click('.gloss-back'); await p.waitForSelector('.gloss-files');
 
   // Tabs: switched without closing the sheet; each keeps its state; arrow keys; the row fits the phone.
   await p.evaluate(() => { document.querySelector('.ai-sheet').__mark = 1; });

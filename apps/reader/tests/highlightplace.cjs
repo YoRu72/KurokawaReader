@@ -98,6 +98,10 @@ const marks = (p) => p.evaluate(() => { const ms = [...document.querySelectorAll
     ok(tag + 'selected the second place', await select(p, second, phrase));
     await highlightSelection(p);
     let m = await marks(p); ok(tag + 'marked at once at the second place', m.paras.length === 1 && m.paras[0].includes(second), m);
+    await p.evaluate(() => { document.querySelector('.reader-flow mark.kr-hl').click(); }); await p.waitForSelector('.hl-sheet .sheet-actions .btn', { timeout: 5000 });
+    const hb = await p.$$eval('.hl-sheet .sheet-actions .btn', (b) => b.map((x) => { const r = x.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+    ok(tag + 'the highlight sheet\'s two buttons are as wide as each other, at least 40 px high', hb.length === 2 && Math.abs(hb[0][0] - hb[1][0]) <= 1 && hb.every((x) => x[1] >= 40), hb);
+    await p.keyboard.press('Escape'); await p.evaluate(() => document.querySelector('.hl-sheet .sheet-head button')?.click()); await p.waitForTimeout(400);
     await p.reload(); await p.waitForSelector('.reader-flow .kr-content'); await p.waitForTimeout(900);
     m = await marks(p); ok(tag + 'opened again: the highlight is at the second place, not the first', m.n > 0 && m.paras.length === 1 && m.paras[0].includes(second) && !m.paras[0].includes(first), m);
     // a note on the first place of the same words: both come back, each at its own

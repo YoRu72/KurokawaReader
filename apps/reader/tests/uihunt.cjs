@@ -13,6 +13,7 @@ const di = args.indexOf('--dev'); const DEV = di >= 0 ? args[di + 1] : '';
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.resolve(__dirname, '../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.epub': 'application/epub+zip', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); res.end(fs.readFileSync(f)); });
+const { makeCbz } = require('./helpers/comicfixture.cjs');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-uihunt-')); const SHOTS = process.env.KR_SHOTS; if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
 // The books (made here): a Japanese text (the reading-dictionary notice), a PDF, and the two sample epubs the build ships.
@@ -24,6 +25,21 @@ async function makePdf(file, pages) {
   fs.writeFileSync(file, await d.save());
 }
 
+
+// Comics in archives (0.67, S5c): a long tar held half-way (the archive worker's «next» slowed), a protected zip waiting for its password, and a tar of
+// text only (its message). archClear gives the job up, closes what is open and lets the page's Worker go back to its own; nothing is left in the library.
+let archSeeded = false; const arch = {};
+const archGive = async (p, file) => {
+  await p.setInputFiles('.library-view input[type=file]', file);
+  if (await p.waitForSelector('.sheet .dest-list', { timeout: 3000 }).then(() => true, () => false)) { await p.evaluate(() => [...document.querySelectorAll('.sheet:has(.dest-list) .sheet-actions button')].pop()?.click()); await p.waitForTimeout(200); }
+};
+const archSlow = (p) => p.evaluate(() => { if (window.__realWorker) return; const W = window.Worker; window.__realWorker = W; window.Worker = function (url, o) { const w = new W(url, o); if (String(url).includes('archiveworker')) { const post = w.postMessage.bind(w); w.postMessage = (m, t) => { if (m && m.op === 'next') setTimeout(() => post(m, t), 60); else post(m, t); }; } return w; }; });
+const archClear = async (p) => {
+  await p.evaluate(() => { document.querySelector('.job-chip')?.click(); }); await p.waitForTimeout(150);
+  await p.evaluate(() => { document.querySelector('.job-row .btn')?.click(); document.querySelector('.password-sheet .btn.text')?.click(); delete window.kurokawaDesktop; if (window.__realWorker) { window.Worker = window.__realWorker; delete window.__realWorker; } });
+  await p.waitForTimeout(500); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+};
+
 const SETTING_COUNT = 26; // the sections of Settings, counted by position (s-0 ...); one that is not on this device is skipped
 const lib = (hash) => async (p) => { await p.evaluate((h) => { location.hash = h; }, hash); };
 // kind of book -> a function opening it on the reading screen (the id from the library's own store)
@@ -32,16 +48,64 @@ const idOf = async (p, re) => (await allBooks(p)).find((b) => re.test(b.title) |
 const openBook = (re, ready) => async (p) => { const id = await idOf(p, re); if (!id) throw new Error('no book ' + re); await p.evaluate((id) => { location.hash = '#/'; setTimeout(() => { location.hash = `#/read/${id}`; }, 150); }, id); await p.waitForSelector(ready, { timeout: 30000 }); await p.waitForTimeout(1100); };
 const command = (c) => async (p) => { await p.evaluate((c) => document.dispatchEvent(new CustomEvent('kr:command', { detail: c })), c); await p.waitForTimeout(700); };
 const waitNotice = async (p) => { await p.evaluate(() => document.querySelector('.panel.open .panel-head .icon-btn')?.click()); await p.waitForTimeout(500); await p.evaluate(() => document.querySelector('.reader-view')?.classList.remove('immersive')); try { await p.waitForSelector('.kr-notice', { timeout: 10000 }); } catch (e) { const st = await p.evaluate(() => ({ panel: [...document.querySelectorAll('.panel.open')].length, sheet: document.querySelectorAll('.sheet').length, hash: location.hash, dict: !!document.querySelector('.reader-flow ruby'), visual: localStorage.getItem('kr.visual') })); throw new Error('no notice: ' + JSON.stringify(st)); } };
+// A view that made up an AI provider (aiSeed) or kept translations leaves nothing behind for the views after it: aiClear puts the settings and the
+// translator's per-book meta back (a leaked «Start translating by itself» or kept translation puts the translation bar into every reading view after it).
+let seeded = false;
+const aiClear = async (p) => { await p.evaluate(() => new Promise((res) => { localStorage.setItem('kr.visual', JSON.stringify({ furigana: true })); sessionStorage.clear(); const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('meta', 'readwrite'); const st = tx.objectStore('meta'); st.getAllKeys().onsuccess = (e) => { for (const k of e.target.result) if (/^tr/.test(String(k))) st.delete(k); }; tx.oncomplete = () => res(1); }; })); await p.reload(); await p.waitForSelector('.library-view', { timeout: 15000 }); await p.waitForTimeout(300); };
+const aiSeed = async (p) => { seeded = true; await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, { aiProvider: 'custom', aiBaseUrl: 'https://ai.test/v1', aiKey: 'k', aiModel: 'm', aiTarget: 'ar', aiTask: 'translate', aiPrefetch: false }); localStorage.setItem('kr.visual', JSON.stringify(v)); }); await p.reload(); await p.waitForSelector('.library-view', { timeout: 15000 }); await p.waitForTimeout(400); };
+// The library helpers' views (0.67): they seed settings (aiClear puts them back and reloads) and, for the notes and the yearly goal, made-up
+// highlights and finished marks (dataClear takes them out of every book again) — so no view after them sees anything of it.
+let dataSeeded = false;
+// The updates / extension-search views (0.67, S4b): a followed work with news and two made-up repositories are seeded; sourcesClear takes them out again.
+let srcSeeded = false;
+const sourcesClear = async (p) => { await p.evaluate(() => new Promise((res) => { localStorage.removeItem('kr.ext.installed'); const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction(['books', 'meta'], 'readwrite'); tx.objectStore('books').delete('hunt-follow'); tx.objectStore('meta').delete('sources:repos'); tx.oncomplete = () => res(1); }; })); };
+const mkExt = (id, name, lang, version) => ({ id, name, lang, site: 'https://x.test/', version, url: `https://code.test/${id}.js`, kind: 'lnreader', runnable: true, itemType: 'novel' });
+const seedSources = (p) => { srcSeeded = true; return p.evaluate(([a, b]) => new Promise((res) => { localStorage.setItem('kr.ext.installed', JSON.stringify({ 'ra:p1': '1.0.0', 'ra:p3': '0.9.0' })); const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction(['books', 'meta'], 'readwrite'); tx.objectStore('books').put({ id: 'hunt-follow', title: 'A Made-up Followed Novel', format: 'webnovel', fileName: 'x.json', size: 1, addedAt: Date.now(), remote: { source: 'ext:ra:p1', id: '/n/1', newChapters: 3, checkedAt: Date.now() } }); tx.objectStore('meta').put([{ key: 'ra', url: 'https://a.test/i.json', given: 'https://a.test/i.json', name: 'Lantern Repo', kind: 'lnreader', addedAt: 1, fetchedAt: 1, items: a }, { key: 'rb', url: 'https://b.test/i.json', given: 'https://b.test/i.json', name: 'Harbour Index', kind: 'lnreader', addedAt: 2, fetchedAt: 1, items: b }], 'sources:repos'); tx.oncomplete = () => res(1); }; }), [[mkExt('p1', 'Cafe Chronicles', 'en', '1.0.0'), mkExt('p2', 'Zeta Tales', 'ar', '2.0.0'), mkExt('p3', 'Shared Stories', 'en', '1.0.0')], [mkExt('q1', 'Shared Stories', 'en', '1.1.0'), mkExt('q2', 'Another Tale', 'ja', '1.0.0')]]); };
+const dataClear = async (p) => { await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { for (const b of e.target.result) { b.highlights = []; b.bookmarks = []; delete b.done; delete b.doneAt; delete b.titles; delete b.series; st.put(b); } }; tx.oncomplete = () => res(1); }; })); };
+const visual = (p, patch) => p.evaluate((patch) => { const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, patch); localStorage.setItem('kr.visual', JSON.stringify(v)); }, patch);
+const reloadLib = async (p) => { await p.reload(); await p.waitForSelector('.library-view .book-card', { timeout: 20000 }); await p.waitForTimeout(500); };
+const DETAILS = { en: 'Edit details', ar: 'تحرير التفاصيل' };
+const bulkOpen = async (p) => {
+  seeded = true;
+  await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view .book-card[data-book]', { timeout: 15000 });
+  await p.click('.library-view .tool-btn[aria-pressed]'); await p.waitForSelector('.sel-head');
+  const ids = await p.$$eval('.book-card[data-book]', (e) => e.slice(0, 3).map((x) => x.dataset.book));
+  for (const id of ids) { await p.click(`.book-card[data-book="${id}"]`); await p.waitForTimeout(80); }
+  const label = DETAILS[await p.evaluate(() => localStorage.getItem('kr.lang'))] || DETAILS.en;
+  const direct = await p.evaluate((l) => { const x = [...document.querySelectorAll('.sel-actions .sel-act')].find((e) => e.getAttribute('aria-label') === l); if (x) { x.click(); return true; } return false; }, label);
+  if (!direct) { await p.evaluate(() => [...document.querySelectorAll('.sel-actions .sel-act')].pop().click()); await p.waitForSelector('.sheet .dest-row'); await p.evaluate((l) => [...document.querySelectorAll('.sheet .dest-row')].find((e) => e.textContent.trim() === l).click(), label); }
+  await p.waitForSelector('.bulk-sheet .bulk-author', { timeout: 8000 });
+};
 const wake = async (p) => { await p.evaluate(() => { document.querySelector('.reader-view')?.classList.remove('immersive'); }); await p.waitForTimeout(300); };
 const settingsSec = (i) => async (p) => {
   await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached', timeout: 15000 });
   const has = await p.evaluate((i) => !!document.getElementById('s-' + i), i); if (!has) throw new Error('SKIP');
   await p.evaluate((i) => { const nav = document.querySelector(`.settings-nav [data-sec="s-${i}"]`); if (document.documentElement.classList.contains('pc')) nav?.click(); else document.getElementById('s-' + i).classList.remove('collapsed'); }, i);
 };
+/** The made-up comic open in the comic reader, its bars shown; the zones' overlay closed unless `zones`. */
+const openComic = async (p, zones = false) => {
+  await openBook(/hunt-comic/, '.cm-view')(p);
+  await p.waitForFunction(() => window.__krComic && window.__krComic.openMs > 0, null, { timeout: 15000 });
+  if (zones) { await p.waitForSelector('.cm-zones .cm-zone', { timeout: 5000 }); return; }
+  if (await p.$('.cm-zones')) { await p.mouse.click(5, 5); await p.waitForFunction(() => !document.querySelector('.cm-zones'), null, { timeout: 3000 }); }
+  await wake(p);
+};
 const VIEWS = [
   ['library', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view .book-card', { timeout: 15000 }); }],
   ['stats', async (p) => { await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view'); await p.click('.library-view [title="Reading statistics"], .library-view [aria-label="Reading statistics"], .library-view button:has(svg) >> nth=0').catch(() => {}); await p.evaluate(() => { [...document.querySelectorAll('.library-view .icon-btn, .library-view button')].find((b) => /chart|stat|إحصاء|إحصائ/i.test((b.title || '') + (b.getAttribute('aria-label') || '')))?.click(); }); await p.waitForSelector('.sheet, .stats-view, .panel.open', { timeout: 8000 }); }],
+  ['sources-bell', async (p) => { await seedSources(p); await p.evaluate(() => { location.hash = '#/sources'; }); await p.reload(); await p.waitForSelector('.bell-btn:not([hidden])', { timeout: 15000 }); await p.click('.bell-btn'); await p.waitForSelector('.updates-sheet .upd-row', { timeout: 8000 }); await p.waitForTimeout(500); }],
+  ['sources-extsearch', async (p) => { await seedSources(p); await p.evaluate(() => { location.hash = '#/sources'; }); await p.reload(); await p.waitForSelector('.ext-search-field', { timeout: 15000 }); await p.fill('.ext-search-field', 'shared'); await p.waitForSelector('.ext-hit', { timeout: 5000 }); await p.waitForTimeout(500); }],
+  ['settings-updates', async (p) => { await seedSources(p); await p.evaluate(() => { location.hash = '#/settings'; }); await p.reload(); await p.waitForFunction(() => { const c = document.querySelector('.upd-card'); const b = c && document.querySelector(`.settings-nav [data-sec="${c.id}"]`); return !!b && !b.hidden; }, null, { timeout: 15000 }); await p.evaluate(() => { const c = document.querySelector('.upd-card'); const nav = document.querySelector(`.settings-nav [data-sec="${c.id}"]`); if (document.documentElement.classList.contains('pc')) nav?.click(); else c.classList.remove('collapsed'); }); await p.waitForTimeout(500); }],
   ['sources', lib('#/sources')], ['catalog', lib('#/catalog')], ['notes', lib('#/notes')],
+  // The converter sheet for a PDF (src/ui/convert.ts): its options, PDF → Word's «Result» (easy to edit / exact look) among them.
+  ['convert-pdf', async (p) => {
+    await p.evaluate(() => { location.hash = '#/'; }); await p.waitForSelector('.library-view .book-card', { timeout: 15000 });
+    const id = await idOf(p, /^pages/); const pdfCard = await p.$(`.library-view .book-card[data-book="${id}"]`);
+    // (A phone shows the selection's actions, Convert under More; a computer the card's menu, Convert in it.)
+    await pdfCard.dispatchEvent('contextmenu'); await p.waitForSelector('.sel-actions, .sheet');
+    const conv = '.sel-actions button:has-text("Convert"), .sel-actions button:has-text("تحويل")';
+    if (!(await p.$(conv))) { if (await p.$('.sel-actions')) { await p.click('.sel-actions button:has-text("More"), .sel-actions button:has-text("المزيد")'); await p.waitForSelector('.sheet'); } await p.waitForTimeout(400); await p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /^(Convert|تحويل)$/.test(x.textContent.trim())); if (!b) throw new Error('no Convert'); b.click(); }); } else await p.click(conv);
+    await p.waitForSelector('.conv-docx-opts:not([hidden]) .segmented button', { timeout: 10000 }); await p.waitForTimeout(300); }],
   ['book', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-view, .book-page, .view', { timeout: 10000 }); }],
   // The book's «Edit title and author» sheet (src/ui/booknames.ts): with another title to show the rows and the keep switch.
   ['book-edit-names', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(300); await p.evaluate(() => [...document.querySelectorAll('.book-tile')].find((x) => x.querySelector('svg') && /^(Edit|تعديل)/.test(x.textContent.trim())).click()); await p.waitForSelector('.names-shown'); await p.fill('.names-add', 'Another title'); await p.keyboard.press('Enter'); await p.fill('.names-shown', 'A new shown title'); await p.waitForTimeout(250); }],
@@ -79,17 +143,116 @@ const VIEWS = [
     await p.evaluate(() => { const e = [...document.querySelectorAll('.kr-content > section')].find((x) => x.getClientRects().length && x.textContent.trim().length > 40); if (!e) throw new Error('no chapter on screen'); const r = document.createRange(); r.selectNodeContents(e); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }); await p.waitForTimeout(500); await p.evaluate(() => document.dispatchEvent(new Event('selectionchange'))); await p.waitForTimeout(500);
     await p.evaluate(() => { const b = [...document.querySelectorAll('.sel-toolbar button')].find((x) => /Text as image|صوِّر النص/.test(x.textContent)); if (!b) throw new Error('no Text as image button'); b.click(); }); await p.waitForSelector('.snap-sheet .snap-preview', { timeout: 8000 }).catch(async () => { throw new Error('no card: ' + await p.evaluate(() => [...document.querySelectorAll('.sheet,.toast')].map((x) => x.className + ':' + x.textContent.slice(0, 60)).join(' | '))); }); await p.waitForSelector('.snap-sheet .textpic-author', { timeout: 3000, state: 'attached' }); if (!(await p.isVisible('.snap-sheet .textpic-author'))) { await p.evaluate(() => document.querySelector('.snap-sheet .sheet-actions button').click()); await p.waitForSelector('.snap-sheet .textpic-author', { timeout: 8000 }); } await p.waitForTimeout(600);
     await p.evaluate(() => { const b = document.querySelector('.snap-sheet .sheet-body'); b.scrollTop = b.scrollHeight; }); await p.waitForTimeout(300); }],
+  // A glossary name's card in the text (src/ui/glosscard.ts): a made-up glossary for «Alice» (every book), the name clicked where it is marked.
+  ['read-gloss-card', async (p) => {
+    await p.evaluate(() => { localStorage.setItem('kr.glossary', JSON.stringify([{ id: 'g1', from: 'Alice', to: 'أليس', lang: 'ar', kind: 'person', alts: ['أليسة'], note: 'A made-up note' }, { id: 'g2', from: 'Alice', to: 'アリス', lang: 'ja', kind: 'person' }])); });
+    await p.reload(); await p.waitForSelector('.library-view', { timeout: 15000 });
+    await openBook(/alice/i, '.reader-flow .kr-content')(p);
+    await p.waitForFunction(() => (CSS.highlights?.get('kr-gloss')?.size ?? 0) > 0, null, { timeout: 15000 });
+    const at = await p.evaluate(async () => { const first = [...CSS.highlights.get('kr-gloss')][0]; first.startContainer.parentElement.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 400)); const sr = document.querySelector('.reader-scroll').getBoundingClientRect(); for (const r of CSS.highlights.get('kr-gloss')) { const q = r.getClientRects()[0]; if (q && q.top > sr.top + 40 && q.bottom < sr.bottom - 300) return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; } return null; });
+    if (!at) throw new Error('no name on the screen ' + JSON.stringify(await p.evaluate(() => { const sr = document.querySelector('.reader-scroll').getBoundingClientRect(); return { n: CSS.highlights.get('kr-gloss').size, sr: [sr.top, sr.bottom], rects: [...CSS.highlights.get('kr-gloss')].slice(0, 5).map((r) => { const q = r.getClientRects()[0]; return q && [Math.round(q.top), Math.round(q.bottom)]; }) }; }))); await p.mouse.click(at.x, at.y); await p.waitForSelector('.gloss-card', { timeout: 6000 }); await p.waitForTimeout(500); }],
+  // The Kurokawa Installer's sheet (src/updates.ts), Android faked (no native part): the update sheet's button, the sheet read at rest.
+  ['installer-sheet', async (p) => {
+    await p.route('https://api.github.com/**', (r) => r.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify([{ tag_name: 'v0.99.0', name: 'v0.99.0', body: '- A made-up change', html_url: 'https://example.invalid/r', published_at: '2026-11-20T10:00:00Z', prerelease: false, draft: false, assets: [{ name: 'KurokawaReader-0.99.0-universal.apk', size: 31457280, browser_download_url: 'https://example.invalid/a.apk', digest: '' }] }]) }));
+    await p.evaluate(() => {
+      const L = {}; const mock = { getPlatform: () => 'android', isNativePlatform: () => true, Plugins: { Filesystem: {}, Kurokawa: {
+        deviceInfo: async () => ({ abis: ['arm64-v8a'] }), installerAvailable: async () => ({ canInstall: true }), canInstall: async () => ({ granted: true }), cachedFile: async () => ({}), downloadFile: async () => ({ path: '/x/a.apk', size: 1 }), cancelDownload: async () => undefined,
+        addListener: async (ev, fn) => { (L[ev] = L[ev] || []).push(fn); return { remove() {} }; }, installApk: async () => undefined,
+        apkInfo: async () => ({ label: 'KurokawaReader', package: 'com.example.reader', version: '0.99.0', versionCode: 99, size: 31457280, sameApp: true, installed: true, installedVersion: '0.66.0', signerMatch: true, minSdk: 24 }),
+        apkInstall: async () => ({ id: 'x' }) } } };
+      window.__fakeAndroid = true; Object.defineProperty(window, 'Capacitor', { configurable: true, get: () => (window.__fakeAndroid ? mock : undefined) });
+    });
+    await p.evaluate(() => { location.hash = '#/settings'; }); await p.waitForSelector('.settings-body .card', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('.settings-body .card.collapsed').forEach((c) => c.classList.remove('collapsed')));
+    await p.evaluate(() => { const bt = [...document.querySelectorAll('.settings-body button')].find((x) => x.querySelector('svg') && /Check for updates|التحقّق|التحقق/i.test(x.textContent)); if (!bt) throw new Error('no check button'); bt.scrollIntoView(); bt.click(); });
+    await p.waitForSelector('.update-sheet .upd-go', { timeout: 10000 }); await p.click('.update-sheet .upd-go'); await p.waitForSelector('.inst-go:not([disabled])', { timeout: 10000 });
+    await p.evaluate(() => { window.__fakeAndroid = false; }); await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 5000 }).catch(() => undefined); }, 'phone'],
+  // The AI translator's question and new settings rows (src/ui/gather.ts, src/ui/aisettings.ts, src/ui/glossarysheet.ts): the provider made up (nothing is sent).
+  ['translate-question', async (p) => {
+    await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'translate' }))); await p.waitForSelector('.gather-sheet .gather-go', { timeout: 10000 });
+    await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 4000 }).catch(() => undefined); }],
+  // The same question for a book whose former volume's glossary is in use (the long primary label), at 360 and 412 wide: the label stays
+  // inside its button; when the two labels do not fit side by side the buttons stack at full width (src/ui/dom.ts stackWhenCramped).
+  ...[360, 412].map((w) => ['translate-question-volume-' + w, async (p) => {
+    await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'translate' }))); await p.waitForSelector('.gather-sheet .gather-go', { timeout: 10000 });
+    await p.evaluate(() => { const ar = document.documentElement.dir === 'rtl'; const s = document.querySelector('.gather-sheet'); s.querySelector('.gather-go').textContent = ar ? 'فحص المجلد بحثًا عن مصطلحات جديدة' : 'Check this volume for new terms'; const line = document.createElement('p'); line.className = 'gather-volume'; line.setAttribute('role', 'status'); line.textContent = ar ? 'يُستعمل مسرد «⁨Gate Story Vol. 1⁩»' : 'The glossary of Gate Story Vol. 1 is in use'; s.querySelector('.sheet-body').prepend(line); });
+    await p.setViewportSize({ width: w - 1, height: 915 }); await p.waitForTimeout(150); await p.setViewportSize({ width: w, height: 915 });
+    await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 4000 }).catch(() => undefined); await p.waitForTimeout(300); }, 'phone']),
+  // The translation bar (src/ui/translator.ts) at 360 and 412 wide: a kept translation brings it up without any request; its buttons keep 40 px and a gap, the status
+  // (made long) takes its own row. Also: with the default settings a freshly opened book shows no bar (tests/aitranslateflow.cjs).
+  ...[360, 412].map((w) => ['translation-pill-' + w, async (p) => {
+    await aiSeed(p); const id = await idOf(p, /nihongo/);
+    await p.evaluate((id) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('meta', 'readwrite'); tx.objectStore('meta').put({ x: 'y' }, 'tr:' + id); tx.oncomplete = () => res(1); }; }), id);
+    await openBook(/nihongo/, '.reader-flow .kr-content')(p); await wake(p); await p.waitForSelector('.tr-pill:not([hidden])', { timeout: 10000 });
+    await p.evaluate(() => { document.querySelector('.tr-pill .tr-status').textContent = document.documentElement.dir === 'rtl' ? 'تُترجَم الفقرة 12 من 40' : 'Translating paragraph 12 of 40'; });
+    await p.setViewportSize({ width: w - 1, height: 915 }); await p.waitForTimeout(150); await p.setViewportSize({ width: w, height: 915 });
+    await p.waitForFunction(() => document.getAnimations().length === 0, null, { timeout: 4000 }).catch(() => undefined); await p.waitForTimeout(300); }, 'phone']),
+  // «Save the translation as EPUB» (src/ui/trepubsheet.ts): the sheet over a book with something kept that matches nothing now (the one line saying so);
+  // its form with real saved translations is read in tests/translatedepub.cjs. Nothing is sent. (Phone only: it is a sheet.)
+  ['translate-export', async (p) => {
+    await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p);
+    await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 10000 });
+    await p.click('.ai-tab[data-tab="saved"]'); await p.waitForSelector('.ai-epub', { timeout: 8000 });
+    const id = await idOf(p, /nihongo/);
+    await p.evaluate((id) => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('meta', 'readwrite'); tx.objectStore('meta').put({ x: 'y' }, 'tr:' + id); tx.oncomplete = () => res(1); }; }), id);
+    await p.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => (e.__close ? e.__close() : e.remove())));
+    await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 10000 });
+    await p.click('.ai-tab[data-tab="saved"]'); await p.waitForSelector('.ai-epub:not([disabled])', { timeout: 8000 }); await p.click('.ai-epub'); await p.waitForSelector('.tre-sheet .tre-status:not([hidden]), .tre-sheet .tre-form:not([hidden])', { timeout: 20000 }); await p.waitForTimeout(500);
+  }, 'phone'],
+  ['ai-translation-auto', async (p) => {
+    await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .ai-tab', { timeout: 10000 });
+    await p.click('.ai-sheet .ai-tab[data-tab="translation"]'); await p.waitForSelector('.tr-auto-book button', { timeout: 8000 }); await p.click('.tr-auto-start'); await p.locator('.tr-auto-book').scrollIntoViewIfNeeded(); await p.waitForTimeout(400); }],
+  ['ai-glossary-options', async (p) => {
+    await aiSeed(p); await openBook(/nihongo/, '.reader-flow .kr-content')(p); await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'glossary' }))); await p.waitForSelector('.ai-sheet .gloss-opts summary', { timeout: 10000 });
+    await p.click('.ai-sheet .gloss-opts summary'); await p.waitForSelector('.gloss-gather-mode button', { timeout: 8000 }); await p.locator('.gloss-gather-mode').scrollIntoViewIfNeeded(); await p.waitForTimeout(400); }],
+  // «Edit details» for several books (src/ui/bulkdetails.ts): three chosen, an author and a series typed, numbering in the order chosen (the preview list).
+  ['library-bulk-details', async (p) => { await bulkOpen(p); await p.fill('.bulk-author', 'A Made-up Author'); await p.fill('.bulk-series', 'A Made-up Series'); await p.evaluate(() => { const i = [...document.querySelectorAll('.bulk-sheet .bulk-switch input')][1]; i.checked = true; i.dispatchEvent(new Event('change', { bubbles: true })); }); await p.waitForTimeout(300); }],
+  // The language chips (the sample books are in English and Arabic, the others carry none) with one of them chosen.
+  ['library-language', async (p) => { seeded = true; await visual(p, { languageFilter: ['en'] }); await reloadLib(p); await p.waitForSelector('.lang-chip', { timeout: 8000 }); }],
+  // The notes page's search (src/views/notes.ts): made-up highlights with notes on two books, a word typed.
+  ['notes-search', async (p) => {
+    seeded = true; dataSeeded = true;
+    await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { let k = 0; for (const b of e.target.result.filter((x) => /nihongo|pages/i.test(x.fileName))) { b.highlights = [{ id: 'hh' + k, text: 'The lanterns along the harbour glowed', note: 'a made-up note about the harbour', color: 'sky', createdAt: 1 + k }, { id: 'hi' + k, text: 'Another passage', note: 'something else', color: 'rose', createdAt: 2 + k }]; b.bookmarks = [{ id: 'bm' + k, label: 'Chapter harbour', locator: { bookId: b.id, pct: 0.1 }, createdAt: 3 + k }]; st.put(b); k++; } }; tx.oncomplete = () => res(1); }; }));
+    await p.evaluate(() => { location.hash = '#/notes'; }); await p.reload(); await p.waitForSelector('.notes-book', { timeout: 15000 });
+    await p.fill('.ns-search', 'harbour'); await p.waitForTimeout(500);
+  }],
+  // The yearly goal in the statistics (src/ui/stats.ts): two books marked done today and a goal of six.
+  ['stats-year-goal', async (p) => {
+    seeded = true; dataSeeded = true;
+    await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const tx = r.result.transaction('books', 'readwrite'); const st = tx.objectStore('books'); st.getAll().onsuccess = (e) => { for (const b of e.target.result.slice(0, 2)) { b.done = true; b.doneAt = Date.now(); st.put(b); } }; tx.oncomplete = () => res(1); }; }));
+    await visual(p, { yearGoalBooks: 6 }); await reloadLib(p);
+    await p.evaluate((w) => { [...document.querySelectorAll('.library-view .topbar button')].find((x) => x.getAttribute('aria-label') === w).click(); }, (await p.evaluate(() => localStorage.getItem('kr.lang'))) === 'ar' ? 'إحصاءات القراءة' : 'Reading statistics');
+    await p.waitForSelector('.year-goal .yg-ring', { timeout: 8000 }); await p.waitForTimeout(300);
+  }],
   ['read-pdf', openBook(/pages/i, '.pdf-bar, .pdf-view, .pdf-pages')],
+  // The comic reader (0.67, S5a): a made-up CBZ, one page per screen with its bars, the long strip, the settings panel's two tabs, the
+  // tap zones shown (a phone's: a computer has no zone options). The strip is set as the default mode (aiClear puts the settings back).
+  ['comic-paged', async (p) => { await openComic(p); }],
+  ['comic-strip', async (p) => { seeded = true; await visual(p, { comicMode: 4 }); await p.evaluate(() => { location.hash = '#/'; }); await reloadLib(p); await openComic(p); await p.evaluate(() => window.__krComic.viewer.goTo(1, 0.4)); await p.waitForTimeout(400); }],
+  ['comic-settings-mode', async (p) => { await openComic(p); await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicMode"]', { timeout: 8000 }); await p.waitForTimeout(400); }],
+  ['comic-settings-general', async (p) => { await openComic(p); await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicMode"]', { timeout: 8000 }); await p.evaluate(() => [...document.querySelectorAll('.panel.open .panel-tabs button, .panel.open [role="tab"]')][1].click()); await p.waitForSelector('.panel.open [data-key="comicScale"]', { timeout: 5000 }); await p.waitForTimeout(400); }],
+  // (0.67 part 2, S5b: the colour tab with its switches on, the wide-pages group, the page's menu, and — a computer's — two pages side by side.)
+  ['comic-settings-colour', async (p) => { seeded = true; await visual(p, { comicBrightOn: true, comicTintOn: true, comicTintA: 90, comicTintB: 160 }); await p.evaluate(() => { location.hash = '#/'; }); await reloadLib(p); await openComic(p); await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicMode"]', { timeout: 8000 }); await p.evaluate(() => [...document.querySelectorAll('.panel.open .panel-tabs button, .panel.open [role="tab"]')][2].click()); await p.waitForSelector('.panel.open [data-key="comicTintR"]', { timeout: 5000 }); await p.waitForTimeout(400); }],
+  ['comic-wide-pages', async (p) => { await openComic(p); await p.click('.cm-settings-btn'); await p.waitForSelector('.panel.open [data-key="comicSplit"]', { timeout: 8000 }); await p.evaluate(() => document.querySelector('.panel.open [data-key="comicSplit"]').scrollIntoView({ block: 'start' })); await p.waitForTimeout(500); }],
+  ['comic-longpress', async (p) => { await openComic(p); await p.evaluate(() => document.querySelector('.reader-view').classList.add('immersive')); const vp = p.viewportSize(); await p.mouse.move(vp.width / 2, vp.height / 2); await p.mouse.down(); await p.waitForSelector('.cm-page-menu', { timeout: 4000 }); await p.mouse.up(); await p.waitForTimeout(400); }],
+  ['comic-spread-pc', async (p) => { seeded = true; await visual(p, { comicDual: 'always' }); await p.evaluate(() => { location.hash = '#/'; }); await reloadLib(p); await openComic(p); await p.waitForFunction(() => window.__krComic.source.pages.every((x) => x.width && x.height), null, { timeout: 10000 }); await p.evaluate(() => window.__krComic.viewer.goTo(1)); await p.waitForTimeout(600); }, 'pc'],
+  ['comic-zones', async (p) => { await p.evaluate(() => localStorage.removeItem('kr.comicZonesSeen')); await openComic(p, true); }, 'phone'],
+  // (0.67, S5c: a comic in a RAR / 7z / tar — the job while it works, the password it may ask for, the message when it holds no pictures.)
+  ['archive-preparing', async (p) => { archSeeded = true; await archSlow(p); await archGive(p, arch.long); await p.waitForFunction(() => /[1-9]\d* \/ 300|300 \/ [1-9]/.test(document.querySelector('.job-chip')?.textContent ?? ''), null, { timeout: 30000 }); await p.evaluate(() => document.querySelector('.job-chip').click()); await p.waitForSelector('.job-row .btn', { timeout: 8000 }); await p.waitForTimeout(500); }],
+  ['archive-password', async (p) => { archSeeded = true; await archGive(p, arch.locked); await p.waitForSelector('.password-sheet input[type=password]', { timeout: 15000 }); await p.waitForTimeout(500); }],
+  ['archive-password-wrong', async (p) => { archSeeded = true; await archGive(p, arch.locked); await p.waitForSelector('.password-sheet input[type=password]', { timeout: 15000 }); await p.fill('.password-sheet input[type=password]', 'not-it'); await p.keyboard.press('Enter'); await p.waitForSelector('.password-sheet .hint.error', { timeout: 15000 }); await p.waitForTimeout(500); }],
+  ['archive-nopictures', async (p) => { archSeeded = true; await p.evaluate(() => { window.kurokawaDesktop = { archiveList() {}, async archivePickFile() { return []; } }; }); await archGive(p, arch.notes); await p.waitForSelector('.toast .toast-action', { timeout: 15000 }); await p.waitForTimeout(500); }],
   ['read-notice', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.waitForTimeout(400); }, 'both', { notice: true }],
   ['read-notice-bottom', async (p) => { await openBook(/nihongo/, '.reader-flow .kr-content')(p); await waitNotice(p); await p.evaluate(() => { document.querySelectorAll('.reader-view *').forEach((e) => { if (e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)) e.scrollTop = e.scrollHeight; }); }); await p.waitForTimeout(700); }, 'both', { notice: true }],
 ];
 
 // kind|view|selector-ish key -> reason. A key is `${kind} ${view} ${what}` prefix-matched (view without the device).
 const ALLOW = [
+  ['colour installer-sheet', 'the settings page behind the sheet holds the reading-theme previews and the highlight palette (allowed on the settings view itself)'],
   ['colour settings', 'reading-theme previews (sepia, candlelight, manuscript) and the highlight colour palette show the colours they stand for'],
   ['colour read-options', 'the same theme previews and highlight palette, inside the options panel'],
   ['stick-out book-edit-names div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
   ['stick-out book-alreview div.book-hero-bg', 'the same blurred backdrop, behind the sheet'],
+  ['touching notes-search button.icon-btn.ns-clear', "the clear (×) button lies inside the search field's end padding, as the glossary's search has it"],
   ['stick-out book div.book-hero-bg', 'the blurred cover backdrop is bled past the edge on purpose and clipped by the page (no page overflow)'],
 ];
 const allowedBy = {}; const allowed = (key) => { const a = ALLOW.find(([k]) => key.startsWith(k)); if (a) allowedBy[a[0]] = (allowedBy[a[0]] || 0) + 1; return !!a; };
@@ -99,6 +262,7 @@ function hunt({ phone, rtl, lang }) {
   const out = []; const vw = document.documentElement.clientWidth;
   const desc = (e) => { let s = e.tagName.toLowerCase(); if (e.id) s += '#' + e.id; const c = [...e.classList].slice(0, 2).join('.'); if (c) s += '.' + c; const tx = (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 70); if (e.tagName === 'INPUT') s += `[${e.type}]<${e.parentElement ? e.parentElement.tagName.toLowerCase() + '.' + [...e.parentElement.classList].join('.') : ''}`; return s + (tx ? ` «${tx}»` : ''); };
   const vis = (e) => { const r = e.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return false; const cs = getComputedStyle(e); if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) return false; for (let a = e; a; a = a.parentElement) { if (a.hidden || getComputedStyle(a).display === 'none') return false; } return true; };
+  const ownClearRule = [...document.styleSheets].some((ss) => { try { return [...ss.cssRules].some((r) => /data-own-clear[^{]*::-webkit-search-cancel-button/.test(r.selectorText || '') && r.style.display === 'none'); } catch { return false; } });
   const add = (kind, e, extra) => out.push({ kind, what: desc(e) + (extra ? ' ' + extra : '') });
   const root = document.documentElement;
   if (root.scrollWidth > root.clientWidth + 1 || document.body.scrollWidth > root.clientWidth + 1) out.push({ kind: 'overflow', what: `page ${Math.max(root.scrollWidth, document.body.scrollWidth)} > ${root.clientWidth}` });
@@ -111,6 +275,12 @@ function hunt({ phone, rtl, lang }) {
     const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); if (book(e)) continue;
     if (cs.position !== 'fixed' && !inScroller(e) && (r.right > vw + 2 || r.left < -2) && !e.closest('.scrim, .sheet-scrim, [aria-hidden=true], svg, .marquee, .panel:not(.open)')) add('stick-out', e, `${Math.round(r.left)}..${Math.round(r.right)} of ${vw}`);
     if (['BUTTON', 'LABEL', 'SPAN', 'A', 'H1', 'H2', 'H3', 'SMALL', 'DIV'].includes(e.tagName) && !e.children.length && (e.textContent || '').trim() && /(hidden|clip)/.test(cs.overflowX) && e.scrollWidth > e.clientWidth + 2 && (cs.textOverflow !== 'ellipsis' || e.closest('.book-tile')) && !(e.closest('.book-tile') && cs.whiteSpace !== 'nowrap' && e.scrollWidth <= e.clientWidth + 2)) add('clipped', e, `${e.scrollWidth}>${e.clientWidth}`);
+    // A label wider than its button (centred text spills out on both sides, so no overflow:hidden clipping shows it).
+    if (e.tagName === 'BUTTON' && (e.textContent || '').trim() && !e.closest('svg, .scrim, [aria-hidden=true], .panel:not(.open)')) { // (Only the button's own label: text held in a box that clips on purpose or is the book's own text — a card's cover, title and author, ellipsized — is judged elsewhere.)
+      const rg0 = document.createRange(); let q0 = null; const tw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+      for (let n = tw.nextNode(); n; n = tw.nextNode()) { if (!n.textContent.trim()) continue; const pe = n.parentElement; let clipped = book(pe); for (let a = pe; a && a !== e && !clipped; a = a.parentElement) { if (/(hidden|clip)/.test(getComputedStyle(a).overflowX)) clipped = true; } if (clipped) continue; rg0.selectNodeContents(n); const q = rg0.getBoundingClientRect(); if (!q.width) continue; q0 = q0 ? { left: Math.min(q0.left, q.left), right: Math.max(q0.right, q.right), width: 1 } : { left: q.left, right: q.right, width: 1 }; }
+      const ownScroll = !e.querySelector('.cover, .book-meta') && e.scrollWidth > e.clientWidth + 1;
+      if ((q0 && (q0.right > r.right + 1.5 || q0.left < r.left - 1.5)) || ownScroll) add('label-leaves-button', e, q0 ? `text ${Math.round(q0.left)}..${Math.round(q0.right)} in button ${Math.round(r.left)}..${Math.round(r.right)}` : `content ${e.scrollWidth} > ${e.clientWidth}`); }
     if (e.tagName === 'SPAN' && e.closest('.book-tile')) { const tr = e.closest('.book-tile').getBoundingClientRect(); const rg = document.createRange(); rg.selectNodeContents(e); const q = rg.getBoundingClientRect(); if (q.right > tr.right + 1 || q.left < tr.left - 1 || e.scrollWidth > e.clientWidth + 1 || cs.textOverflow === 'ellipsis') add('clipped', e, `tile label «${e.textContent}» cut or past its tile`); }
     for (const prop of ['color', 'backgroundColor', 'borderTopColor']) {
       const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(cs[prop] || ''); if (!m) continue; if (m[4] !== undefined && +m[4] < 0.3) continue;
@@ -120,6 +290,11 @@ function hunt({ phone, rtl, lang }) {
     }
     if (e.tagName === 'INPUT' && e.type === 'checkbox' && cs.appearance !== 'none' && cs.webkitAppearance !== 'none' && !e.closest('.sr-only')) add('native-checkbox', e);
     if (e.tagName === 'INPUT' && e.type === 'number' && cs.appearance !== 'textfield' && cs.webkitAppearance !== 'textfield' && getComputedStyle(e, '::-webkit-inner-spin-button').webkitAppearance !== 'none') add('native-spinner', e);
+    if (e.tagName === 'INPUT' && e.type === 'search') {
+      // (The pseudo-element's computed style cannot be read reliably, so: the field carries no native look, and the app-wide rule that hides the browser's clear button on fields with their own exists.)
+      if (cs.appearance !== 'none') add('native-search-look', e);
+      if (e.hasAttribute('data-own-clear') && !ownClearRule) add('double-clear-button', e);
+    }
     if (!e.children.length && /[٠-٩۰-۹]/.test(e.textContent || '') && !(e.closest('.segmented') && (e.textContent || '').trim() === '١٢٣')) add('eastern-digits', e);
     if (rtl && /^(H1|H2|H3)$/.test(e.tagName) && cs.direction === 'ltr' && /[؀-ۿ]/.test(e.textContent || '')) add('ltr-title-in-rtl', e);
   }
@@ -137,6 +312,8 @@ function hunt({ phone, rtl, lang }) {
   for (const [p, es] of rows) {
     const bs = es.map((e) => ({ e, r: e.getBoundingClientRect() }));
     for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
+      // (A clear button laid inside its search field, by design, over the end of the field.)
+      if ([bs[i].e, bs[j].e].some((x) => x.classList.contains('icon-btn') && getComputedStyle(x).position === 'absolute') && [bs[i].e, bs[j].e].some((x) => x.tagName === 'INPUT')) continue;
       const a = bs[i].r, b = bs[j].r; if (Math.abs(a.top - b.top) > 8 && Math.abs(a.bottom - b.bottom) > 8) continue;
       const gap = Math.max(b.left - a.right, a.left - b.right); const ov = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
       if (p.closest('.segmented, .seg')) continue; const icons = bs[i].e.classList.contains('icon-btn') && bs[j].e.classList.contains('icon-btn'); if (ov > 4 && gap < (icons ? 1 : 4)) add('touching', bs[j].e, `in ${p.tagName.toLowerCase()}.${[...p.classList].join('.')} with ${desc(bs[i].e)} gap ${Math.round(gap)}`);
@@ -169,7 +346,12 @@ function hunt({ phone, rtl, lang }) {
   if (args.includes('--list')) { console.log(VIEWS.map((v) => v[0]).join(' ')); process.exit(0); }
   await new Promise((r) => server.listen(0, r)); const base = `http://127.0.0.1:${server.address().port}/`;
   const pdf = path.join(TMP, 'pages.pdf'); await makePdf(pdf, 12);
-  const files = [path.join(TMP, 'nihongo.txt'), pdf, ...['alice-in-wonderland.epub', 'maqamat-al-hariri.epub'].map((f) => path.join(DIST, 'samples', f)).filter((f) => fs.existsSync(f))];
+  { const fx = require('./helpers/archivefixture.cjs'); const w = (n, b) => { const f = path.join(TMP, n); fs.writeFileSync(f, b); return f; };
+    arch.long = w('hunt long archive.cbt', await fx.makeTar(fx.pagesOf({ pages: 300, width: 100, height: 150, system: false, shuffle: false })));
+    arch.locked = w('hunt locked.cbz', fx.makeZipCrypt(fx.pagesOf({ pages: 4, width: 100, height: 150 }), 'right-one'));
+    arch.notes = w('hunt notes.cbt', await fx.makeTar([{ name: 'a.txt', data: Buffer.from('one') }, { name: 'b.txt', data: Buffer.from('two') }])); }
+  const comic = path.join(TMP, 'hunt-comic.cbz'); fs.writeFileSync(comic, await makeCbz({ pages: 6, folders: [3, 3], wide: [4] }));
+  const files = [path.join(TMP, 'nihongo.txt'), pdf, comic, ...['alice-in-wonderland.epub', 'maqamat-al-hariri.epub'].map((f) => path.join(DIST, 'samples', f)).filter((f) => fs.existsSync(f))];
   const b = await chromium.launch(); let fails = 0; let allowedN = 0; const summary = {};
   for (const lang of LANGS) for (const dev of ['phone', 'pc'].filter((d) => !DEV || d === DEV)) {
     const phone = dev === 'phone'; const CS = process.env.KR_DARK ? { colorScheme: 'dark' } : {};
@@ -183,6 +365,7 @@ function hunt({ phone, rtl, lang }) {
       if (ONLY && name !== ONLY) continue; if (only === 'phone' && !phone) continue; if (only === 'pc' && phone) continue;
       try {
         await p.evaluate(() => { location.hash = '#/'; }); await p.keyboard.press('Escape'); await p.waitForTimeout(250);
+        if (phone) await p.setViewportSize({ width: 412, height: 915 });
         await act(p); await p.waitForTimeout(350);
         const faults = await p.evaluate(hunt, { phone, rtl: lang === 'ar', lang });
         const seen = new Set();
@@ -194,6 +377,7 @@ function hunt({ phone, rtl, lang }) {
         }
         if (SHOTS) await p.screenshot({ path: path.join(SHOTS, `hunt-${name}-${dev}-${lang}.png`) });
       } catch (e) { if (e.message === 'SKIP') continue; console.log(`ERR   ${lang} ${dev} ${name}: ${String(e.message).split('\n')[0]}`); fails++; }
+      finally { if (srcSeeded) { srcSeeded = false; await sourcesClear(p).catch(() => undefined); await p.reload().catch(() => undefined); await p.waitForSelector('.library-view', { timeout: 15000 }).catch(() => undefined); } if (dataSeeded) { dataSeeded = false; await dataClear(p).catch(() => undefined); } if (archSeeded) { archSeeded = false; await archClear(p).catch(() => undefined); } if (seeded) { seeded = false; await aiClear(p).catch(() => undefined); } }
     }
     if (phone && (!ONLY || ONLY === 'narrowcards')) { // narrow cards: 2-5 columns at 360 / 390 / 412 px: the marks sit inside the cover and never overlap, the stars stay in the card, nothing is clipped
       try {

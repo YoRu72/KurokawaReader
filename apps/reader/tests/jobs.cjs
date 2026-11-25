@@ -1,5 +1,6 @@
 // node tests/jobs.cjs <outdir> <file.pdf>: start a PDF → Word conversion, close its sheet at once; the job goes on,
-// a chip shows its progress, then that it is ready; the conversions sheet offers the result.
+// a chip shows its progress, then that it is ready; the conversions sheet offers the result. (The target is Word, which takes
+// a moment; a quick one such as EPUB is done while its sheet is still open and never shows the chip: T=… picks another.)
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path');
 const DIST = path.resolve(__dirname, '../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream' };
@@ -18,8 +19,8 @@ const [out, pdf] = process.argv.slice(2); fs.mkdirSync(out, { recursive: true })
   const direct = await p.evaluate(() => { const b = [...document.querySelectorAll('.sel-actions button')].find((x) => /تحويل|Convert/.test(x.textContent)); b?.click(); return !!b; });
   if (!direct) { await p.evaluate(() => { const bs = [...document.querySelectorAll('.sel-actions button')]; bs[bs.length - 1].click(); }); await p.waitForSelector('.sheet'); await p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /تحويل|Convert/.test(x.textContent)); b?.click(); }); }
   await p.waitForSelector('.convert-target');
-  await p.click(process.env.T ? `.convert-target:has-text("${process.env.T}")` : '.convert-target >> nth=0'); await p.waitForTimeout(600);
-  await p.keyboard.press('Escape'); await p.waitForTimeout(400);
+  await p.click(`.convert-target:has-text("${process.env.T || 'Word'}")`);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
   await p.waitForSelector('.job-chip', { timeout: 10000 }); await p.waitForTimeout(1200);
   console.log('chip while running:', await p.textContent('.job-chip'));
   await p.screenshot({ path: path.join(out, '1-running.png') });
@@ -27,7 +28,8 @@ const [out, pdf] = process.argv.slice(2); fs.mkdirSync(out, { recursive: true })
   console.log('chip when ready:', await p.textContent('.job-chip'));
   await p.screenshot({ path: path.join(out, '2-ready.png') });
   await p.click('.job-chip'); await p.waitForSelector('.job-row'); await p.waitForTimeout(400);
-  console.log('jobs sheet:', (await p.textContent('.job-list')).replace(/\s+/g, ' '));
+  const list = (await p.textContent('.job-list')).replace(/\s+/g, ' '); console.log('jobs sheet:', list);
+  if (!/\.docx/.test(list)) throw new Error('the conversions sheet does not offer the result');
   await p.screenshot({ path: path.join(out, '3-sheet.png') });
   await b.close(); server.close();
 })().catch((e) => { console.error(e); process.exit(1); });

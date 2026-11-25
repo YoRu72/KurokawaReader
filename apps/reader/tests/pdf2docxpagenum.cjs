@@ -17,6 +17,7 @@ const DIST = path.resolve(process.env.KR_DIST || path.join(__dirname, '../dist')
 const PORT = 5197;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
+const EDIT = (process.env.KR_DOCX_RESULT || 'edit') !== 'exact';
 let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); if (!c) fails++; };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'p2d-pagenum-'));
 
@@ -135,7 +136,7 @@ async function book() {
 async function convert(browser, file) {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true });
   const page = await ctx.newPage(); page.on('pageerror', (e) => { console.log('pageerror', e.message); fails++; });
-  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
+  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate((r) => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); /* KR_DOCX_RESULT=exact|edit: PDF → Word's «Result» */ if (r) localStorage.setItem('kr.convert', JSON.stringify({ docxResult: r })); }, process.env.KR_DOCX_RESULT || ''); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [file]); await page.waitForSelector('.book-card', { timeout: 60000 }); await page.waitForTimeout(300);
   const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sel-actions');
   if (!(await page.$('.sel-actions button:has-text("Convert")'))) { await page.click('.sel-actions button:has-text("More")'); await page.waitForSelector('.sheet'); await page.click('.sheet button:has-text("Convert")'); } else await page.click('.sel-actions button:has-text("Convert")');
@@ -177,7 +178,10 @@ async function convert(browser, file) {
       const inHead = p < 3; const where = inHead ? hdr : ftr;
       const shown = NUMS[p].replace(/[^0-9٠-٩]/g, '');
       ok(`page ${p + 1}: the number a PAGE field in the ${inHead ? 'header' : 'footer'}, showing ${shown}`, fieldRe.test(where) && new RegExp(`fldCharType="separate"/></w:r>(?:<w:r>(?:<w:rPr>[\\s\\S]*?</w:rPr>)?<w:t[^>]*>${shown}</w:t></w:r>)+<w:r>(?:<w:rPr>[\\s\\S]*?</w:rPr>)?<w:fldChar w:fldCharType="end"/>`).test(where));
-      ok(`page ${p + 1}: its section starts at ${want} in ${p < 3 ? 'hindiNumbers' : 'decimal'} (pgNumType${pn})`, start === String(want) && fmt === (p < 3 ? 'hindiNumbers' : 'decimal'));
+      // (In the result to edit — the default — a page the text runs onto from the one before is no new page in Word,
+      // its section continuous: it counts on from that page, its digits kept, no number of its own to start at.)
+      const cont = EDIT && /<w:type w:val="continuous"\/>/.test(sp) && [13, 14, 15, 16, 17][p - 1] === want; // (page 4 shows no number: it is 15 all the same)
+      ok(`page ${p + 1}: its section starts at ${want} in ${p < 3 ? 'hindiNumbers' : 'decimal'} (pgNumType${pn})${cont ? ', counting on from the page before' : ''}`, (cont ? start === undefined : start === String(want)) && fmt === (p < 3 ? 'hindiNumbers' : 'decimal'));
       ok(`page ${p + 1}: the text holds no page number — ${JSON.stringify(bodyText.slice(-40))}`, !/[0-9٠-٩]/.test(bodyText));
       if (inHead) {
         const head = norm(clean(p % 2 === 0 ? HEAD_ODD : HEAD_EVEN).join(' '));

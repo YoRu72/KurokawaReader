@@ -6,9 +6,9 @@
 use std::path::Path;
 
 /// desktop/main.cjs's DOC_EXT: the kinds of file the app opens when the system hands them to it.
-pub const DOC_EXT: [&str; 25] = [
-    "epub", "pdf", "docx", "xlsx", "pptx", "txt", "md", "markdown", "html", "htm", "fb2", "odt", "cbz", "csv", "tsv",
-    "jpg", "jpeg", "png", "gif", "webp", "ttf", "otf", "woff", "woff2", "zip",
+pub const DOC_EXT: [&str; 31] = [
+    "epub", "pdf", "docx", "xlsx", "pptx", "txt", "md", "markdown", "html", "htm", "fb2", "odt", "cbz", "cbr", "cb7", "cbt", "csv", "tsv",
+    "jpg", "jpeg", "png", "gif", "webp", "ttf", "otf", "woff", "woff2", "zip", "rar", "7z", "tar",
 ];
 
 /// The app's own links (cloud-sync sign-ins, «open» links), any case.

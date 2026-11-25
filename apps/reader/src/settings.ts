@@ -12,7 +12,7 @@ export type UiMode = 'system' | 'light' | 'dark' | 'page';
 export type Accent = 'graphite' | 'aqua' | 'teal' | 'gold' | 'coral' | 'rose' | 'mint' | 'violet' | 'olive' | 'sand' | 'mono' | 'custom';
 export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type LatinFont = 'merriweather' | 'termes' | 'lora' | 'literata' | 'garamond' | 'crimson' | 'gelasio' | 'vollkorn' | 'bitter' | 'sourceserif' | 'atkinson' | 'inter' | 'serif' | 'sans' | 'publisher' | (string & {});
-export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'mohanad' | 'publisher' | (string & {});
+export type ArabicFont = 'uthman' | 'sultan' | 'naskh' | 'publisher' | (string & {});
 export type TapAction = 'none' | 'menu' | 'next' | 'prev' | 'nextChapter' | 'prevChapter' | 'bookmark' | 'toc' | 'search' | 'options' | 'speak' | 'autoScroll' | 'fullscreen' | 'dayNight' | 'statusLine';
 /** The reading bar's items as it came before they could be chosen: the chapter and the page in it at the start;
  *  the minutes left (once a reading speed is known), the clock, the battery and the book's percentage at the end. The
@@ -174,12 +174,14 @@ export interface VisualSettings {
   invertLineArt: boolean;
   snapFolder: string;
   formatFilter: string[];
-  shelves: { id: string; name: string; formats: string[]; statuses: string[]; tag: string | null }[]; // saved filter sets
+  shelves: { id: string; name: string; formats: string[]; statuses: string[]; tag: string | null; /** the languages chosen (none or missing: any) */ languages?: string[] }[]; // saved filter sets
   showProgress: boolean;      // a book's progress on its cover
   showDone: boolean;          // the 'read' mark on its cover
   doneMark: 'beside' | 'below' | 'topLeft' | 'bottom';   // where that mark sits
   statusFilter: string[];     // 'unread' | 'reading' | 'finished'
+  languageFilter: string[];   // the library's language filter: base language codes, 'unknown' for books without one (none: any)
   readingGoalMinutes: number; // daily reading goal in minutes, 0 = off
+  yearGoalBooks: number;      // books to finish this year, 0 = no goal
   calendar: 'gregory' | 'hijri' | 'both';
   /** The interface's style (src/readertheme/, over the shared src/theme/): 'classic' (the app as it always was), or a frosted-glass style's id;
    *  and how much it blurs ('auto': as this device can afford — src/theme/themes.ts resolveBlur). */
@@ -229,7 +231,7 @@ export interface VisualSettings {
   /** The translator: the translation in place of the text or under it; the book, the chapter and the lines
    *  before given as context; italics and bold kept; paragraphs already in the target script left; requests at
    *  once; the next chapter translated ahead while this one is read. */
-  aiDisplay?: 'replace' | 'bilingual'; /** Titles: translated with the original beneath, translated only, or left as they are. */ aiTitles?: 'both' | 'translation' | 'original'; /** Names the translator meets put in the book's glossary on their own (off until chosen). */ aiAutoGlossary?: boolean; /** A new volume with no glossary: its series' glossary taken by itself ('auto', the default), offered ('ask'), or never looked for. */ aiVolGlossary?: 'auto' | 'ask' | 'never'; aiContext?: boolean; aiKeepStyle?: boolean; aiSkipSame?: boolean; aiParallel?: number; aiPrefetch?: boolean;
+  aiDisplay?: 'replace' | 'bilingual'; /** Titles: translated with the original beneath, translated only, or left as they are. */ aiTitles?: 'both' | 'translation' | 'original'; /** Names the translator meets put in the book's glossary on their own (off until chosen). */ aiAutoGlossary?: boolean; /** The glossary's names marked in the text with a dotted underline (on unless false). */ glossMarks?: boolean; /** A tap on a name of the glossary opens its entry (on unless false). */ glossTap?: boolean; /** A new volume with no glossary: its series' glossary taken by itself ('auto', the default), offered ('ask'), or never looked for. */ aiVolGlossary?: 'auto' | 'ask' | 'never'; aiContext?: boolean; aiKeepStyle?: boolean; aiSkipSame?: boolean; aiParallel?: number; aiPrefetch?: boolean; /** Before a translation: gather the part's names into the glossary — ask (default), do it by itself, or never (a book's own choice, kept with it, wins). */ aiGatherNames?: 'ask' | 'always' | 'never'; /** Translate the chapter by itself when a book opens (off until chosen). */ aiAutoStart?: boolean; /** …and gather its names first (on unless false). */ aiAutoGather?: boolean;
   furigana: boolean;
   autoReadings: boolean;      // show furigana / pinyin as soon as CJK text is selected          // show ruby readings in Japanese books
   aiTtsModel: string;
@@ -277,6 +279,54 @@ export interface VisualSettings {
   swipeTurn: boolean;
   /** How short or quick a sideways swipe may be and still turn (views/reader.ts SWIPE). */
   swipeSensitivity: 'low' | 'normal' | 'high';
+  /** The comic reader (src/views/comic.ts), its modes numbered as the reader it is modelled on numbers them: 1 left
+   *  to right, 2 right to left, 3 vertical (one page per screen), 4 a long strip (no gaps), 5 continuous vertical (a
+   *  gap between pages). The default mode; a book's own is kept with it (Book.prefs.comicMode — 0 or none: this). */
+  comicMode: 1 | 2 | 3 | 4 | 5;
+  /** A page turned by a tap, key or button slides (one page per screen). */
+  comicTransitions: boolean;
+  /** How a page is fitted to the screen (one page per screen). */
+  comicScale: 'fit' | 'stretch' | 'width' | 'height' | 'original' | 'smart';
+  /** Where a page larger than the screen starts: by the reading direction, or always the left, right, centre. */
+  comicZoomStart: 'auto' | 'left' | 'right' | 'center';
+  /** Zoomed in, a tap on a side moves one screen that way, and turns the page only at its edge. */
+  comicNavPan: boolean;
+  /** A wide page shown whole eases in to fill the screen's height, from where reading starts. */
+  comicLandscapeZoom: boolean;
+  /** A double tap zooms in the long strip. */
+  comicStripZoom: boolean;
+  /** The tap zones (src/comic/zones.ts: 0 default, 1 L-shaped, 2 Kindle-like, 3 edge, 4 right and left, 5 none), one
+   *  page per screen and in the strip, and their inversion. */
+  comicZonesPaged: 0 | 1 | 2 | 3 | 4 | 5;
+  comicZonesStrip: 0 | 1 | 2 | 3 | 4 | 5;
+  comicInvertPaged: 'none' | 'h' | 'v' | 'both';
+  comicInvertStrip: 'none' | 'h' | 'v' | 'both';
+  /** The page number («3 / 40») over the page. */
+  comicPageNumber: boolean;
+  /** The page between volumes (finished, the next one) at the book's end and before its start. */
+  comicBetween: boolean;
+  /** The colour behind the pages: black, grey, white, or chosen from the page's border (white or dark). */
+  comicBackground: 'black' | 'grey' | 'white' | 'auto';
+  /** Wide pages (wider than tall), one page per screen: shown as two halves in reading order («Split», the order
+   *  reversed with «Invert»), or turned a quarter to fill the height (split wins when both are on). The same four
+   *  for the long strip (the halves stacked). */
+  comicSplit: boolean; comicSplitInvert: boolean; comicRotate: boolean; comicRotateInvert: boolean;
+  comicSplitStrip: boolean; comicSplitInvertStrip: boolean; comicRotateStrip: boolean; comicRotateInvertStrip: boolean;
+  /** Two pages side by side (one page per screen only): never, always, or when the viewport is wider than tall. */
+  comicDual: 'never' | 'always' | 'wide';
+  /** Border trimming (white or black borders), one page per screen and in the strip. */
+  comicCrop: boolean; comicCropStrip: boolean;
+  /** A long press (a right click on a computer) on a page opens its menu. */
+  comicLongPress: boolean;
+  /** The long strip: room left and right of the pages (percent of the width), and no zooming out below the width. */
+  comicStripPadding: number; comicStripNoZoomOut: boolean;
+  /** Colour: custom brightness (−75…100), a colour filter (R G B A 0–255, a blend mode), greyscale, inverted colours. */
+  comicBrightOn: boolean; comicBrightness: number;
+  comicTintOn: boolean; comicTintR: number; comicTintG: number; comicTintB: number; comicTintA: number;
+  comicTintBlend: 'normal' | 'multiply' | 'screen' | 'overlay' | 'lighten' | 'darken';
+  comicGrey: boolean; comicInvertColours: boolean;
+  /** For one version: comics open as before, as one scroll of pictures. */
+  comicOldWay: boolean;
 }
 
 export const DEFAULTS: VisualSettings = {
@@ -381,7 +431,9 @@ export const DEFAULTS: VisualSettings = {
   showDone: true,
   doneMark: 'beside',
   statusFilter: [],
+  languageFilter: [],
   readingGoalMinutes: 0,
+  yearGoalBooks: 0,
   calendar: 'gregory',
   darkTone: 'dim',
   uiStyle: 'classic',
@@ -451,6 +503,11 @@ export const DEFAULTS: VisualSettings = {
   edgeGuard: false,
   swipeTurn: true,
   swipeSensitivity: 'normal',
+  comicMode: 2, comicTransitions: true, comicScale: 'fit', comicZoomStart: 'auto', comicNavPan: true, comicLandscapeZoom: true, comicStripZoom: true,
+  comicZonesPaged: 0, comicZonesStrip: 0, comicInvertPaged: 'none', comicInvertStrip: 'none', comicPageNumber: true, comicBetween: true, comicBackground: 'black', comicOldWay: false,
+  comicSplit: false, comicSplitInvert: false, comicRotate: false, comicRotateInvert: false, comicSplitStrip: false, comicSplitInvertStrip: false, comicRotateStrip: false, comicRotateInvertStrip: false,
+  comicDual: 'never', comicCrop: false, comicCropStrip: false, comicLongPress: true, comicStripPadding: 0, comicStripNoZoomOut: false,
+  comicBrightOn: false, comicBrightness: 0, comicTintOn: false, comicTintR: 0, comicTintG: 0, comicTintB: 0, comicTintA: 0, comicTintBlend: 'normal', comicGrey: false, comicInvertColours: false,
   titleBarKind: 'own',
   titleBarClear: false,
   titleBarName: true,
@@ -464,6 +521,7 @@ function load(): VisualSettings {
   try {
     const raw = localStorage.getItem(KEY);
     const s: VisualSettings = raw ? { ...DEFAULTS, ...buttonsMigrated(barItemsMigrated(JSON.parse(raw) as Partial<VisualSettings>)) } : { ...DEFAULTS };
+    if (s.arabicFont === 'mohanad') s.arabicFont = 'uthman';
     // 0.18: the add-books button moved from the top bar to the folder row (sync took its place).
     if (s.importButton === 'top' && !localStorage.getItem('kr.importMigrated')) { s.importButton = 'chips'; localStorage.setItem('kr.importMigrated', '1'); }
     // 0.32: two-finger zoom in PDFs is on for everyone (it was off by default before).
@@ -509,7 +567,7 @@ let bookOverrides: Record<string, Partial<VisualSettings>> | null = null;
  *  about how that book is read (its face, size, theme, layout…); these are never kept with one. */
 const GLOBAL_ONLY = new Set<string>([
   // AI services and voices downloaded
-  'aiProvider', 'aiGlossPrompt', 'aiVolGlossary', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'localTranslateModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
+  'aiProvider', 'aiGlossPrompt', 'aiVolGlossary', 'aiGatherNames', 'aiAutoStart', 'aiAutoGather', 'aiCustomApis', 'aiCustomId', 'localEngine', 'localModel', 'localServer', 'localServerModel', 'localTranslateModel', 'aiKey', 'aiModel', 'aiBaseUrl', 'aiTtsModel', 'kittenModel',
   // sync, accounts, tracking
   'syncProvider', 'syncAuto', 'syncDropboxKey', 'syncDropboxRefresh', 'syncWebdavUrl', 'syncWebdavUser', 'syncWebdavPass', 'syncFolder', 'syncLastAt',
   'anilistEnabled', 'anilistClientId', 'anilistAutoProgress', 'incognito',
@@ -520,7 +578,7 @@ const GLOBAL_ONLY = new Set<string>([
   // the device's keys and gestures while reading
   'volumeKeys', 'volumeSwap', 'backTwiceLeave', 'edgeGuard', 'swipeTurn', 'swipeSensitivity',
   // the library
-  'uiStyle', 'glassBlur', 'pageFollowsStyle', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes',
+  'uiStyle', 'glassBlur', 'pageFollowsStyle', 'libraryView', 'groupSeries', 'deviceShelf', 'formatFilter', 'shelves', 'showProgress', 'showDone', 'doneMark', 'statusFilter', 'languageFilter', 'coverSize', 'gridColumns', 'cardLook', 'showQuote', 'readingGoalMinutes', 'yearGoalBooks',
   // lists the reader builds up for every book
   'myThemes', 'systemFonts', 'shortcuts', 'snapFolder',
 ]);
@@ -700,7 +758,6 @@ const ARABIC: Record<string, string> = {
   uthman: "'Uthman TN1'",
   sultan: "'Sultan'",
   naskh: "'Noto Naskh Arabic'",
-  mohanad: "'AL-Mohanad'",
   publisher: 'inherit',
 };
 const CJK: Record<string, string> = {
@@ -870,7 +927,7 @@ export function applySettings(root: HTMLElement, s: VisualSettings = current): v
   else root.style.setProperty('--r-bg-image', 'none');
   applyChrome(s);
   const latin = familyFor(s.latinFont, LATIN);
-  const arabic = familyFor(s.arabicFont, ARABIC);
+  const arabic = familyFor(s.arabicFont === 'mohanad' ? 'uthman' : s.arabicFont, ARABIC);   // ('mohanad', once offered, drew no Arabic letters: a kept choice of it reads in the default font)
   warmFonts(s);
   const fallback = "'Noto Naskh Arabic', Georgia, serif";
   root.style.setProperty('--r-font', s.latinFont === 'publisher' ? 'inherit' : `${latin}, ${arabic}, ${fallback}`);

@@ -5,6 +5,8 @@
 // by the check, the mark on the book; a site behind a browser check named as such; a Shosetsu repo
 // recognised and listed as not runnable. node tests/ext/flow.cjs
 const { chromium, devices } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
+// (The pictures go to the temp folder, not into the repository.)
+const SHOTDIR = require('path').join(require('os').tmpdir(), 'kr-ext-shots'); require('fs').mkdirSync(SHOTDIR, { recursive: true });
 const DIST = path.resolve(__dirname, '../../dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.ttf': 'font/ttf' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
@@ -12,7 +14,10 @@ const SITE = 'http://localhost:5403';
 (async () => {
   await new Promise((r) => server.listen(5404, r));
   const mock = spawn('node', [path.join(__dirname, 'server.cjs'), '5403'], { stdio: 'ignore' }); await new Promise((r) => setTimeout(r, 600));
-  const browser = await chromium.launch(); const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'en' }); const page = await ctx.newPage();
+  const browser = await chromium.launch(); const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'en' });
+  // (Only this machine: any other address is refused, so the catalogues are unreachable as the test assumes, wherever it runs.)
+  await ctx.route((u) => !/^(localhost|127\.0\.0\.1)$/.test(u.hostname), (r) => r.abort());
+  const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e))); page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404|503|ERR_|net::/.test(m.text())) errors.push(m.text()); });
   let fails = 0; const ok = (name, cond) => { console.log((cond ? 'ok  ' : 'FAIL'), name); if (!cond) fails++; };
   const base = 'http://localhost:5404/';
@@ -54,7 +59,7 @@ const SITE = 'http://localhost:5403';
     await page.$eval('.repo-section >> nth=3 >> .ext-card', (el) => el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))); await page.waitForSelector('.sheet .dest-row.danger');
     page.once('dialog', (d) => d.accept()); await page.click('.sheet .dest-row.danger'); await page.waitForTimeout(600);
     ok('… removed from its menu, the repo of one with it', (await page.$$('.repo-section')).length === 3);
-    await page.screenshot({ path: path.join(__dirname, 'hub.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'hub.png') });
     // Discover: AniList's trending light novels on the hub; a tap searches every source.
     {
       await page.route('https://graphql.anilist.co/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ data: { trending: { media: [{ id: 1, title: { english: 'Beta Blossom', romaji: 'Beta' }, coverImage: { large: '' }, averageScore: 81 }] }, popular: { media: [{ id: 2, title: { romaji: 'Alpha Ascension' } }] }, top: { media: [] } } }) }));
@@ -103,7 +108,7 @@ const SITE = 'http://localhost:5403';
     await page.fill('.gs-form input', 'beta'); await page.press('.gs-form input', 'Enter');
     await page.waitForFunction(() => !!document.querySelector('.gs-card') && document.querySelector('.gs-status')?.hidden, null, { timeout: 30000 }).catch(() => {});
     const gs = await page.evaluate(() => ({ first: document.querySelector('.gs-found .gs-section .gs-head b')?.textContent, cards: [...document.querySelectorAll('.gs-found .gs-card')].map((e) => e.textContent), sections: document.querySelectorAll('.gs-section').length }));
-    await page.screenshot({ path: path.join(__dirname, 'globalsearch.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'globalsearch.png') });
     await page.click('.gs-card'); await page.waitForSelector('.src-details .src-head h2', { timeout: 20000 }).catch(() => {});
     const opened = await page.$eval('.src-details .src-head h2', (e) => e.textContent).catch(() => '');
     ok('search every source: each source a row, Beta found, its page opens', gs.cards.length >= 1 && gs.cards.every((c) => /Beta/.test(c)) && gs.sections >= 2 && /Beta/.test(opened));
@@ -129,14 +134,14 @@ const SITE = 'http://localhost:5403';
     await page.click('.sheet .fs-head:has-text("Genres")'); await page.click('.sheet .fs-sec.open .fs-opt:has-text("Romance")'); await page.click('.sheet .fs-bar .btn.primary'); await page.waitForTimeout(1500);
     await page.evaluate(() => { location.hash = location.hash.replace(/\?.*$/, '').replace(/&v=.*$/, ''); }); await page.waitForTimeout(1200);
     ok('genre filter applied to the shelf', (await page.$$('.src-grid .src-card')).length === 1 && /Beta/.test(await page.$eval('.src-grid .src-title', (e) => e.textContent)));
-    await page.screenshot({ path: path.join(__dirname, 'browse.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'browse.png') });
     // Reset the filter, open Alpha.
     await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith('kr.src.ext:')) localStorage.removeItem(k); });
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=0 >> .ext-card >> nth=0'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 }); await page.waitForTimeout(400);
     await page.click('.src-grid .src-card:has-text("Alpha")'); await page.waitForSelector('.src-details .src-chapters', { timeout: 20000 }); await page.waitForTimeout(300);
     const detail = await page.evaluate(() => ({ title: document.querySelector('.src-head h2').textContent, author: document.querySelector('.src-author-line')?.textContent, chapters: document.querySelectorAll('.novel-chapters li').length, tags: document.querySelectorAll('.src-tags .chip').length, first: document.querySelector('.novel-chapters li')?.textContent }));
     ok('novel page: title, author, 6 chapters, tags', detail.title === 'Alpha Ascension' && detail.author === 'A. Writer' && detail.chapters === 6 && detail.tags === 2 && /Chapter 1/.test(detail.first));
-    await page.screenshot({ path: path.join(__dirname, 'novel.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'novel.png') });
     // The cover tapped: on its own (Mihon's cover view); not in the library, so share and save only.
     await page.click('.src-head .src-cover.big'); await page.waitForSelector('.cover-view img');
     const cv = await page.$$eval('.cover-view .cv-bar .icon-btn', (els) => els.map((e) => e.dataset.icon).join(','));
@@ -147,8 +152,8 @@ const SITE = 'http://localhost:5403';
     // Read from the site.
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
     const read = await page.evaluate(() => ({ chapters: document.querySelectorAll('.kr-webnovel .kr-novel-chapter').length, loaded: document.querySelectorAll('.kr-webnovel .kr-chap:not(.pending)').length, text: document.querySelector('.kr-webnovel .kr-chap:not(.pending)')?.textContent, ads: !!document.querySelector('.kr-webnovel .ads, .kr-webnovel script') }));
-    ok('reading: chapters laid out, the first ones fetched, ads and scripts gone', read.chapters === 6 && read.loaded >= 2 && /Chapter 1 of Alpha/.test(read.text) && !read.ads);
-    await page.screenshot({ path: path.join(__dirname, 'read.png') });
+    ok('reading: chapters laid out, the first ones fetched, ads and scripts gone', read.chapters === 6 && read.loaded >= 2 && /Chapter 1\s+of Alpha/.test(read.text) && !read.ads);
+    await page.screenshot({ path: path.join(SHOTDIR, 'read.png') });
     // The book is in the library with the online mark.
     await page.goto(base + '#/'); await page.waitForSelector('.library-view'); await page.waitForTimeout(600);
     ok('library shows the novel as online', !!(await page.$('.book-card .badge.online, .card .badge.online, .badge.online')));
@@ -195,17 +200,19 @@ const SITE = 'http://localhost:5403';
     await page.click('.src-grid .src-card:has-text("Alpha")'); await page.waitForSelector('.src-files', { timeout: 20000 }); await page.waitForTimeout(300);
     // A chapter arrives on the site; the check finds it.
     await page.evaluate((site) => fetch(site + '/admin/add-chapter?slug=alpha').then((r) => r.json()), SITE);
-    await page.goto(base + '#/sources'); await page.waitForSelector('.sources-hub'); await page.waitForTimeout(300);
+    // (The bell shows only once something waits: the check is asked for from Settings, whose section shows for the followed work.)
+    await page.goto(base + '#/settings'); await page.waitForSelector('.upd-card:not([hidden])', { timeout: 10000 }); await page.evaluate(() => document.querySelector('.upd-card').classList.remove('collapsed'));
+    await page.click('.upd-card .upd-check .btn'); await page.waitForTimeout(3500);
+    await page.goto(base + '#/sources'); await page.waitForSelector('.bell-btn:not([hidden])', { timeout: 10000 }); await page.waitForTimeout(300);
     await page.click('.bell-btn'); await page.waitForSelector('.sheet'); await page.waitForTimeout(200);
-    await page.click('.sheet button:has-text("Check now")'); await page.waitForTimeout(3500);
     const sheet = await page.$eval('.sheet', (e) => e.textContent);
     ok('check finds the new chapter', /New chapters/.test(sheet) && /Alpha Ascension/.test(sheet));
     ok('bell carries the count', (await page.$eval('.bell-btn .count', (e) => e.textContent).catch(() => '')) === '1');
-    await page.screenshot({ path: path.join(__dirname, 'bell.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'bell.png') });
     await page.evaluate(() => document.querySelectorAll('.sheet, .sheet-scrim').forEach((e) => e.remove()));
     await page.goto(base + '#/'); await page.waitForSelector('.library-view'); await page.waitForTimeout(600);
     ok('library marks the book with (!) and the count', (await page.$eval('.badge.alert', (e) => e.textContent).catch(() => '')) === '!1');
-    await page.screenshot({ path: path.join(__dirname, 'library.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'library.png') });
     // Opening the book clears the mark and shows the new chapter.
     await page.click('.badge.alert'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(800);
     ok('the new chapter is in the book', (await page.$$('.kr-webnovel .kr-novel-chapter')).length === 7);
@@ -234,8 +241,10 @@ const SITE = 'http://localhost:5403';
     const my = await page.evaluate(() => ({ chapters: document.querySelectorAll('.novel-chapters li').length, first: document.querySelector('.novel-chapters li')?.textContent, status: document.querySelector('.src-chips')?.textContent }));
     ok('Mangayomi novel: chapters in reading order, status', my.chapters === 4 && /Chapter 1/.test(my.first) && /Completed/.test(my.status));
     // Chapters picked (a long press), the ones between added, fetched for offline: marked afterwards.
-    await page.dispatchEvent('.novel-chapters li:nth-child(2) button', 'contextmenu'); await page.waitForTimeout(150);
-    await page.dispatchEvent('.novel-chapters li:nth-child(4) button', 'contextmenu'); await page.waitForTimeout(150);
+    // (A right-click, which brings its own pointer events: a second bare «contextmenu» a moment after a hold is taken for that
+    // hold's duplicate and dropped on purpose — src/ui/hold.ts.)
+    await page.click('.novel-chapters li:nth-child(2) button', { button: 'right' }); await page.waitForTimeout(150);
+    await page.click('.novel-chapters li:nth-child(4) button', { button: 'right' }); await page.waitForTimeout(150);
     const picked2 = (await page.$$('.novel-chapters button.on')).length;
     await page.click('.chapter-sel button[title="Select the chapters between"]'); await page.waitForTimeout(150);
     const picked3 = (await page.$$('.novel-chapters button.on')).length;
@@ -262,11 +271,11 @@ const SITE = 'http://localhost:5403';
     await page.click('.src-chapter-tools button[data-icon="bookmark"]'); await page.click('.src-chapter-tools button[data-icon="sortAsc"]'); await page.waitForTimeout(200);
     const lastFirst = await page.$eval('.novel-chapters li button', (e) => e.textContent);
     await page.click('.src-chapter-tools button[data-icon="sortAsc"]'); await page.waitForTimeout(200);
-    await page.screenshot({ path: path.join(__dirname, 'chapters.png') });
+    await page.screenshot({ path: path.join(SHOTDIR, 'chapters.png') });
     ok('chapters marked read and bookmarked; hide read, bookmarked only, newest first', /read/.test(marked[0]) && /read/.test(marked[1]) && /\*/.test(marked[3]) && unreadOnly === marked.length - 2 && starredOnly.length === 1 && /\*/.test(starredOnly[0]) && !/Chapter 1\b/.test(lastFirst));
     if (!(unreadOnly === marked.length - 2 && starredOnly.length === 1)) console.log('  rows', marked, unreadOnly, starredOnly, lastFirst);
     await page.click('.src-files .btn.primary'); await page.waitForSelector('.kr-webnovel', { timeout: 20000 }); await page.waitForTimeout(2500);
-    ok('Mangayomi chapter text read', /Chapter 1 of Beta/.test(await page.$eval('.kr-webnovel .kr-chap:not(.pending)', (e) => e.textContent).catch(() => '')));
+    ok('Mangayomi chapter text read', /Chapter 1\s+of Beta/.test(await page.$eval('.kr-webnovel .kr-chap:not(.pending)', (e) => e.textContent).catch(() => '')));
     // Extension settings sheet.
     await page.goto(base + '#/sources'); await page.waitForSelector('.repo-section'); await page.click('.repo-section >> nth=1 >> .ext-card:not(.off)'); await page.waitForSelector('.src-grid .src-card', { timeout: 20000 });
     await page.click('.topbar-actions button[aria-label="Extension settings"]'); await page.waitForSelector('.sheet'); await page.waitForTimeout(200);
@@ -283,5 +292,5 @@ const SITE = 'http://localhost:5403';
     page.once('dialog', (d) => d.accept());
     await page.click('.repo-section >> nth=2 >> .repo-head button[data-icon="more"]'); await page.waitForSelector('.sheet'); await page.click('.sheet .btn.danger'); await page.waitForTimeout(600);
     ok('repo removed', (await page.$$('.repo-section')).length === 2);
-  } finally { console.log(`\n${fails ? fails + ' failed' : 'all passed'}; errors`, errors); await browser.close(); server.close(); mock.kill(); }
+  } finally { console.log(`\n${fails ? fails + " failed" : "all passed"}; errors`, errors); await browser.close(); server.close(); mock.kill(); process.exitCode = fails || errors.length ? 1 : 0; }
 })();

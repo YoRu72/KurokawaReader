@@ -5,7 +5,8 @@
 // details, its tags, the files to fetch — or, for Shamela and the novels, its chapters, read from the site
 // or fetched whole for offline. A bell tells what came: new chapters for the novels of the library, newer
 // versions of the extensions.
-import { h, icon, iconButton, toast, openSheet, coverColors, pickButton } from '../ui/dom';
+import { h, icon, iconButton, toast, openSheet, coverColors, pickButton, debounce } from '../ui/dom';
+import { fits } from '../platform';
 import { t, localDigits, getLang, countChapters, countSeconds, countHours, countBooks, countVolumes, formatBytes } from '../i18n';
 import { navigate, back } from '../router';
 import { db, uid, FAV_TAG, chapterRead, type Book, type TagDef } from '../db';
@@ -16,12 +17,13 @@ import { archiveSource } from '../sources/archive';
 import { shamelaSource, addToLibrary, downloadBook, readBookFile, expandToc, catalogueState, buildCatalogue, isWeb, type ShamelaToc } from '../sources/shamela';
 import * as link from '../sources/shamelalink';
 import { passChallenge, forgetSite, openSite, openBrowser, resetBrowser } from '../sources/http';
-import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, type Repo, type ExtItem } from '../sources/repos';
+import { listRepos, addRepo, removeRepo, refreshRepo, renameRepo, langLabel, KIND_APP, cachedVersion, pluginCode, installedItems, installExtension, uninstallExtension, addExtensionByLink, installedVersions, newer, type Repo, type ExtItem } from '../sources/repos';
 import { folderSource } from '../sources/folder';
+import { buildExtIndex, searchExts, type ExtEntry, type ExtState } from '../sources/extsearch';
 import { schedule, peekLog, coverSource, fullCover } from '../sources/peek';
 import { SRC_PREFIX, sourceIdOf, extHandle, forgetHandle, findItem, findInLibrary, sameNovelElsewhere, addNovelToLibrary, readNovelFile, saveNovelFile, downloadNovel, forgetChapters, paceOf, setPace, checkNovel, novelToEpub, type Handle, type WebNovel } from '../sources/ext/source';
 import { readStore } from '../sources/ext/sandbox';
-import { checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes } from '../sources/updates';
+import { timeAgo, checkedLine, isTime, checkAll, lastReport, pendingCounts, folderNews, onUpdatesChanged, isChecking, askNotifyPermission, updatePrefs, setUpdatePref, checkEvery, setCheckEvery, retryFailed, dismissChapters, dismissVolumes, followedWorks, onFollowedChanged } from '../sources/updates';
 import { parseName } from '../sources/folder';
 import { onHoldOrContext } from '../ui/tags';
 
@@ -189,16 +191,29 @@ function globalSearchView(q0: string): HTMLElement & { dispose?: () => void } {
 function hubView(): HTMLElement & { dispose?: () => void } {
   const body = h('div', { class: 'library-body sources-hub' });
   const bell = iconButton('bell', t('srcWhatsNew'), () => updatesSheet(() => void drawBell()));
-  bell.classList.add('bell-btn');
+  bell.classList.add('bell-btn'); bell.hidden = true;
   const actions = h('div', { class: 'topbar-actions' }, iconButton('search', t('searchAllSources'), () => navigate(path(ALL))), bell, iconButton('plus', t('addRepo'), () => addRepoSheet(() => void drawRepos())));
   const root = h('div', { class: 'view sources-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/settings')), h('div', { class: 'title' }, t('sources')), actions), body) as HTMLElement & { dispose?: () => void };
   const off = onUpdatesChanged(() => void drawBell());
-  root.dispose = () => off();
+  const offFollow = onFollowedChanged(() => void drawBell());
+  // On a computer: «/» or Ctrl+F reaches the extension search (not while a sheet is open, nor from a field).
+  const onKey = (e: KeyboardEvent): void => {
+    if (!root.isConnected) { window.removeEventListener('keydown', onKey, true); return; }
+    const tg = e.target as HTMLElement | null; const typing = !!tg && (/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName) || tg.isContentEditable);
+    const slash = e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !typing; const find = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f';
+    if ((!slash && !find) || e.defaultPrevented || !fits('computer') || document.querySelector('.sheet')) return;
+    const field = root.querySelector<HTMLInputElement>('.ext-search-field'); if (!field) return;
+    e.preventDefault(); e.stopPropagation(); field.focus(); field.select();
+  };
+  window.addEventListener('keydown', onKey, true);
+  root.dispose = () => { off(); offFollow(); window.removeEventListener('keydown', onKey, true); };
+  // (The bell is there only while something waits to be seen, and only for works that are followed.)
   const drawBell = async () => {
-    const c = await pendingCounts().catch(() => ({ chapters: 0, books: 0, extensions: 0, series: 0 }));
-    const n = c.books + c.extensions + c.series;
+    const c = await pendingCounts().catch(() => ({ chapters: 0, books: 0, extensions: 0, series: 0, followed: 0 }));
+    const n = c.followed ? c.books + c.extensions + c.series : 0;
     bell.querySelector('.count')?.remove();
     if (n) bell.append(h('span', { class: 'count' }, localDigits(n)));
+    bell.hidden = !n;
     bell.classList.toggle('busy', isChecking());
   };
   void drawBell();
@@ -219,7 +234,11 @@ function hubView(): HTMLElement & { dispose?: () => void } {
     // (Folders of books apart from the repositories of extensions: two kinds of source, said so.)
     const folders = repos.filter((r) => r.kind === 'folder' || r.kind === 'site'); const exts = repos.filter((r) => r.kind !== 'folder' && r.kind !== 'site');
     if (folders.length) { reposBox.append(h('h3', { class: 'section-title' }, t('webFoldersTitle'))); for (const r of folders) reposBox.append(folderSection(r, () => void drawRepos())); }
-    if (exts.length) { reposBox.append(h('h3', { class: 'section-title' }, t('repos'))); for (const r of exts) reposBox.append(repoSection(r, () => void drawRepos())); }
+    if (exts.length) {
+      // (One search over the extensions of all of them, above; the repositories themselves step aside while it is in use.)
+      const tree = h('div', { class: 'repos-tree' }, h('h3', { class: 'section-title' }, t('repos')), ...exts.map((r) => repoSection(r, () => void drawRepos())));
+      reposBox.append(extSearch(exts, () => void drawRepos(), tree), tree);
+    }
     // (Light novels trending on AniList, a tap from a search of the reader's sources — once there are some.)
     // (Only for a reader who linked an AniList account: the rows are AniList's.)
     if ((exts.length || folders.length) && (await import('../anilist').then((al) => al.anilistOn() && !!al.user()).catch(() => false))) reposBox.append(discoverBox());
@@ -372,24 +391,98 @@ function folderSection(r: Repo, redraw: () => void): HTMLElement {
   if (r.error) card.append(h('p', { class: 'hint warn' }, r.error));
   return card;
 }
+/** The extension's own menu: its site, an update when there is one, opening it, its removal. `changed` runs after an
+ *  update or a removal. */
+function extMenu(r: Repo, i: ExtItem, changed: () => void): void {
+  const sh = openSheet(i.name, t('close'));
+  sh.body.append(h('p', { class: 'hint', dir: 'ltr' }, i.site || i.url));
+  const rows = h('div', { class: 'dest-list' });
+  void cachedVersion(r, i).then((v) => { if (v && v !== i.version) rows.prepend(h('button', { type: 'button', class: 'dest-row', onclick: async () => { sh.close(); try { await pluginCode(r, i, true); forgetHandle(sourceIdOf(r, i)); toast(t('extUpdated', { name: i.name })); changed(); } catch (e) { toast(describe(e), 'error'); } } }, icon('download'), h('span', { class: 'name' }, t('update'), ' ', h('small', null, `${v} → ${i.version}`)))); });
+  rows.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); navigate(path(sourceIdOf(r, i))); } }, icon('play'), h('span', { class: 'name' }, t('open'))));
+  rows.append(h('button', { type: 'button', class: 'dest-row danger', onclick: async () => { if (!confirm(t('removeExtConfirm', { name: i.name }))) return; sh.close(); await uninstallExtension(r, i); forgetHandle(sourceIdOf(r, i)); toast(t('extRemoved')); changed(); } }, icon('trash'), h('span', { class: 'name' }, t('removeExt'))));
+  sh.body.append(rows);
+}
+/** Why an extension does not run here, in words. */
+const extNote = (i: ExtItem): string => i.runnable ? '' : i.note === 'notNovel' ? t('extNotNovel') : i.note === 'dartExtension' ? t('extDart') : i.note === 'luaExtension' ? t('extLua') : i.note === 'apkExtension' ? t('extApk') : i.note === 'iosModule' ? t('extIos') : t('extNotRunnable');
+/** One search over the extensions of every repository added: by name (folded, as the glossary's search is), by language
+ *  (its code or its name in the interface language) and by the repository's name; one flat list, best match first, each
+ *  row with its state and the action for it. Reads what is kept; asks nothing of the network. */
+function extSearch(repos: Repo[], redraw: () => void, tree: HTMLElement): HTMLElement {
+  const BATCH = 40;
+  const names = (() => { try { return new Intl.DisplayNames([getLang()], { type: 'language' }); } catch { return null; } })();
+  const langName = (c: string): string => { if (!names || !/^[a-z]{2,3}([-_][a-z]{2,4})?$/i.test(c.trim())) return ''; try { return names.of(c.trim().replace('_', '-')) ?? ''; } catch { return ''; } };
+  let ix: ExtEntry[] = []; let q = ''; let fInst = false; let fUpd = false; let fLang = ''; let shownN = BATCH; let changed = false;
+  const build = () => { ix = buildExtIndex(repos, installedVersions(), langName, langLabel, newer); };
+  build();
+  const input = h('input', { type: 'search', class: 'src-search ext-search-field', placeholder: t('extSearchPlaceholder'), 'aria-label': t('extSearchLabel'), dir: 'auto', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search', 'data-own-clear': '1' }) as HTMLInputElement;
+  const clear = iconButton('close', t('extSearchClear'), () => { input.value = ''; q = ''; fInst = false; fUpd = false; fLang = ''; run(); input.focus(); });
+  const chips = h('div', { class: 'folder-chips ext-filters' });
+  const count = h('small', { class: 'hint ext-found', 'aria-live': 'polite' });
+  const list = h('div', { class: 'ext-hits' });
+  const box = h('div', { class: 'ext-search' }, h('div', { class: 'src-search-row' }, input, clear), chips, count, list);
+  let io: IntersectionObserver | null = null;
+  const active = () => !!q.trim() || fInst || fUpd || !!fLang;
+  const stateText: Record<ExtState, string> = { installed: t('extStateInstalled'), update: t('extStateUpdate'), not: t('extStateNot'), cannot: t('extStateCannot') };
+  const settle = () => { changed = true; build(); draw(); };
+  const hitRow = (e: ExtEntry): HTMLElement => {
+    const i = e.item; const r = repos.find((x) => x.key === e.repoKey)!; const [c1, c2] = coverColors(i.name);
+    const ic = h('span', { class: 'ext-icon', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, i.icon ? h('img', { src: i.icon, alt: '', loading: 'lazy', onerror: (ev: Event) => (ev.target as HTMLElement).remove() }) : icon('puzzle'));
+    const row = h('div', { class: `ext-hit ${e.state}`, 'data-state': e.state }, ic,
+      h('span', { class: 'ext-text grow' }, h('b', { dir: 'auto' }, i.name), h('small', { dir: 'auto' }, `${e.lang} · ${i.version}${i.nsfw ? ' · 18+' : ''} · ${t('extFromRepo', { repo: e.repoName })}`), h('small', { class: 'ext-state' }, stateText[e.state])));
+    const act = (label: string, ic2: string, cls: string, go: (b: HTMLButtonElement) => Promise<void> | void) => { const b = h('button', { type: 'button', class: `btn small ${cls}` }, icon(ic2), label) as HTMLButtonElement; b.addEventListener('click', () => void go(b)); return b; };
+    if (e.state === 'not') row.append(act(t('add'), 'plus', 'primary', async (b) => { b.disabled = true; b.replaceChildren(h('span', { class: 'spinner small' })); try { await installExtension(r, i); toast(t('extAdded', { name: `⁨${i.name}⁩` }), 'info', 3000); settle(); } catch (er) { b.disabled = false; b.replaceChildren(icon('plus'), t('add')); toast(describe(er), 'error'); } }));
+    else if (e.state === 'update') row.append(act(t('update'), 'download', 'primary', async (b) => { b.disabled = true; b.replaceChildren(h('span', { class: 'spinner small' })); try { await pluginCode(r, i, true); forgetHandle(sourceIdOf(r, i)); toast(t('extUpdated', { name: i.name })); settle(); } catch (er) { b.disabled = false; b.replaceChildren(icon('download'), t('update')); toast(describe(er), 'error'); } }));
+    else if (e.state === 'installed') row.append(act(t('open'), 'play', 'tonal', () => navigate(path(sourceIdOf(r, i)))));
+    if (e.state === 'installed' || e.state === 'update') row.append(iconButton('more', t('more'), () => extMenu(r, i, settle)));
+    if (e.state === 'cannot') { row.classList.add('off'); row.title = extNote(i); row.addEventListener('click', () => toast(extNote(i), 'info', 3200)); }
+    return row;
+  };
+  const drawChips = () => {
+    chips.replaceChildren();
+    const chip = (label: string, on: boolean, go: () => void, id: string) => h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), 'aria-pressed': String(on), 'data-chip': id, onclick: go }, h('span', null, label));
+    if (ix.some((e) => e.state === 'installed' || e.state === 'update')) chips.append(chip(t('extFilterInstalled'), fInst, () => { fInst = !fInst; run(); }, 'installed'));
+    if (ix.some((e) => e.state === 'update')) chips.append(chip(t('extFilterUpdates'), fUpd, () => { fUpd = !fUpd; run(); }, 'updates'));
+    const langs = new Map<string, number>(); for (const e of ix) langs.set(e.lang, (langs.get(e.lang) ?? 0) + 1);
+    if (langs.size > 1) for (const [l, n] of [...langs.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))) chips.append(chip(`${l} ${localDigits(n)}`, fLang === l, () => { fLang = fLang === l ? '' : l; run(); }, `lang:${l}`));
+    chips.hidden = !chips.childElementCount;
+  };
+  const draw = () => {
+    io?.disconnect(); io = null;
+    const on = active();
+    tree.hidden = on; list.hidden = !on; count.hidden = !on; clear.hidden = !on && !input.value;
+    drawChips();
+    list.replaceChildren();
+    if (!on) { if (changed) { changed = false; redraw(); } return; }
+    const res = searchExts(ix, q, { installed: fInst, updates: fUpd, lang: fLang });
+    count.textContent = t('extFoundN', { n: localDigits(res.length) });
+    if (!res.length) { list.append(h('div', { class: 'empty small' }, h('p', null, t('extSearchNone')))); return; }
+    let n = 0;
+    const more = h('button', { type: 'button', class: 'btn tonal small ext-more' }, t('showMore')) as HTMLButtonElement;
+    const next = () => {
+      const to = Math.min(res.length, Math.max(shownN, n + BATCH)); const frag = document.createDocumentFragment();
+      for (; n < to; n++) frag.append(hitRow(res[n]));
+      more.before(frag); shownN = n; more.hidden = n >= res.length; if (more.hidden) { io?.disconnect(); io = null; }
+    };
+    more.addEventListener('click', next); list.append(more); next();
+    if (!more.hidden && typeof IntersectionObserver !== 'undefined') { io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting) && box.isConnected) next(); }, { rootMargin: '200px' }); io.observe(more); }
+  };
+  const run = () => { shownN = BATCH; draw(); };
+  input.addEventListener('input', debounce(() => { q = input.value; run(); }, 120));
+  input.addEventListener('input', () => { clear.hidden = !input.value && !active(); });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (input.value || active())) { e.preventDefault(); e.stopPropagation(); clear.click(); } });
+  draw();
+  return box;
+}
 function extCard(r: Repo, i: ExtItem, redraw?: () => void): HTMLElement {
   const [c1, c2] = coverColors(i.name);
   const ic = h('span', { class: 'ext-icon', style: { background: `linear-gradient(160deg, ${c1}, ${c2})` } }, i.icon ? h('img', { src: i.icon, alt: '', loading: 'lazy', onerror: (e: Event) => (e.target as HTMLElement).remove() }) : icon('puzzle'));
-  const note = i.runnable ? '' : i.note === 'notNovel' ? t('extNotNovel') : i.note === 'dartExtension' ? t('extDart') : i.note === 'luaExtension' ? t('extLua') : i.note === 'apkExtension' ? t('extApk') : i.note === 'iosModule' ? t('extIos') : t('extNotRunnable');
+  const note = extNote(i);
   const card = h('button', { type: 'button', class: 'ext-card' + (i.runnable ? '' : ' off'), title: note || i.site, onclick: () => { if (i.runnable) navigate(path(sourceIdOf(r, i))); else toast(note, 'info', 3200); } },
     ic, h('span', { class: 'ext-text' }, h('b', { dir: 'auto' }, i.name), h('small', null, `${langLabel(i.lang)} · ${i.version}${i.nsfw ? ' · 18+' : ''}`)),
     i.runnable ? h('span', { class: 'ext-dot', hidden: true }) : null);
   if (i.runnable) void cachedVersion(r, i).then((v) => { if (v && v !== i.version) { const d = card.querySelector('.ext-dot') as HTMLElement; d.hidden = false; d.title = t('extUpdateAvailable', { v: i.version }); } });
   // Held: the extension's own menu — its site, an update when there is one, its removal.
-  if (redraw) onHoldOrContext(card, () => {
-    const sh = openSheet(i.name, t('close'));
-    sh.body.append(h('p', { class: 'hint', dir: 'ltr' }, i.site || i.url));
-    const rows = h('div', { class: 'dest-list' });
-    void cachedVersion(r, i).then((v) => { if (v && v !== i.version) rows.prepend(h('button', { type: 'button', class: 'dest-row', onclick: async () => { sh.close(); try { await pluginCode(r, i, true); forgetHandle(sourceIdOf(r, i)); toast(t('extUpdated', { name: i.name })); redraw(); } catch (e) { toast(describe(e), 'error'); } } }, icon('download'), h('span', { class: 'name' }, t('update'), ' ', h('small', null, `${v} → ${i.version}`)))); });
-    rows.append(h('button', { type: 'button', class: 'dest-row', onclick: () => { sh.close(); navigate(path(sourceIdOf(r, i))); } }, icon('play'), h('span', { class: 'name' }, t('open'))));
-    rows.append(h('button', { type: 'button', class: 'dest-row danger', onclick: async () => { if (!confirm(t('removeExtConfirm', { name: i.name }))) return; sh.close(); await uninstallExtension(r, i); forgetHandle(sourceIdOf(r, i)); toast(t('extRemoved')); redraw(); } }, icon('trash'), h('span', { class: 'name' }, t('removeExt'))));
-    sh.body.append(rows);
-  });
+  if (redraw) onHoldOrContext(card, () => extMenu(r, i, redraw));
   return card;
 }
 function repoMenu(r: Repo, redraw: () => void): void {
@@ -457,12 +550,7 @@ function updatesSheet(after: () => void): void {
   const sh = openSheet(t('srcWhatsNew'), t('close'));
   sh.el.classList.add('updates-sheet');
   const body = sh.body;
-  // (A time as people say it: "3 hours ago".)
-  const ago = (ms: number) => {
-    const rtf = new Intl.RelativeTimeFormat(getLang() === 'ar' ? 'ar' : getLang(), { numeric: 'auto' }); const d = (ms - Date.now()) / 1000;
-    for (const [u, n] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) if (Math.abs(d) >= n) return rtf.format(Math.round(d / n), u);
-    return rtf.format(0, 'minute');
-  };
+  const ago = timeAgo;
   const draw = async () => {
     body.replaceChildren();
     const rep = await lastReport();
@@ -472,10 +560,10 @@ function updatesSheet(after: () => void): void {
     const when = Number(localStorage.getItem('kr.sources.checkedAt') ?? 0);
     // The state of the checks, and the way to check now.
     const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: !isChecking() }, bar);
-    const line = h('small', null, when ? t('srcCheckedAgo', { when: ago(when) }) : t('neverChecked'));
+    const line = h('small', null, checkedLine(when));
     const every = checkEvery();
-    const next = h('small', { class: 'upd-next' }, every ? t('srcNextCheck', { when: when ? ago(when + every * 3600000) : t('soon') }) : t('srcChecksOff'));
-    const btn = h('button', { type: 'button', class: 'btn tonal', disabled: isChecking() }, icon('refresh'), t('checkNow')) as HTMLButtonElement;
+    const next = h('small', { class: 'upd-next' }, every ? t('srcNextCheck', { when: isTime(when) ? ago(when + every * 3600000) : t('soon') }) : t('srcChecksOff'));
+    const btn = h('button', { type: 'button', class: 'btn tonal', disabled: isChecking() }, icon('refresh'), t('srcCheckOthers')) as HTMLButtonElement;
     btn.addEventListener('click', async () => {
       btn.disabled = true; track.hidden = false;
       void askNotifyPermission().catch(() => false);
@@ -483,7 +571,8 @@ function updatesSheet(after: () => void): void {
       catch (e) { toast(describe(e), 'error'); }
       finally { track.hidden = true; void draw(); after(); }
     });
-    body.append(h('div', { class: 'source-row upd-state' }, icon('bell'), h('span', { class: 'grow' }, line, next, track), btn));
+    const followed = h('small', { class: 'upd-followed' }); void followedWorks().then((f) => { followed.textContent = t('srcFollowedLine', { n: localDigits(f.total) }); });
+    body.append(h('div', { class: 'source-row upd-state' }, icon('bell'), h('span', { class: 'grow' }, line, next, followed, track), btn));
     const dismiss = (fn: () => Promise<void>) => iconButton('check', t('markSeen'), async () => { await fn(); void draw(); after(); });
     // New chapters, a row per novel: a tap reads them, the tick marks them seen.
     if (novels.length) {
@@ -494,7 +583,7 @@ function updatesSheet(after: () => void): void {
         const url = coverUrl(b);
         list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(`/read/${b.id}`); } },
           url ? h('img', { class: 'upd-cover', src: url, alt: '' }) : h('span', { class: 'upd-cover gen' }, icon('books')),
-          h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!), b.remote?.checkedAt ? ` · ${ago(b.remote.checkedAt)}` : '')),
+          h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, b.title), h('small', null, countChapters(b.remote!.newChapters!), isTime(b.remote?.checkedAt) ? ` · ${ago(b.remote!.checkedAt!)}` : '')),
           h('span', { class: 'badge new' }, `+${localDigits(String(b.remote!.newChapters))}`)), dismiss(() => dismissChapters(b.id))));
       }
       body.append(list);
@@ -505,7 +594,7 @@ function updatesSheet(after: () => void): void {
         h('button', { type: 'button', class: 'btn small text', onclick: async () => { for (const v of vols) await dismissVolumes(v.repoKey, v.series); void draw(); after(); } }, t('markAllSeen'))));
       const list = h('ul', { class: 'plain-list upd-list' });
       for (const v of vols) list.append(h('li', { class: 'upd-row' }, h('button', { type: 'button', class: 'upd-open', onclick: () => { sh.close(); navigate(path(`dir:${v.repoKey}`, { shelf: v.series })); } }, h('span', { class: 'upd-cover gen' }, icon('books')),
-        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${v.at ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, `+${localDigits(String(v.n))}`)), dismiss(() => dismissVolumes(v.repoKey, v.series))));
+        h('span', { class: 'catalog-name' }, h('b', { dir: 'auto' }, v.name), h('small', { dir: 'auto' }, `${v.repoName} · ${countVolumes(v.n)}${isTime(v.at) ? ` · ${ago(v.at)}` : ''}`)), h('span', { class: 'badge new' }, `+${localDigits(String(v.n))}`)), dismiss(() => dismissVolumes(v.repoKey, v.series))));
       body.append(list);
     }
     // Extensions with a newer version: each updated with a tap, or all at once.

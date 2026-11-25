@@ -26,7 +26,7 @@ const para = () => Array.from({ length: 4 + Math.floor(rnd() * 3) }, sentence).j
 const table = () => { const rows = []; for (let r = 0; r < 7; r++) { const c = []; for (let k = 0; k < 5; k++) c.push(r === 0 ? `<th>${pick(AR)} ${k + 1}</th>` : `<td>${k === 0 ? pick(AR) : (rnd() * 900).toFixed(1)}</td>`); rows.push(`<tr>${c.join('')}</tr>`); } return `<table>${rows.join('')}</table>`; };
 
 async function makeBook(b, file) {
-  const font = fs.readFileSync(path.resolve(__dirname, '../src/assets/fonts/AL-Mohanad.woff2')).toString('base64');
+  const font = fs.readFileSync(path.resolve(__dirname, '../src/assets/fonts/Sultan-Medium.woff2')).toString('base64');
   const pages = []; for (let i = 1; i <= 36; i++) pages.push(`<section><h2>${pick(AR)} ${pick(AR)} — ${i}</h2><p>${para()}</p><p>${para()}</p>${table()}<p>${para()}</p><p>${para()}</p>${i % 2 ? table() : `<p>${para()}</p>`}<p>${para()}</p></section>`);
   const p = await b.newPage();
   await p.setContent(`<html dir="rtl"><style>@font-face{font-family:N;src:url(data:font/woff2;base64,${font})}@page{size:210mm 297mm;margin:0}body{margin:0;font:12px/1.55 N, sans-serif}section{box-sizing:border-box;height:297mm;padding:46px 52px;overflow:hidden;break-after:page}h2{font-size:17px;margin:0 0 8px;text-align:center}p{margin:0 0 7px;text-align:justify}table{border-collapse:collapse;width:100%;margin:6px 0 10px;font-size:11px}td,th{border:1px solid #444;padding:2px 5px;text-align:center}th{background:#ddd}</style>${pages.join('')}</html>`);

@@ -160,7 +160,7 @@ export function renderOptions(container: HTMLElement, opts: { pdf?: boolean } = 
   const customArabic = fontsSync().filter((f) => f.script === 'arabic').map((f): [ArabicFont, string] => [`custom:${f.id}`, f.name]);
   const sys = s.systemFonts.map((f): [string, string] => [`system:${f}`, f]);
   const latin: [LatinFont, string][] = [['merriweather', 'Merriweather'], ['termes', 'TeX Gyre Termes'], ['literata', 'Literata'], ['lora', 'Lora'], ['garamond', 'EB Garamond'], ['crimson', 'Crimson Pro'], ['sourceserif', 'Source Serif'], ['gelasio', 'Gelasio'], ['vollkorn', 'Vollkorn'], ['bitter', 'Bitter'], ['atkinson', 'Atkinson'], ['inter', 'Inter'], ['serif', t('fontSystemSerif')], ['sans', t('fontSystemSans')], ...customLatin, ...sys, ['publisher', t('fontPublisher')]];
-  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['mohanad', 'المهند'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ...sys, ['publisher', t('fontPublisher')]];
+  const arabic: [ArabicFont, string][] = [['uthman', 'عثمان طه'], ['sultan', 'سلطان'], ['naskh', 'نسخ'], ...customArabic, ...sys, ['publisher', t('fontPublisher')]];
   const customCjk = fontsSync().filter((f) => f.script === 'cjk').map((f): [CjkFont, string] => [`custom:${f.id}`, f.name]);
   const cjkBook = !!document.querySelector('.cjk-book');
   const cjk: [CjkFont, string][] = [['system', t('fontSystemDefault')], ['mincho', t('fontMincho')], ['gothic', t('fontGothic')], ...customCjk, ...sys, ['publisher', t('fontPublisher')]];
@@ -388,7 +388,7 @@ function colorInput(value: string, onChange: (v: string) => void): HTMLElement {
 function segmented<T extends string>(items: [T, string][], value: T, onPick: (v: T) => void, arabicFont = false): HTMLElement {
   const fam = (id: string): string | undefined => {
     if (id.startsWith('custom:')) { const f = fontsSync().find((x) => x.id === id.slice(7)); return f ? `'${f.family}'` : undefined; }
-    if (arabicFont) return id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : id === 'naskh' ? "'Noto Naskh Arabic'" : id === 'mohanad' ? "'AL-Mohanad'" : undefined;
+    if (arabicFont) return id === 'uthman' ? "'Uthman TN1'" : id === 'sultan' ? "'Sultan'" : id === 'naskh' ? "'Noto Naskh Arabic'" : undefined;
     const named: Record<string, string> = { merriweather: "'Merriweather'", termes: "'TeX Gyre Termes'", lora: "'Lora'", literata: "'Literata'", garamond: "'EB Garamond'", crimson: "'Crimson Pro'", sourceserif: "'Source Serif'", gelasio: "'Gelasio'", vollkorn: "'Vollkorn'", bitter: "'Bitter'", atkinson: "'Atkinson Hyperlegible'", inter: "'Inter'" };
     return named[id];
   };

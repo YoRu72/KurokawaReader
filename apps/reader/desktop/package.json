@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader-desktop",
-  "version": "0.66.0",
+  "version": "0.67.0",
   "description": "KurokawaReader for Windows, macOS and Linux",
   "main": "main.cjs",
   "private": true,
@@ -138,6 +138,21 @@
       {
         "ext": "cbz",
         "name": "Comic archive",
+        "role": "Viewer"
+      },
+      {
+        "ext": "cbr",
+        "name": "Comic archive (RAR)",
+        "role": "Viewer"
+      },
+      {
+        "ext": "cb7",
+        "name": "Comic archive (7z)",
+        "role": "Viewer"
+      },
+      {
+        "ext": "cbt",
+        "name": "Comic archive (tar)",
         "role": "Viewer"
       },
       {

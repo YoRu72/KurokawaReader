@@ -20,6 +20,8 @@ export interface SelectionActions {
   textRule?(text: string): void;
   /** A term added to the translation glossary from the words picked. */
   glossary?(text: string): void;
+  /** The words picked, when they are already a name of the glossary: its rendering, and how to open its card (at the words' place). */
+  glossaryOf?(text: string): { rendering: string; open(rects: DOMRect[]): void } | null;
   /** Language of the book the selection is in (helps choose furigana vs pinyin). */
   lang?(): string | undefined;
 }
@@ -236,7 +238,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
       btn('type', t('readings'), () => { showReadings(cur().text, actions.lang?.()); hide(); }),
       btn('note', t('note'), () => { const c = cur(); actions.note(c.range, c.text); document.getSelection()?.removeAllRanges(); hide(); }),
       btn('images', t('textAsImage'), () => { const c = cur(); actions.textImage(c.text, c.range); hide(); }),
-      btn('more', t('more'), () => { hide(); suppressed = true; moreSheet(cur().text, actions, () => { suppressed = false; }); }),
+      btn('more', t('more'), () => { const c = cur(); const rects = Array.from(c.range.getClientRects()); hide(); suppressed = true; moreSheet(c.text, actions, () => { suppressed = false; }, rects); }),
     );
     const el = h('div', { class: 'sel-toolbar', role: 'toolbar' }, colors, row);
     el.addEventListener('mousedown', (e) => e.preventDefault());
@@ -314,7 +316,7 @@ export function attachSelectionToolbar(scope: HTMLElement, actions: SelectionAct
   };
 }
 
-function moreSheet(text: string, actions: SelectionActions, onClose?: () => void): void {
+function moreSheet(text: string, actions: SelectionActions, onClose?: () => void, rects: DOMRect[] = []): void {
   const s = openSheet(t('more'), t('close'));
   if (onClose) { const obs = new MutationObserver(() => { if (!s.el.isConnected) { obs.disconnect(); onClose(); } }); obs.observe(document.body, { childList: true }); }
   s.body.style.fontFamily = 'var(--font-ui)';
@@ -328,7 +330,8 @@ function moreSheet(text: string, actions: SelectionActions, onClose?: () => void
     item('external', t('shareText'), () => void shareText(text)),
     item('speak', t('speakSelected'), () => actions.speak(text)),
     actions.textRule ? item('pen', t('textRuleFromSelection'), () => actions.textRule!(text)) : null,
-    actions.glossary ? item('define', t('glossaryAddSelection'), () => actions.glossary!(text)) : null,
+    // (Words that already are a name of the glossary: its entry, in place of «Add».)
+    (() => { const g = actions.glossaryOf?.(text); return g ? item('define', t('glossCardIn', { x: `\u2068${g.rendering}\u2069` }), () => g.open(rects)) : actions.glossary ? item('define', t('glossaryAddSelection'), () => actions.glossary!(text)) : null; })(),
     // (Shamela's «search in the books»: the words looked for in the texts of the whole library.)
     ar ? item('books', t('searchShamelaTexts'), () => { try { const k = 'kr.src.shamela.filters'; const f = JSON.parse(localStorage.getItem(k) ?? '{}'); localStorage.setItem(k, JSON.stringify({ ...f, mode: 'texts', match: f.match ?? 'words' })); } catch { /* none */ } location.hash = `#/sources/shamela?q=${encodeURIComponent(text.trim().slice(0, 120))}`; }) : null,
     item('search', t('searchWeb'), () => { const e = getSettings().searchEngine ?? 'duckduckgo'; const urls: Record<string, string> = { duckduckgo: `https://duckduckgo.com/?q=${q}`, google: `https://www.google.com/search?q=${q}`, bing: `https://www.bing.com/search?q=${q}`, wikipedia: `https://${(getLang() || 'en').split('-')[0]}.wikipedia.org/wiki/Special:Search?search=${q}`, yandex: `https://yandex.ru/search/?text=${q}`, baidu: `https://www.baidu.com/s?wd=${q}` }; window.open(urls[e] ?? urls.duckduckgo, '_blank', 'noopener'); }),

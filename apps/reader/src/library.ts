@@ -13,10 +13,20 @@ export async function importFiles(files: FileList | File[], onEach?: (book: Book
   await Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker));
   return out;
 
-  async function importOne(file: File): Promise<void> {
+  async function importOne(picked: File): Promise<void> {
+    let file = picked;
     try {
       const { readMeta, sniffFormat } = await import('./formats');
       const format = await sniffFormat(file, file.name);
+      // A comic in a RAR, 7z or tar (or a protected zip), by its content whatever its name: made once into a CBZ, which is what
+      // is kept (the file picked is never touched); every other archive goes the way it did.
+      let madeFrom: string | undefined;
+      if (format === 'cbz') {
+        const a = await import('./comic/archives');
+        const kind = await a.needsLibarchive(file, file.name);
+        if (kind) { const { prepareComic } = await import('./comic/prepare'); const p = await prepareComic(file, kind); file = p.file; madeFrom = p.madeFrom; }
+        else if (/\.(cbr|rar|cb7|7z|cbt|tar|tgz|txz|tbz2?|tar\.(gz|xz|bz2))$/i.test(file.name) && !(await a.sniffArchive(file, file.name))) throw new Error((await import('./i18n')).t('notAnArchive'));
+      }
       const meta = await readMeta(file, file.name, format);
       const book: Book = {
         id: uid(),
@@ -30,16 +40,18 @@ export async function importFiles(files: FileList | File[], onEach?: (book: Book
         addedAt: Date.now(),
         cover: await shrinkCover(meta.cover),
         pageCount: meta.pageCount,
+        madeFrom,
         bookmarks: [],
         highlights: [],
       };
-      const src = (file as SourcedFile).krSource;
+      const src = madeFrom ? undefined : (file as SourcedFile).krSource;
       if (src) book.source = src; else await db.putFile(book.id, file);
       await db.putBook(book);
       out.push(book);
       onEach?.(book, file);
     } catch (err) {
-      onEach?.(null, file, err);
+      // (An archive that could not be made a comic has told why itself — see src/comic/prepare.ts.)
+      if (!(err as { handled?: boolean } | null)?.handled) onEach?.(null, picked, err);
     }
   }
 }
@@ -61,7 +73,7 @@ export async function listBooks(): Promise<Book[]> {
 /** Every meta key a book's own data is kept under, as `<kind>:<book id>` (translations, the whole-book mark, the
  *  translator kept on, names scanned for, PDF crop boxes, Anki progress, audiobook place and chapters). A new
  *  kind of per-book data is added HERE, so deleting a book takes it and the clean-up below finds it. */
-export const BOOK_META = ['tr', 'trs', 'trWhole', 'trKeep', 'glossScan', 'crop', 'anki', 'audio', 'audioch'] as const;
+export const BOOK_META = ['tr', 'trs', 'trLangs', 'trWhole', 'trKeep', 'trGather', 'trAuto', 'glossScan', 'crop', 'anki', 'audio', 'audioch'] as const;
 
 export async function removeBooks(ids: string[]): Promise<void> {
   for (const id of ids) await db.deleteBook(id);

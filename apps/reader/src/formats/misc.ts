@@ -186,6 +186,15 @@ export const cbzHandler: FlowHandler = {
   kind: 'flow',
   format: 'cbz',
   async readMeta(file, fileName) {
+    // (Its pages as the comic reader reads them — the archive's directory only, the first page alone inflated —, so a
+    // big archive is not loaded whole to be added; JSZip as before when that fails.)
+    try {
+      const { openPages } = await import('../comic/pages');
+      const src = await openPages(file, 'cbz', fileName);
+      const cover = src.pages[0] ? await src.pages[0].blob() : undefined;
+      const pageCount = src.pages.length; src.dispose();
+      if (pageCount) return { title: titleFromFileName(fileName), cover, pageCount };
+    } catch { /* below */ }
     try {
       const zip = await JSZip.loadAsync(file);
       const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir && /\.(jpe?g|png|gif|webp|avif)$/i.test(n)).sort(naturalCompare);

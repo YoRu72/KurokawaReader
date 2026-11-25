@@ -2,24 +2,12 @@
   "_": "Tests that fail on the untouched baseline. The preflight reports them as KNOWN, a NEW failure fails the run, and one that starts passing is reported as FIXED (remove it here). name, reason (the true one), how (how to run it properly), date, loadSensitive, mode: run (default) or skip (not run).",
   "failures": [
     {
-      "name": "hunt.cjs",
-      "reason": "A real small leak, found on the untouched main (0.64.0): listeners on window/document grow 64 -> 105 over 40 rounds of opening and leaving the 7 pages; the test allows 40 (one per round), so it fails by one. The test is right; some page adds about one listener per visit.",
-      "how": "node tests/hunt.cjs (KT_HUNT_ROUNDS=... for more rounds)",
-      "date": "2026-11-15"
-    },
-    {
       "name": "glassperf.cjs",
       "reason": "Counts long tasks under a 6x CPU slow-down; load-sensitive. It failed on a busy 2-CPU box (Classic 25, Off 51, Full 54) and PASSED in both full CI runs on 2026-11-16 (43875495962 and ff43cf7 run 43861566226), so no product regression is shown. Kept as flaky: a failure on a loaded machine stays KNOWN, a pass is quiet (no FIXED row).",
       "how": "on a quiet machine: node tests/glassperf.cjs, then KR_REVERSE=1 node tests/glassperf.cjs to see whether the order matters",
       "date": "2026-11-16",
       "loadSensitive": true,
       "flaky": true
-    },
-    {
-      "name": "jobs.cjs",
-      "reason": "Stale: the test waits for a '.job-chip' element after starting a PDF to Word conversion, but nothing in src/ creates that element any more (only base.css still styles it), so it times out at 10 s with any PDF. A manual screenshot demo, not in CI. Fix the test or delete it.",
-      "how": "node tests/jobs.cjs <outdir> <file.pdf> (the preflight passes a temp folder and tests/fixtures/sample.pdf)",
-      "date": "2026-11-15"
     },
     {
       "name": "handover.cjs",

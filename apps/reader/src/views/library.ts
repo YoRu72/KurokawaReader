@@ -7,6 +7,7 @@ import { brandIcon } from '../ui/brandIcon';
 import { onHoldOrContext } from '../ui/hold';
 import { t, formatBytes, formatDate, countBooks, localDigits, formatDuration, getLang, countMinutes, countChapters, countVolumes, formatLabel } from '../i18n';
 import { partOf } from '../series';
+import { langKeyOf, languagesOf, langLabel } from '../booklang';
 import { searchFormOf } from '../formats/types';
 import { namesSearchForm, matchedOther } from '../booktitles';
 import { importFiles, listBooks, removeBooks, coverUrl, forgetCover, shareBooks, moveToFolder, deleteFolder, renameFolder } from '../library';
@@ -31,6 +32,7 @@ const drawn = (): void => shown?.renderGrid();
 const reread = (): void => void shown?.refresh();
 
 export function libraryView(): HTMLElement {
+  let offPending: (() => void) | undefined;
   let books: Book[] = [];
   let query = '';
   // (The words asked for, in their search form — harakat, hamza and letter variants, accents and case aside;
@@ -88,6 +90,7 @@ export function libraryView(): HTMLElement {
   const chips = h('div', { class: 'folder-chips', role: 'tablist' });
   const tagChips = h('div', { class: 'format-chips tag-chips', role: 'group', 'aria-label': t('tags') });
   const fmtChips = h('div', { class: 'format-chips', role: 'group', 'aria-label': t('filterFormats') });
+  const langChips = h('div', { class: 'format-chips lang-chips', role: 'group', 'aria-label': t('language'), hidden: true });
   const heroSub = h('div', { class: 'sub' });
   const heroGoal = h('div', { class: 'goal-line', hidden: true });
   const heroQuote = h('div', { class: 'quote-card', hidden: true });
@@ -118,7 +121,7 @@ export function libraryView(): HTMLElement {
     // the update checks start anyway — their 100 KB not loaded just to draw the library.)
     const paintMark = () => { const c = readPending(); const n = c.chapters + c.series; mark.hidden = !n; browseBtn.title = n ? `${t('sources')} · ${t('updatesWaiting')}` : t('sources'); };
     paintMark();
-    const off = onPendingChanged(() => { if (!browseBtn.isConnected) { off(); return; } paintMark(); });
+    const off = onPendingChanged(() => { if (!browseBtn.isConnected) { off(); return; } paintMark(); }); offPending = off;
     setTimeout(() => { if (browseBtn.isConnected) void import('../sources/updates').then(async (m) => writePending(await m.pendingCounts())).catch(() => undefined); }, 4000); }
   // On a computer the occasional tools fold into one named menu (each with its name), so the row is the search, the
   // order and a few buttons; a phone keeps them all as icons.
@@ -134,6 +137,7 @@ export function libraryView(): HTMLElement {
     chips,
     tagChips,
     fmtChips,
+    langChips,
     resume,
     grid);
 
@@ -284,7 +288,7 @@ export function libraryView(): HTMLElement {
     if (document.activeElement === search) { search.blur(); return true; }
     if (activeSeries) { openSeriesHere(null); return true; }
     if (activeFolder) { openFolder(null); return true; }
-    if (tagFilter || onSavedShelf()) { if (onSavedShelf()) updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); return true; }
+    if (tagFilter || onSavedShelf()) { if (onSavedShelf()) updateSettings({ formatFilter: [], statusFilter: [], languageFilter: [] }); setTagFilter(null); return true; }
     return false;
   });
 
@@ -319,9 +323,9 @@ export function libraryView(): HTMLElement {
   // a series: its menu, Pin first), right-click, P on a computer; «Move pin earlier / later» to reorder.
   /** (The saved shelf in force, if one is.) */
   function savedShelfNow(): { id: string } | undefined {
-    const s0 = getSettings(); const f = s0.formatFilter ?? [], st = s0.statusFilter ?? [];
+    const s0 = getSettings(); const f = s0.formatFilter ?? [], st = s0.statusFilter ?? [], lg = [...langFilter()];
     const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
-    return (f.length || st.length) ? (s0.shelves ?? []).find((sh) => same(sh.formats, f) && same(sh.statuses, st) && (sh.tag ?? null) === (tagFilter ?? null)) : undefined;
+    return (f.length || st.length || lg.length) ? (s0.shelves ?? []).find((sh) => same(sh.formats, f) && same(sh.statuses, st) && same(sh.languages ?? [], lg) && (sh.tag ?? null) === (tagFilter ?? null)) : undefined;
   }
   function pinPlace(): string | null {
     if (activeSeries || queryWords.length) return null;
@@ -390,6 +394,8 @@ export function libraryView(): HTMLElement {
       ['clock', t('toRead'), () => void Promise.all([...selected].map((id) => setTag([id], TOREAD_TAG, true))).then(() => { setSelecting(false); return refresh(); })],
       ['check', t('markDone'), () => void setDone([...selected], true).then(() => setSelecting(false))],
       ['tag', t('tags'), () => tagsSheet([...selected])],
+      // (Several chosen: their author and series set at once — src/ui/bulkdetails.ts, in the order they were chosen.)
+      ...(n > 1 ? [['info', t('editDetails'), () => { const list = [...selected].map((id) => books.find((x) => x.id === id)).filter((x): x is Book => !!x); void import('../ui/bulkdetails').then((m) => m.bulkDetailsSheet(list, reread, () => setSelecting(false))); }] as Act] : []),
       ...(n === 1 ? [['info', t('details'), () => { const b = one(); if (b) showDetails(b); }] as Act, ['note', t('reviewBook'), () => { const b = one(); if (b) void import('../ui/review').then((m) => m.reviewSheet(b, () => renderGrid())); }] as Act] : []),
       ['convert', t('convertFile'), () => { if (n === 1) { const b = one(); if (b) void import('../ui/convert').then((m) => m.convertSheet(b, () => void refresh())); } else { const list = books.filter((x) => selected.has(x.id)); void import('../ui/convert').then((m) => m.convertManySheet(list, () => void refresh())); } }],
       ['folder', t('moveToFolder'), () => moveSheet([...selected])],
@@ -453,9 +459,11 @@ export function libraryView(): HTMLElement {
     const cards = getSettings().libraryView === 'cards';
     const fmt = new Set(getSettings().formatFilter);
     const st = new Set(getSettings().statusFilter);
+    const lg = langFilter();
     const list = books.filter((b) => {
       if (fmt.size && !fmt.has(groupOf(b.format))) return false;
       if (st.size && !st.has(statusOf(b))) return false;
+      if (lg.size && !lg.has(langKeyOf(b))) return false;
       if (tagFilter && !(b.tags ?? []).includes(tagFilter)) return false;
       const inFolder = activeSeries ? true : activeFolder ? b.folderId === activeFolder : (cards && !query ? !b.folderId || !folders.some((f) => f.id === b.folderId) : true);
       if (!inFolder) return false;
@@ -604,6 +612,7 @@ export function libraryView(): HTMLElement {
         [t('lastOpened'), formatDate(book.lastOpenedAt)],
         [t('progress'), isDone(book) ? t('doneBadge') : `${Math.round((book.progress?.pct ?? 0) * 100)}%`],
       ];
+      if (book.madeFrom) rows.push([t('archMadeFrom'), book.madeFrom]);
       if (book.pageCount) rows.push([t('pages'), String(book.pageCount)]);
       if (book.tags?.length) rows.push([t('tags'), book.tags.join(' · ')]);
       s.body.append(h('table', { style: { borderCollapse: 'collapse' } }, ...rows.map(([k, v]) => h('tr', null, h('td', { style: { color: 'var(--text-dim)', padding: '4px 12px 4px 0' } }, k), h('td', { dir: 'auto', style: { padding: '4px 0' } }, v)))));
@@ -626,6 +635,8 @@ export function libraryView(): HTMLElement {
         h('button', { class: 'btn danger small', onclick: async () => { if (await askDelete([book])) await refresh(); } }, icon('trash'), t('delete')),
         h('button', { class: 'btn primary small', onclick: () => { s.close(); navigate(`/read/${book.id}`); } }, icon('play'), book.progress ? t('continueReading') : t('open')),
       );
+      // (A book with translations kept: «Save the translation as EPUB», before «Delete».)
+      void import('../ui/trepubsheet').then(async (m) => { if (!(await m.canSaveTranslation(book.id)) || !s.el.isConnected) return; const del = s.actions.querySelector('.btn.danger'); const b = h('button', { class: 'btn small', onclick: () => { s.close(); m.translatedEpubSheet(book); } }, icon('books'), t('teAction')); if (del) s.actions.insertBefore(b, del); else s.actions.append(b); });
     });
   }
 
@@ -645,10 +656,12 @@ export function libraryView(): HTMLElement {
         for (const [id, label] of [['unread', t('statusUnread')], ['reading', t('statusReading')], ['finished', t('statusFinished')]] as [string, string][]) panel.append(row(label, st.has(id), () => { const n = new Set(st); if (n.has(id)) n.delete(id); else n.add(id); updateSettings({ statusFilter: [...n] }); }));
         const present = new Set(books.map((b) => groupOf(b.format)));
         const groups = FORMAT_GROUPS.filter((g) => present.has(g.id));
+        const lgs = languagesNow(); const lf = langFilter();
+        if (lgs.length) { panel.append(h('h4', null, t('language'))); for (const k of lgs) panel.append(row(langName(k), lf.has(k), () => { const n = new Set(lf); if (n.has(k)) n.delete(k); else n.add(k); updateSettings({ languageFilter: [...n] }); })); }
         if (groups.length > 1) { panel.append(h('h4', null, t('format'))); for (const g of groups) panel.append(row(g.label, fm.has(g.id), () => { const n = new Set(fm); if (n.has(g.id)) n.delete(g.id); else n.add(g.id); updateSettings({ formatFilter: [...n] }); })); }
         const tags = allTags();
         if (tags.length) { panel.append(h('h4', null, t('tags'))); for (const tg of tags) panel.append(row(tg.name === FAV_TAG ? t('favorites') : tg.name === TOREAD_TAG ? t('toRead') : tg.name, tagFilter === tg.name, () => setTagFilter(tagFilter === tg.name ? null : tg.name), tg.name === FAV_TAG ? 'heart' : undefined)); }
-        if (st.size || fm.size || tagFilter) panel.append(h('button', { type: 'button', class: 'btn tonal small', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); draw(which); renderGrid(); } }, icon('close'), t('clearFilters')));
+        if (st.size || fm.size || lf.size || tagFilter) panel.append(h('button', { type: 'button', class: 'btn tonal small', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [], languageFilter: [] }); setTagFilter(null); draw(which); renderGrid(); } }, icon('close'), t('clearFilters')));
       } else if (which === 'sort') {
         for (const [id, label, ic] of SORTS) panel.append(row(label, sort === id, () => { if (sort === id) sortDesc = !sortDesc; else { sort = id; sortDesc = false; } localStorage.setItem('kr.sort', sort); localStorage.setItem('kr.sortDesc', sortDesc ? '1' : '0'); sortLabel.textContent = label; }, sort === id ? (sortDesc ? 'chevronUp' : 'chevronDown') : ic));
         panel.append(h('p', { class: 'hint' }, t('sortDirHint')));
@@ -671,7 +684,7 @@ export function libraryView(): HTMLElement {
   }
 
   function renderFormatChips() {
-    clear(fmtChips);
+    clear(fmtChips); clear(langChips); langChips.hidden = true;
     const present = new Set(books.map((b) => groupOf(b.format)));
     const groups = FORMAT_GROUPS.filter((g) => present.has(g.id));
     fmtChips.hidden = books.length < 2;
@@ -684,20 +697,27 @@ export function libraryView(): HTMLElement {
     const states: [string, string, string][] = [['unread', t('statusUnread'), 'library'], ['reading', t('statusReading'), 'play'], ['finished', t('statusFinished'), 'check']];
     fmtChips.append(h('span', { class: 'chip-sep' }));
     for (const [id, label, ic] of states) fmtChips.append(h('button', { type: 'button', class: 'chip small' + (st.has(id) ? ' on' : ''), 'aria-pressed': String(st.has(id)), onclick: () => { const next = new Set(st); if (next.has(id)) next.delete(id); else next.add(id); updateSettings({ statusFilter: [...next] }); renderGrid(); } }, icon(st.has(id) ? 'check' : ic), h('span', null, label)));
-    if (active.size || st.size) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [] }); renderGrid(); } }, icon('close'), h('span', null, t('clearFilters'))));
+    // Language: one chip for each language present (names in the interface's language, «Unknown» for books without one),
+    // several can be chosen; nothing here while the whole library is in one language.
+    const lgs = languagesNow(); const lf = langFilter();
+    clear(langChips); langChips.hidden = !lgs.length;
+    if (lgs.length) {
+      for (const k of lgs) langChips.append(h('button', { type: 'button', class: 'chip small lang-chip' + (lf.has(k) ? ' on' : ''), 'aria-pressed': String(lf.has(k)), dataset: { lang: k }, onclick: () => { const next = new Set(lf); if (next.has(k)) next.delete(k); else next.add(k); updateSettings({ languageFilter: [...next] }); renderGrid(); } }, lf.has(k) ? icon('check') : null, h('span', { dir: 'auto' }, langName(k))));
+    }
+    if (active.size || st.size || lf.size) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: () => { updateSettings({ formatFilter: [], statusFilter: [], languageFilter: [] }); renderGrid(); } }, icon('close'), h('span', null, t('clearFilters'))));
     // Smart shelves: a filter set kept under a name («unread Arabic PDFs»), one tap to bring back. The chip
     // of the shelf in force is lit; holding or right-clicking a shelf chip removes it.
     const shelves = getSettings().shelves;
     const same = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
-    const current = { formats: [...active], statuses: [...st], tag: tagFilter };
-    const onShelf = (sh: (typeof shelves)[number]) => same(sh.formats, current.formats) && same(sh.statuses, current.statuses) && sh.tag === current.tag;
-    if (shelves.length || active.size || st.size || tagFilter) fmtChips.prepend(h('span', { class: 'chip-sep' }));
+    const current = { formats: [...active], statuses: [...st], tag: tagFilter, languages: [...lf] };
+    const onShelf = (sh: (typeof shelves)[number]) => same(sh.formats, current.formats) && same(sh.statuses, current.statuses) && same(sh.languages ?? [], current.languages) && sh.tag === current.tag;
+    if (shelves.length || active.size || st.size || lf.size || tagFilter) fmtChips.prepend(h('span', { class: 'chip-sep' }));
     for (const sh of [...shelves].reverse()) {
-      const chip = h('button', { type: 'button', class: 'chip small shelf' + (onShelf(sh) ? ' on' : ''), 'aria-pressed': String(onShelf(sh)), title: sh.name, onclick: () => { if (onShelf(sh)) { updateSettings({ formatFilter: [], statusFilter: [] }); setTagFilter(null); } else { updateSettings({ formatFilter: sh.formats, statusFilter: sh.statuses }); setTagFilter(sh.tag); } } }, icon(onShelf(sh) ? 'check' : 'bookmark'), h('span', { dir: 'auto' }, sh.name));
+      const chip = h('button', { type: 'button', class: 'chip small shelf' + (onShelf(sh) ? ' on' : ''), 'aria-pressed': String(onShelf(sh)), title: sh.name, onclick: () => { if (onShelf(sh)) { updateSettings({ formatFilter: [], statusFilter: [], languageFilter: [] }); setTagFilter(null); } else { updateSettings({ formatFilter: sh.formats, statusFilter: sh.statuses, languageFilter: sh.languages ?? [] }); setTagFilter(sh.tag); } } }, icon(onShelf(sh) ? 'check' : 'bookmark'), h('span', { dir: 'auto' }, sh.name));
       onHoldOrContext(chip, () => { if (confirm(t('shelfRemoveConfirm', { name: sh.name }))) { updateSettings({ shelves: getSettings().shelves.filter((x) => x.id !== sh.id) }); void import('../pinedit').then((m) => m.forgetPlace(P.placeShelf(sh.id))); renderGrid(); } });
       fmtChips.prepend(chip);
     }
-    if ((active.size || st.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: async () => {
+    if ((active.size || st.size || lf.size || tagFilter) && !shelves.some(onShelf)) fmtChips.append(h('button', { type: 'button', class: 'chip small add', onclick: async () => {
       const name = ((await askText({ title: t('saveShelf'), label: t('shelfName'), ok: t('save'), cancel: t('cancel') })) ?? '').trim(); if (!name) return;
       updateSettings({ shelves: [...getSettings().shelves, { id: String(Date.now()), name, ...current }] }); toast(t('shelfSaved', { name })); renderGrid();
     } }, icon('plus'), h('span', null, t('saveShelf'))));
@@ -922,6 +942,10 @@ export function libraryView(): HTMLElement {
     }
     renderGrid();
   }
+  /** The languages present in the library (more than one: the filter is shown), and the ones chosen among them. */
+  const languagesNow = (): string[] => { const l = languagesOf(books); return l.length > 1 ? l : []; };
+  function langFilter(): Set<string> { const here = new Set(languagesNow()); return new Set(getSettings().languageFilter.filter((x) => here.has(x))); }
+  const langName = (k: string): string => langLabel(k, getLang(), t('languageUnknown'));
   function statusOf(b: Book): string {
     const pct = b.progress?.pct ?? 0;
     if (isDone(b)) return 'finished';
@@ -1300,7 +1324,7 @@ export function libraryView(): HTMLElement {
   const me = { renderGrid: () => renderGrid(), refresh: () => refresh() }; shown = me;
   (root as HTMLElement & { dispose?: () => void }).dispose = () => {
     if (shown === me) shown = null;
-    document.removeEventListener('keydown', onKeys); offSettings(); offBack(); clearTimeout(searchTimer); offBusy(); window.removeEventListener('kr:books', booksChanged); clearTimeout(booksTimer);
+    offPending?.(); document.removeEventListener('keydown', onKeys); offSettings(); offBack(); clearTimeout(searchTimer); offBusy(); window.removeEventListener('kr:books', booksChanged); clearTimeout(booksTimer);
     document.removeEventListener('kr:command', onCommand); window.removeEventListener('kr:library', onAsk);
     for (const ev of ['dragend', 'drop', 'pointerup', 'touchend', 'touchcancel'] as const) document.removeEventListener(ev, endDrag);
   };

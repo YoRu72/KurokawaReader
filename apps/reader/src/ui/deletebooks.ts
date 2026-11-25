@@ -12,7 +12,7 @@
 // An original that could not be deleted is said in a snackbar, with a button that shows where each one lies (one
 // already gone counts as deleted). There are no watched folders that would bring a book back: the device's shelf only
 // lists what lies there, to import by hand.
-import { h, icon, openSheet, toast } from './dom';
+import { h, icon, openSheet, toast, stackWhenCramped } from './dom';
 import { t, getLang, localDigits } from '../i18n';
 import type { Book } from '../db';
 import { originalState, deleteOriginal, whereIs, binWord, type OriginalState } from '../devicefiles';
@@ -68,7 +68,7 @@ export async function deleteBooksDialog(books: Book[], remove: (ids: string[]) =
   return new Promise<boolean>((resolve) => {
     let result = false;
     const sh = openSheet(t('deleteBooksTitle'), t('cancel'), { onClose: () => resolve(result) });
-    sh.el.classList.add('del-sheet');
+    sh.el.classList.add('del-sheet', 'confirm-sheet');
     sh.body.style.fontFamily = 'var(--font-ui)';
     sh.body.append(h('p', { class: 'del-lead' }, n === 1 ? t('deleteOneLine', { title: books[0].title }) : t('deleteManyLine', { n: cnt(n) })));
     sh.body.append(h('p', { class: 'hint' }, n === 1 ? t('deleteGoesWithOne') : t('deleteGoesWith')));
@@ -110,7 +110,7 @@ export async function deleteBooksDialog(books: Book[], remove: (ids: string[]) =
       if (failed.length) failedSnack(failed);
       else if (done) actionSnack(bin === 'win' ? t('deletedToRecycleBin', { n: cnt(done) }) : bin === 'none' ? t('deletedFilesGone', { n: cnt(done) }) : t('deletedToTrash', { n: cnt(done) }), null, null, 4000);
     } }, icon('trash'), t('delete')) as HTMLButtonElement;
-    sh.actions.append(h('button', { type: 'button', class: 'btn', onclick: () => sh.close() }, t('cancel')), go);
+    sh.actions.append(h('button', { type: 'button', class: 'btn', onclick: () => sh.close() }, t('cancel')), go); stackWhenCramped(sh.actions);
   });
 }
 

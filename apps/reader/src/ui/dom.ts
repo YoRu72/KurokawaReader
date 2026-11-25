@@ -64,6 +64,9 @@ const PATHS: Record<string, string> = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   sort: '<path d="M11 5h10"/><path d="M11 9h7"/><path d="M11 13h4"/><path d="m3 17 3 3 3-3"/><path d="M6 18V4"/>',
   arrowRight: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
+  pairs: '<rect x="2.5" y="4" width="8.5" height="16" rx="1.5"/><rect x="13" y="4" width="8.5" height="16" rx="1.5"/>',
+  arrowLeft: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
   cloud: '<path d="M17.5 19a4.5 4.5 0 1 0-.9-8.9A6 6 0 0 0 5 12.3 3.5 3.5 0 0 0 6 19h11.5z"/><path d="M12 13v6"/><path d="m9.5 15.5 2.5-2.5 2.5 2.5"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   define: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6"/><path d="M9 11h6"/>',
@@ -114,6 +117,12 @@ const PATHS: Record<string, string> = {
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
   heartFill: '<path fill="currentColor" d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
   undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>',
+  // (The comic reader's reading modes: a page and the way it is read — src/views/comic.ts.)
+  modeLtr: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/>',
+  modeRtl: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M16 12H8"/><path d="m11 9-3 3 3 3"/>',
+  modeVertical: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M12 7v9"/><path d="m9 13 3 3 3-3"/>',
+  modeStrip: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M6 9h12"/><path d="M6 15h12"/>',
+  modeGap: '<rect x="6" y="2" width="12" height="9" rx="1.5"/><rect x="6" y="13" width="12" height="9" rx="1.5"/>',
   rotate: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   minus: '<path d="M5 12h14"/>',
   keyboard: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>',
@@ -142,6 +151,16 @@ export function iconButton(name: string, label: string, onClick?: (e: MouseEvent
 let toastTimer: number | undefined;
 /** A snackbar's one action («Undo», «Redo»…): `run` when tapped (the snackbar then goes). */
 export interface ToastAction { label: string; run: () => void }
+/** A plain toast raised while a sheet is open never lies over the sheet's labels and switches: above a phone's bottom sheet; under a computer's dialog
+ *  (or, with no room there, where it was). */
+function liftOverSheet(el: HTMLElement): void {
+  const sheets = [...document.querySelectorAll<HTMLElement>('.sheet:not(.as-menu)')]; const sh = sheets[sheets.length - 1];
+  if (!sh || getComputedStyle(sh).position !== 'fixed') return;
+  const top = sh.offsetTop, h = sh.offsetHeight, th = el.offsetHeight;   // (layout, not the rise animation's moving picture)
+  if (document.documentElement.classList.contains('pc')) { if (innerHeight - (top + h) >= th + 24) el.style.bottom = '16px'; return; }
+  if (h + 12 + th + 8 > innerHeight) { el.style.visibility = 'hidden'; return; }
+  el.style.bottom = `${h + 12}px`;
+}
 /** The snackbar: one at a time (a new one replaces it), said aloud (role=status). The third argument is its time,
  *  or { action, ms, onEnd }: a button on it, and longer to read (6.5 s unless said); `onEnd(acted)` once it goes —
  *  by its time, replaced, or its action taken (acted). */
@@ -153,7 +172,7 @@ export function toast(msg: string, kind: 'info' | 'error' = 'info', ms: number |
   el.__end = (acted) => { if (ended) return; ended = true; o.onEnd?.(acted); };
   window.clearTimeout(toastTimer);
   if (!o.action) {
-    document.body.appendChild(el);
+    document.body.appendChild(el); liftOverSheet(el);
     toastTimer = window.setTimeout(() => { el.__end?.(false); el.remove(); }, o.ms ?? 2200);
     return;
   }
@@ -207,6 +226,25 @@ export function openSheet(title: string, closeLabel: string, opts: { stack?: boo
   const offLayer = pushLayer(close, el);
   if (opts.at && document.documentElement.classList.contains('pc')) placeMenu(el, scrim, opts.at);
   return { body, actions, close, el };
+}
+/** A row of buttons that stay side by side (equal widths) while every label fits inside its button on at most two lines, and
+ *  otherwise stack one under another at full width (the first stays on top). Looks again when the row's width changes. */
+export function stackWhenCramped(row: HTMLElement): void {
+  let ro: ResizeObserver | undefined;
+  const run = (): void => {
+    if (!row.isConnected) { ro?.disconnect(); return; }
+    row.classList.remove('stack');
+    const bs = [...row.querySelectorAll<HTMLElement>(':scope > button')];
+    if (bs.length < 2 || !row.clientWidth) return;
+    const cramped = bs.some((b) => {
+      if (b.scrollWidth > b.clientWidth + 1) return true;
+      const cs = getComputedStyle(b); const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.25;
+      const r = document.createRange(); r.selectNodeContents(b); return r.getBoundingClientRect().height > lh * 2.6;
+    });
+    row.classList.toggle('stack', cramped);
+  };
+  requestAnimationFrame(run); void document.fonts?.ready.then(run);
+  if (typeof ResizeObserver !== 'undefined') { let w = 0; ro = new ResizeObserver(() => { if (row.clientWidth !== w) { w = row.clientWidth; run(); } }); ro.observe(row); }
 }
 /** A sheet as a computer's menu: beside the pointer (or under the button that opened it), kept on the screen. */
 function placeMenu(el: HTMLElement, scrim: HTMLElement, at: { x: number; y: number } | Event): void {
@@ -287,6 +325,7 @@ export function askPassword(o: { title: string; hint: string; wrong?: boolean; o
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
     sh.body.append(h('p', { class: 'hint' + (o.wrong ? ' error' : ''), role: o.wrong ? 'alert' : undefined }, o.hint), h('label', { class: 'field' }, h('span', null, o.label), input));
     sh.actions.append(h('button', { type: 'button', class: 'btn text', onclick: () => sh.close() }, o.cancel), h('button', { type: 'button', class: 'btn primary', onclick: submit }, o.open));
+    stackWhenCramped(sh.actions);
     setTimeout(() => input.focus(), 30);
   });
 }

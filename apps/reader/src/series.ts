@@ -64,3 +64,10 @@ export function nextVolume(book: Book, all: Book[]): Book | null {
   const i = v.books.findIndex((x) => x.book.id === book.id);
   return i >= 0 && i + 1 < v.books.length ? v.books[i + 1].book : null;
 }
+
+/** The volume before this one in the library, if there is one. */
+export function prevVolume(book: Book, all: Book[]): Book | null {
+  const v = volumesOf(book, all); if (!v) return null;
+  const i = v.books.findIndex((x) => x.book.id === book.id);
+  return i > 0 ? v.books[i - 1].book : null;
+}

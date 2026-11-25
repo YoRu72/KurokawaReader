@@ -67,7 +67,7 @@ function modelTranslate(system, text) {
   const setVisual = (o) => p.evaluate((o) => { const v = JSON.parse(localStorage.getItem('kr.visual') || '{}'); Object.assign(v, o); localStorage.setItem('kr.visual', JSON.stringify(v)); }, o);
   await p.goto(`http://localhost:${port}/`);
   await p.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); });
-  await setVisual({ aiProvider: 'custom', aiBaseUrl: 'https://ai.test/v1', aiKey: 'k', aiModel: 'm', aiTarget: 'ar', aiTask: 'translate', aiAutoGlossary: true, aiPrefetch: false, aiParallel: 1 });
+  await setVisual({ aiProvider: 'custom', aiBaseUrl: 'https://ai.test/v1', aiKey: 'k', aiModel: 'm', aiTarget: 'ar', aiTask: 'translate', aiGatherNames: 'never', aiAutoGlossary: true, aiPrefetch: false, aiParallel: 1 });
   await p.reload(); await p.waitForSelector('.library-view');
   await p.setInputFiles('input[type=file]', [book]); await p.waitForSelector('.book-card', { timeout: 60000 }); await p.waitForTimeout(1000);
   const id = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').getAll(); q.onsuccess = () => res(q.result[0].id); }; }));
@@ -118,9 +118,10 @@ function modelTranslate(system, text) {
   await p.click('.gloss-file[data-kind="person"]'); await p.waitForSelector('.gloss-sheet .gloss-row[data-id="tk-ar"]');
   await p.waitForTimeout(700); await p.locator('.gloss-row[data-id="tk-ar"]').scrollIntoViewIfNeeded(); await p.screenshot({ path: path.join(shots, 'glossary-en.png') });
   ok('the mis-picked term shown as not written in Arabic', /Not written in Arabic/.test(await p.textContent('.gloss-row[data-id="tk-ar"]')));
-  await p.fill('.gloss-search', 'Old Gate'); await p.waitForSelector('.gloss-row[data-id="old1"]');   // (the search: the whole folder)
+  await p.fill('.gloss-search', 'Old Gate'); await p.waitForSelector('.gloss-hit[data-id="old1"]');   // (the search: the whole folder; a result opens its row)
+  await p.click('.gloss-hit[data-id="old1"]'); await p.waitForSelector('.gloss-row[data-id="old1"]');
   ok('the old term shown with its language not set', /Language not set/.test(await p.$eval('.gloss-row[data-id="old1"] .gloss-lang', (e) => e.selectedOptions[0]?.textContent)));
-  await p.fill('.gloss-search', ''); await p.waitForSelector('.gloss-row[data-id="tk-ar"]');
+  await p.click('.gloss-back'); await p.click('.gloss-file[data-kind="person"]'); await p.waitForSelector('.gloss-row[data-id="tk-ar"]');
   await p.click('.gloss-row[data-id="tk-ar"] button[aria-label="Retranslate this entry"]');
   await p.waitForSelector('.gloss-retr-sheet .gloss-retr-prompt');
   const def = await p.inputValue('.gloss-retr-prompt');

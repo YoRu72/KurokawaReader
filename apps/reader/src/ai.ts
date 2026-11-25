@@ -90,12 +90,12 @@ function localReadyCached(): boolean {
   try { return !!s.localModel && (JSON.parse(localStorage.getItem('kr.localModels') ?? '[]') as { id: string }[]).some((m) => m.id === s.localModel); } catch { return false; }
 }
 export function effectiveBaseUrl(): string { return (getSettings().aiBaseUrl.trim() || providerInfo().baseUrl).replace(/\/+$/, ''); }
-export function effectivePrompt(): string {
+export function effectivePrompt(target?: string): string {
   const s = getSettings();
   if (s.aiTask === 'furigana') return FURIGANA_PROMPT;
   const p = s.aiPrompt.trim();
   if (p) return p;
-  return defaultPrompt(s.aiTarget);
+  return defaultPrompt(target ?? s.aiTarget);
 }
 export function defaultPrompt(target: string): string { return DEFAULT_PROMPTS[target] ?? DEFAULT_PROMPT_EN.replace('{lang}', langName(target)); }
 export function langName(code: string): string {
@@ -118,15 +118,15 @@ export function namesRule(target: string): string {
 /** The key a paragraph's translation is kept under: what made it (provider, model, task, language, instructions)
  *  and the glossary terms the paragraph itself holds — a name added to the glossary makes again only the
  *  paragraphs it is in, not the whole book. */
-export function translationKey(text: string, bookId?: string): string {
-  const s = getSettings();
-  const stamp = s.aiTask === 'furigana' ? '' : glossaryStampOf(termsIn([text.replace(/<[^>]+>/g, '')], bookId, s.aiTarget));
-  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${stamp}|${text}`);
+export function translationKey(text: string, bookId?: string, target?: string): string {
+  const s = getSettings(); const tg = target ?? s.aiTarget;   // (`target`: the key a translation into another language would be kept under — the export of a saved translation.)
+  const stamp = s.aiTask === 'furigana' ? '' : glossaryStampOf(termsIn([text.replace(/<[^>]+>/g, '')], bookId, tg));
+  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${tg}|${effectivePrompt(target)}|${stamp}|${text}`);
 }
 /** The key as it was before (the whole glossary's mark): translations kept then are still found. */
-export function legacyTranslationKey(text: string): string {
+export function legacyTranslationKey(text: string, target?: string): string {
   const s = getSettings();
-  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${s.aiTarget}|${effectivePrompt()}|${s.aiTask === 'furigana' ? '' : glossaryStamp()}|${text}`);
+  return hash(`${s.aiProvider}|${effectiveModel()}|${s.aiTask}|${target ?? s.aiTarget}|${effectivePrompt(target)}|${s.aiTask === 'furigana' ? '' : glossaryStamp()}|${text}`);
 }
 export function hash(str: string): string {
   let h1 = 0x811c9dc5, h2 = 0x01000193;

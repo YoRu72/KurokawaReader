@@ -168,7 +168,10 @@ export function settingsView(): HTMLElement {
   // Reader options (shared with the reader panel)
   const opts = h('div');
   renderOptions(opts);
-  body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts));
+  // (The comic reader's defaults, a group of the same card: src/comic/settingsui.ts, fetched with the comic reader.)
+  const comics = h('div', { class: 'cm-settings-group' });
+  body.append(h('section', { class: 'card' }, h('h3', null, t('readerSettings')), opts, comics));
+  void import('../comic/settingsui').then((m) => m.comicSettingsGroup(comics)).catch(() => undefined);
   // Text rules (a watermark taken out, a name respelt): the list, to change or remove them.
   body.append(h('section', { class: 'card' }, h('h3', null, t('textRules')), h('p', null, t('textRulesAbout')),
     h('div', { class: 'actions-row' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('../ui/textrulesheet').then((m) => m.rulesListSheet()) }, icon('pen'), t('textRules')))));
@@ -200,16 +203,40 @@ export function settingsView(): HTMLElement {
       h('small', { class: 'hint' }, t('glossVolModeHint')))));
 
   // Checks for new chapters at the sources (the same choices as the bell in Browse offers).
+  let updCard: HTMLElement | null = null; let followedNow = false; let extNow = false;
   {
-    const card = h('section', { class: 'card' }, h('h3', null, t('updatesSection')), h('p', null, t('updatesSectionBody')));
+    // (While a work is followed — one added to the library from a source — or an extension is installed; the section shows and goes by itself. With extensions only, the rows about novels and chapters stay out: .upd-nov.)
+    const card = h('section', { class: 'card upd-card', hidden: true }, h('h3', null, t('updatesSection')), h('p', { class: 'upd-nov' }, t('updatesSectionBody')));
+    updCard = card;
+    {
+      const last = h('small', { class: 'hint upd-last' }); const status = h('small', { class: 'hint upd-status', 'aria-live': 'polite' });
+      const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
+      const btn = h('button', { type: 'button', class: 'btn tonal' }, icon('refresh'), t('checkNow')) as HTMLButtonElement;
+      const paint = (u: typeof import('../sources/updates')) => { last.textContent = u.checkedLine(Number(localStorage.getItem('kr.sources.checkedAt') ?? 0)); btn.disabled = u.isChecking(); };
+      void import('../sources/updates').then((u) => {
+        paint(u);
+        const off = u.onUpdatesChanged(() => { if (!card.isConnected) { off(); return; } paint(u); });
+        btn.addEventListener('click', async () => {
+          btn.disabled = true; track.hidden = false; bar.style.width = '0%'; status.textContent = t('srcChecking');
+          try {
+            const r = await u.checkAll({ quiet: false, notify: false, force: true, onProgress: (d, tot, title) => { bar.style.width = `${tot ? (d / tot) * 100 : 100}%`; status.textContent = t('checkingBook', { title }); } });
+            const n = r.chapters.reduce((a, c) => a + c.n, 0) + (r.volumes ?? []).reduce((a, v) => a + v.n, 0) + r.extensions.filter((e) => !e.done).length;
+            status.textContent = n ? t('srcNewCount', { n: localDigits(n) }) : t('srcUpToDate');
+          } catch (e) { status.textContent = String((e as Error).message ?? e); }
+          finally { track.hidden = true; paint(u); }
+        });
+      }).catch(() => undefined);
+      card.append(h('div', { class: 'upd-check' }, h('div', { class: 'actions-row eq' }, btn), last, status, track));
+    }
     void import('../sources/updates').then(({ updatePrefs, setUpdatePref, checkEvery, setCheckEvery }) => {
       const pref = updatePrefs();
       // How often the checks run by themselves (as in the bell's sheet).
-      card.append(h('div', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
+      card.append(h('div', { class: 'row upd-nov', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('checkEvery')),
         pickButton(t('checkEvery'), [0, 1, 3, 6, 12, 24].map((n): [string, string] => [String(n), n ? (n === 24 ? t('everyDay') : n === 1 ? t('everyHour') : t('everyHours', { n: countHours(n) })) : t('neverAuto')]), String(checkEvery()), (v) => setCheckEvery(Number(v)), t('close'))));
-      const sw = (k: import('../sources/updates').UpdatePref, label: string) => h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
+      const sw = (k: import('../sources/updates').UpdatePref, label: string) => h('label', { class: 'row upd-nov', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, label), (() => { const c = h('input', { type: 'checkbox', checked: pref[k], onchange: () => setUpdatePref(k, c.checked) }) as HTMLInputElement; return c; })());
       card.append(sw('wifiOnly', t('updWifiOnly')), sw('onlyOngoing', t('updOnlyOngoing')), sw('autoFetch', t('updAutoFetch')), sw('smart', t('updSmart')), sw('skipUnread', t('updSkipUnread')), sw('skipNotStarted', t('updSkipNotStarted')),
         h('label', { class: 'row', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } }, h('span', null, t('extAutoUpdate')), (() => { const c = h('input', { type: 'checkbox', checked: localStorage.getItem('kr.ext.autoUpdate') !== 'off', onchange: () => localStorage.setItem('kr.ext.autoUpdate', c.checked ? 'on' : 'off') }) as HTMLInputElement; return c; })()));
+      card.querySelectorAll<HTMLElement>('.upd-nov').forEach((el) => { if (!followedNow) el.hidden = true; });
     });
     body.append(card);
   }
@@ -455,12 +482,19 @@ export function settingsView(): HTMLElement {
   // (Back with a search typed: the search emptied first, every section shown again — then Back leaves Settings.)
   const offBack = onBack(() => { if (!root.isConnected) { offBack(); return false; } if (!search.value) return false; search.value = ''; search.blur(); applySearch(); return true; });
   const titled = cards.filter((c) => c.querySelector(':scope > h3'));
-  if (!titled.some((c) => c.id === pcSec)) pcSec = titled[0]?.id ?? '';
+  const updOn = () => followedNow || extNow;
+  const shown = () => titled.filter((c) => c !== updCard || updOn());
+  if (!shown().some((c) => c.id === pcSec)) pcSec = shown()[0]?.id ?? '';
   const applySearch = () => {
-    const q = search.value.trim().toLowerCase(); const one = pc() && !q;
+    const q = search.value.trim().toLowerCase();
+    // (The section of the followed works: out of the list, its chip and every search while nothing is followed.)
+    if (!shown().some((c) => c.id === pcSec)) pcSec = shown()[0]?.id ?? '';
+    const one = pc() && !q;
     body.classList.toggle('pc-one', one);
+    if (updCard) nav.querySelector<HTMLElement>(`[data-sec="${updCard.id}"]`)?.toggleAttribute('hidden', !updOn());
     for (const b of Array.from(nav.querySelectorAll<HTMLElement>('[data-sec]'))) { const on = one && b.dataset.sec === pcSec; b.classList.toggle('on', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
     for (const card of cards) {
+      if (card === updCard && !updOn()) { card.hidden = true; card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       if (one) { card.hidden = card.id !== pcSec; card.classList.remove('collapsed'); card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       if (!q) { card.hidden = false; card.querySelectorAll<HTMLElement>('[data-sq]').forEach((el) => { el.hidden = false; el.removeAttribute('data-sq'); }); continue; }
       card.classList.remove('collapsed');
@@ -487,9 +521,17 @@ export function settingsView(): HTMLElement {
       }
       card.hidden = !any;
     }
+    // (Nothing followed: the rows about novels and chapters stay out, whatever the search says.)
+    if (updCard) updCard.querySelectorAll<HTMLElement>('.upd-nov').forEach((el) => { if (!followedNow) el.hidden = true; else if (!el.hasAttribute('data-sq')) el.hidden = false; });
   };
   search.addEventListener('input', applySearch);
   applySearch();
+  void import('../sources/updates').then((u) => {
+    extNow = u.installedExtCount() > 0; applySearch();
+    const set = (n: number) => { const on = n > 0; if (on === followedNow) return; followedNow = on; applySearch(); };
+    void u.followedCount().then((n) => { followedNow = false; set(n); }).catch(() => undefined);
+    const off = u.onFollowedChanged((n) => { if (!root.isConnected) { off(); return; } set(n); });
+  }).catch(() => undefined);
   return root;
 }
 

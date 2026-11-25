@@ -336,6 +336,8 @@ export const pluginKey = (repoKey: string, pluginId: string) => `${repoKey}:${pl
 const codeKey = (repoKey: string, pluginId: string) => `ext:code:${repoKey}:${pluginId}`;
 // The versions on the device, in one small map (so the hub and the bell need not open every code entry).
 const INSTALLED = 'kr.ext.installed';
+/** The versions of the extensions on the device, by repository and extension. */
+export const installedVersions = (): Record<string, string> => installed();
 function installed(): Record<string, string> { try { return JSON.parse(localStorage.getItem(INSTALLED) ?? '{}') as Record<string, string>; } catch { return {}; } }
 function setInstalled(key: string, version: string | null): void { const m = installed(); if (version === null) delete m[key]; else m[key] = version; try { localStorage.setItem(INSTALLED, JSON.stringify(m)); } catch { /* full */ } }
 

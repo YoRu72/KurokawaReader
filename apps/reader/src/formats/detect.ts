@@ -5,6 +5,8 @@ import type { Format } from '../db';
 const EXT: Record<string, Format> = {
   epub: 'epub', pdf: 'pdf', docx: 'docx', docm: 'docx', dotx: 'docx', xlsx: 'xlsx', xlsm: 'xlsx', csv: 'csv', tsv: 'csv', pptx: 'pptx', ppsx: 'pptx',
   txt: 'txt', text: 'txt', log: 'txt', md: 'md', markdown: 'md', html: 'html', htm: 'html', xhtml: 'html', fb2: 'fb2', odt: 'odt', cbz: 'cbz',
+  // (Comics in other archives — RAR, 7-Zip, tar: told by their content on import, then kept as a CBZ: src/comic/repack.ts.)
+  cbr: 'cbz', rar: 'cbz', cb7: 'cbz', '7z': 'cbz', cbt: 'cbz', tar: 'cbz', tgz: 'cbz', txz: 'cbz', tbz: 'cbz', tbz2: 'cbz',
   jpg: 'image', jpeg: 'image', png: 'image', gif: 'image', webp: 'image', avif: 'image', svg: 'image', bmp: 'image',
   mobi: 'mobi', azw: 'mobi', azw3: 'mobi', kf8: 'mobi', prc: 'mobi',
   apkg: 'anki', colpkg: 'anki',
@@ -12,6 +14,7 @@ const EXT: Record<string, Format> = {
 };
 
 export function detectFormat(fileName: string, mime?: string): Format {
+  if (/\.tar\.(gz|xz|bz2)$/i.test(fileName)) return 'cbz';
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   if (EXT[ext]) return EXT[ext];
   if (mime) {
@@ -32,4 +35,4 @@ export function detectFormat(fileName: string, mime?: string): Format {
   return 'unknown';
 }
 
-export const SUPPORTED_ACCEPT = '.epub,.pdf,.docx,.docm,.xlsx,.xlsm,.csv,.tsv,.pptx,.ppsx,.txt,.md,.markdown,.html,.htm,.xhtml,.fb2,.odt,.cbz,.jpg,.jpeg,.png,.gif,.webp,.avif,.svg,.bmp,application/epub+zip,application/pdf,text/*,image/*,.mobi,.azw,.azw3,.kf8,.prc,.apkg,.colpkg,.mp3,.m4a,.m4b,.aac,.ogg,.oga,.opus,.flac,.wav,audio/*';
+export const SUPPORTED_ACCEPT = '.epub,.pdf,.docx,.docm,.xlsx,.xlsm,.csv,.tsv,.pptx,.ppsx,.txt,.md,.markdown,.html,.htm,.xhtml,.fb2,.odt,.cbz,.cbr,.rar,.cb7,.7z,.cbt,.tar,.tgz,.txz,.tbz2,.tar.gz,.tar.xz,.tar.bz2,.jpg,.jpeg,.png,.gif,.webp,.avif,.svg,.bmp,application/epub+zip,application/pdf,text/*,image/*,.mobi,.azw,.azw3,.kf8,.prc,.apkg,.colpkg,.mp3,.m4a,.m4b,.aac,.ogg,.oga,.opus,.flac,.wav,audio/*';

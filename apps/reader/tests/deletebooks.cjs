@@ -72,6 +72,8 @@ const DESKTOP = () => {
     const before = await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('kurokawa-reader'); r.onsuccess = () => { const q = r.result.transaction('books').objectStore('books').get('w1'); q.onsuccess = () => { res(q.result); r.result.close(); }; }; }));
     await choose(p, ['w1']); await openDelete(p);
     ok('web: no box — the app keeps its own copy only', !(await p.$('.del-sheet .del-box')) && Object.keys(await counts(p)).length === 0, await counts(p));
+    const wd = await p.$$eval('.del-sheet .sheet-actions > .btn', (b) => b.map((x) => Math.round(x.getBoundingClientRect().width)));
+    ok('the dialog\'s two buttons are as wide as each other (side by side or stacked)', wd.length === 2 && Math.abs(wd[0] - wd[1]) <= 1, wd);
     const text = await p.$eval('.del-sheet .sheet-body', (e) => e.textContent);
     ok('the dialog: the book named, that its notes go with it, that it cannot be undone', /Quiet Mornings/.test(text) && /notes or highlights/.test(text) && /cannot be undone/.test(text), text);
     await p.click('.del-sheet .del-go');

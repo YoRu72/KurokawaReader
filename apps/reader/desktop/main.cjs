@@ -17,7 +17,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: t
 
 let win = null;
 const pending = [];
-const DOC_EXT = /\.(epub|pdf|docx|xlsx|pptx|txt|md|markdown|html?|fb2|odt|cbz|csv|tsv|jpe?g|png|gif|webp|ttf|otf|woff2?|zip)$/i;
+const DOC_EXT = /\.(epub|pdf|docx|xlsx|pptx|txt|md|markdown|html?|fb2|odt|cbz|cbr|cb7|cbt|csv|tsv|jpe?g|png|gif|webp|ttf|otf|woff2?|zip|rar|7z|tar)$/i;
 
 function queueFile(p) {
   if (!p || !DOC_EXT.test(p) || !fs.existsSync(p)) return;

@@ -50,7 +50,9 @@
       "sweep.cjs": 900,
       "glassperf.cjs": 400,
       "hunt.cjs": 300,
-      "uihunt.cjs": 600
+      "uihunt.cjs": 1800,
+      "pdf2docxcorpus.cjs": 900,
+      "pdf2docxedit.cjs": 600
     },
     "budgets": {
       "perfbudget.cjs": {

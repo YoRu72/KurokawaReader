@@ -19,6 +19,7 @@ const DIST = path.resolve(process.env.KR_DIST || path.join(__dirname, '../dist')
 const PORT = 5198;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
+const EDIT = (process.env.KR_DOCX_RESULT || 'edit') !== 'exact';
 let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); if (!c) fails++; };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'p2d-fonts-'));
 
@@ -131,7 +132,7 @@ async function book() {
 async function convert(browser, file) {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true });
   const page = await ctx.newPage(); page.on('pageerror', (e) => { console.log('pageerror', e.message); fails++; });
-  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
+  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate((r) => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); /* KR_DOCX_RESULT=exact|edit: PDF → Word's «Result» */ if (r) localStorage.setItem('kr.convert', JSON.stringify({ docxResult: r })); }, process.env.KR_DOCX_RESULT || ''); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [file]); await page.waitForSelector('.book-card', { timeout: 60000 }); await page.waitForTimeout(300);
   const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sel-actions');
   if (!(await page.$('.sel-actions button:has-text("Convert")'))) { await page.click('.sel-actions button:has-text("More")'); await page.waitForSelector('.sheet'); await page.click('.sheet button:has-text("Convert")'); } else await page.click('.sel-actions button:has-text("Convert")');
@@ -213,7 +214,8 @@ const same = (a, b) => !!a && !!b && a.every((v, i) => v === b[i]);
     ok('KrMerge: A B C D each drawn with its own glyph', ['A', 'B', 'C', 'D'].every((c) => same(glyphBox('KrMerge', c), BOX[c])));
     // Text lines and the glyphs their runs draw.
     // (Each font's line is a run of its own; lines one under another may share a paragraph.)
-    const lineOf = (want) => { const r = runs.flat().find((x) => x.text.replace(/\s+/g, ' ').trim() === want); return r ? [r] : null; };
+    // (In the result to edit — the default — lines of one paragraph run on: a line is then a stretch of a run.)
+    const lineOf = (want) => { const r = runs.flat().find((x) => { const t = x.text.replace(/\s+/g, ' ').trim(); return t === want || (EDIT && ` ${t} `.includes(` ${want} `)); }); return r ? [r] : null; };
     const drawsAs = (rs, boxOf) => rs.every((r) => [...r.text].every((c) => c === ' ' || same(glyphBox(r.font, c), boxOf(c))));
     const l1 = lineOf('ABC CAB BCA ABC'), l2 = lineOf('BCD DCB CBD');
     ok('KrMerge: both subsets\' lines there, in one font, each letter its own glyph', !!l1 && !!l2 && [...l1, ...l2].every((r) => r.font === 'KrMerge') && drawsAs([...l1, ...l2], (c) => BOX[c]));

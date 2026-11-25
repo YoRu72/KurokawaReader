@@ -72,7 +72,7 @@ const L = run('localai.ts', { './settings': { getSettings: () => S, updateSettin
     await p.evaluate(() => { [...document.querySelectorAll('.settings-body button')].find((x) => /Provider, key, model, instructions/.test(x.textContent)).click(); });
     await p.waitForSelector('[data-translate-model] button', { state: 'attached', timeout: 15000 }); await p.waitForTimeout(800); await p.evaluate(() => document.querySelector('[data-translate-model]').scrollIntoView({ block: 'center' })); await p.waitForTimeout(400); };
   const closeSheets = () => p.evaluate(() => document.querySelectorAll('.sheet').forEach((x) => x.remove()));
-  await setVisual({ aiProvider: 'local', localEngine: 'server', localServer: 'https://ai.test/v1', localServerModel: 'llama3:8b', aiTarget: 'ar', aiTask: 'translate', aiPrefetch: false });
+  await setVisual({ aiProvider: 'local', localEngine: 'server', localServer: 'https://ai.test/v1', localServerModel: 'llama3:8b', aiTarget: 'ar', aiTask: 'translate', aiGatherNames: 'never', aiPrefetch: false });
   await open();
   const label = await p.textContent('[data-translate-model] button');
   ok('settings: TranslateGemma shown as the translation model, recommended', /translategemma:4b/.test(label) && /Recommended for translation/.test(label), label);

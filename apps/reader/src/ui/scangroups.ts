@@ -24,7 +24,7 @@ export const FORMAT_GROUPS: { id: string; label: string; formats: Format[]; exts
   { id: 'text', label: 'TXT · MD · HTML', formats: ['txt', 'md', 'html'], exts: ['txt', 'text', 'log', 'md', 'markdown', 'html', 'htm', 'xhtml'] },
   { id: 'fb2', label: 'FB2', formats: ['fb2'], exts: ['fb2'] },
   { id: 'odt', label: 'ODT', formats: ['odt'], exts: ['odt'] },
-  { id: 'cbz', label: 'CBZ', formats: ['cbz'], exts: ['cbz'] },
+  { id: 'cbz', label: 'CBZ', formats: ['cbz'], exts: ['cbz', 'cbr', 'cb7', 'cbt'] },
   { id: 'mobi', label: 'Kindle', formats: ['mobi'], exts: ['mobi', 'azw', 'azw3', 'kf8', 'prc'] },
   { id: 'anki', label: 'Anki', formats: ['anki'], exts: ['apkg', 'colpkg'] },
   { id: 'audio', label: t('audiobooks'), formats: ['audio'], exts: ['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'flac', 'wav'] },

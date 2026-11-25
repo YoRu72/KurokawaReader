@@ -45,7 +45,7 @@ const server = http.createServer((req, res) => { if (req.url.startsWith('/t.js')
   // ---- 10: deleting a book takes all its data, and no other book's
   const r10 = await p.evaluate(async ([A, B]) => {
     const { db } = T.db; await db.putBook(A); await db.putBook(B); await db.putFile(A.id, new Blob(['a'])); await db.putFile(B.id, new Blob(['b']));
-    const kinds = ['tr', 'trs', 'trWhole', 'trKeep', 'glossScan', 'crop', 'anki', 'audio', 'audioch'];
+    const kinds = ['tr', 'trs', 'trLangs', 'trWhole', 'trKeep', 'glossScan', 'crop', 'anki', 'audio', 'audioch'];
     for (const id of [A.id, B.id]) for (const k of kinds) await db.setMeta(`${k}:${id}`, { x: 1 });
     await db.putText(A.id, { key: 'k', units: [] });
     const G = T.gloss; G.saveTerms([{ id: 't1', from: 'Lin', to: 'لين', book: A.id }, { id: 't2', from: 'Lan', to: 'لان', book: B.id }, { id: 't3', from: 'Qi', to: 'تشي' }, { id: 't4', from: 'Sect', to: 'طائفة', folder: 'fo' }]);
@@ -61,7 +61,7 @@ const server = http.createServer((req, res) => { if (req.url.startsWith('/t.js')
   }, [book('b12'), book('b123')]);
   ok('10: the deleted book\'s record, file and text gone', !r10.aBook && !r10.aFile && !r10.aText && r10.bFile, r10);
   ok('10: its translations, crop, Anki, audio and glossary-scan data gone', r10.aLeft.length === 0, r10.aLeft);
-  ok('10: the book whose id begins the same ("b123") keeps all of its', r10.bLeft.length === 9, r10.bLeft);
+  ok('10: the book whose id begins the same ("b123") keeps all of its', r10.bLeft.length === 10, r10.bLeft);
   ok('10: its own glossary terms gone; every book\'s, a folder\'s and the other book\'s kept', r10.terms.join() === 't2,t3,t4', r10.terms);
   ok('10: its glossary links and destination gone, the others and the default kept', !('b12' in r10.links) && 'b123' in r10.links && r10.dest.sort().join() === '*,b123', [r10.links, r10.dest]);
   ok('10: its text rules, own settings and place in the queue gone; the others kept', r10.rules.join() === 'r2,r3' && r10.visual.join() === 'b123' && r10.queue.join() === 'b123', r10);

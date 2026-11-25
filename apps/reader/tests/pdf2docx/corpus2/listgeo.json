@@ -1,0 +1,1345 @@
+{
+ "chain-lo-draw": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.31,
+   "mark": 65.31
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 101.31,
+   "mark": 83.31
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 101.31,
+   "mark": 83.31
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 83.31,
+   "mark": 65.31
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 83.31,
+   "mark": 65.31
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.31,
+   "mark": 65.31
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 83.31,
+   "mark": 65.31
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 83.31,
+   "mark": 65.31
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "chrome-cli": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "chrome-pw-tagged": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "chrome-pw-untagged": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "lo-docx-pdfa": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "lo-docx-tagged": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "lo-docx-untagged": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "lo-odt-tagged": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "lo-odt-untagged": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "pdflatex": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 89.64,
+   "mark": 75.69
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 113.64,
+   "mark": 101.91
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 113.64,
+   "mark": 101.91
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 89.64,
+   "mark": 75.69
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 89.64,
+   "mark": 75.69
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 89.64,
+   "mark": 75.7
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 89.64,
+   "mark": 75.7
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 89.64,
+   "mark": 75.7
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "pdflib": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 84.0,
+   "mark": 68.0
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 104.0,
+   "mark": 88.0
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 104.0,
+   "mark": 88.0
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 84.0,
+   "mark": 68.0
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 84.0,
+   "mark": 68.0
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 84.0,
+   "mark": 68.0
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 84.0,
+   "mark": 68.0
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 84.0,
+   "mark": 68.0
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "qpdf-encrypted": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 96.36,
+   "mark": 82.36
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 96.36,
+   "mark": 82.36
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "qpdf-linearized": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 101.3,
+   "mark": 83.3
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 83.3,
+   "mark": 65.3
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "qpdf-objstm": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 123.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 93.0,
+   "mark": null
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 93.0,
+   "mark": 82.16
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "reportlab": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 96.36,
+   "mark": 82.36
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 96.36,
+   "mark": 82.36
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 82.36,
+   "mark": 68.36
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "wkhtmltopdf": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 84.67,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 107.73,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 107.73,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 84.67,
+   "mark": null
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 84.67,
+   "mark": null
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 84.67,
+   "mark": 73.14
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 84.67,
+   "mark": 73.14
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 84.67,
+   "mark": 73.14
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ],
+ "xelatex": [
+  {
+   "list": "ul-1",
+   "i": 0,
+   "rtl": false,
+   "text": 89.63,
+   "mark": 78.75
+  },
+  {
+   "list": "ul-1",
+   "i": 1,
+   "rtl": false,
+   "text": 113.64,
+   "mark": 102.75
+  },
+  {
+   "list": "ul-1",
+   "i": 2,
+   "rtl": false,
+   "text": 113.64,
+   "mark": 102.75
+  },
+  {
+   "list": "ul-1",
+   "i": 3,
+   "rtl": false,
+   "text": 89.63,
+   "mark": 78.75
+  },
+  {
+   "list": "ul-1",
+   "i": 4,
+   "rtl": false,
+   "text": 89.63,
+   "mark": 78.75
+  },
+  {
+   "list": "ol-1",
+   "i": 0,
+   "rtl": false,
+   "text": 89.63,
+   "mark": 75.9
+  },
+  {
+   "list": "ol-1",
+   "i": 1,
+   "rtl": false,
+   "text": 89.63,
+   "mark": 75.9
+  },
+  {
+   "list": "ol-1",
+   "i": 2,
+   "rtl": false,
+   "text": 89.63,
+   "mark": 75.9
+  },
+  {
+   "list": "ul-ar",
+   "i": 0,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 1,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  },
+  {
+   "list": "ul-ar",
+   "i": 2,
+   "rtl": true,
+   "text": null,
+   "mark": null
+  }
+ ]
+}

@@ -67,6 +67,8 @@ import { setImmersive, keepAwake, toggleFullscreen, leaveFullscreen, isFullscree
 import { onPhone, fits } from '../platform';
 import type { HighlightColor } from '../ui/selection';
 import { openSheet, askText } from '../ui/dom';
+import { mainTerm, sameName } from '../ui/glossentry';
+import { attachGlossMarks, type GlossMarks, type NameHit } from '../ui/glossmarks';
 
 /** Whether the search keeps the last search (opened again, it shows it); asked by a switch in the search itself. */
 const searchKeep = (): boolean => { try { return localStorage.getItem('kr.searchKeep') !== '0'; } catch { return true; } };
@@ -179,6 +181,9 @@ export function readerView(ids: string[]): HTMLElement {
     setActiveBook(books[0].id); onDispose(() => setActiveBook(null));
     if (books[0].format === 'anki') { const { mountAnki } = await import('./anki'); await mountAnki(root, books[0], onDispose); op.placed(); return; }
     if (books.every((b) => b.format === 'audio')) { const { mountAudio } = await import('./audio'); await mountAudio(root, books, onDispose); op.placed(); return; }
+    // (A book of pictures alone — a CBZ, a zip of pictures, one picture — opens in the comic reader: src/views/comic.ts.
+    // «Open comics the old way», for this version, keeps them in the flow reader as one scroll of pictures.)
+    if (books.length === 1 && (books[0].format === 'cbz' || books[0].format === 'image') && !getSettings().comicOldWay) { const { mountComic } = await import('./comic'); await mountComic(root, books[0], onDispose, gone, op); return; }
     const pdfs = books.filter((b) => b.format === 'pdf');
     const flows = books.filter((b) => b.format !== 'pdf');
     if (pdfs.length && (flows.length || pdfs.length > 1)) toast(t('fmtPdf') + ' · ' + t('open'), 'info', 3000);
@@ -263,6 +268,8 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
   root.append(h('div', { class: 'center', id: 'kr-loading' }, h('div', { class: 'spinner' }), t('loading')));
 
   const docs: OpenDoc[] = [];
+  // (The glossary's names in the text: found per chapter, marked with a dotted line, a tap on one opens its entry — made once the text's index is there.)
+  let glossMarks: GlossMarks | null = null;
   let lastTracked: { doc: OpenDoc; block: number } | null = null;
   // Late-bound hooks so chapter navigation can run before the chrome helpers are defined.
   const hooks = { update: () => undefined as void, save: () => undefined as void };
@@ -276,6 +283,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     currentChapter: () => Math.max(0, currentUnitIndex()),
     onChapterChange: (fn) => chapterListeners.push(fn),
     bookTitle: (id) => docs.find((d) => d.book.id === id)?.book.title,
+    bookInfo: (id) => { const b = docs.find((d) => d.book.id === id)?.book; return b ? { language: b.language, format: b.format } : undefined; },
   });
   onDispose(() => translator.dispose());
   let allImages: ImageRef[] = [];
@@ -485,6 +493,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
       else if (c.dataset.krHeld) { delete c.dataset.krHeld; if (!doc.chapters.includes(c)) c.hidden = false; }
     }
     applyHighlights(doc);
+    glossMarks?.refresh();
   }
   /** The sizes of a book's chapters, kept on this device from its last opening (not synced, not backed up): each
    *  chapter's blocks in the order of its spine, and its direction — so it can open at its place with only the chapter
@@ -1714,6 +1723,11 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     speak: (text) => speak([text]),
     textImage: (text, range) => void textImage(text, range),
     // (A rule made from the words: applied at once to the books open — see textrules.)
+    glossaryOf: (text) => {
+      const bk = currentLocator()?.doc.book ?? docs[0].book; const f = glossMarks?.entryFor(text, bk.id); if (!f) return null;
+      const rendering = (() => { const all = sameName(f.entry, f.bookId); return mainTerm(all).to; })();
+      return { rendering, open: (rects) => void import('../ui/glosscard').then((m) => m.openGlossCard(f.entry, { rects, bookId: f.bookId, title: bk.title, language: bk.language })) };
+    },
     glossary: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/aisheet').then((m) => m.aiSheet({ tab: 'glossary', book: { id: b.id, title: b.title }, addFrom: text })); },
     textRule: (text) => { const b = currentLocator()?.doc.book ?? docs[0].book; void import('../ui/textrulesheet').then((m) => m.ruleSheet({ find: text, book: { id: b.id, title: b.title }, made: (r) => { for (const d of docs) if (d.render && (!r.book || r.book === d.book.id)) applyTextRules(d.render.element, d.book.id, [r]); } })); },
   }));
@@ -1790,7 +1804,7 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     const hl = doc?.book.highlights.find((x) => x.id === id);
     if (!doc || !hl) return;
     e.stopPropagation();
-    const sheet = openSheet(t('highlight'), t('close'));
+    const sheet = openSheet(t('highlight'), t('close')); sheet.el.classList.add('hl-sheet');
     sheet.body.style.fontFamily = 'var(--font-ui)';
     const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '3', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
     ta.value = hl.note ?? '';
@@ -1800,6 +1814,17 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     sheet.actions.append(
       h('button', { class: 'btn danger small', onclick: async () => { await removeHighlight(doc, hl.id); sheet.close(); } }, icon('trash'), t('removeHighlight')),
       h('button', { class: 'btn primary small', onclick: async () => { const was = hl.note; hl.note = ta.value.trim() || undefined; hl.noteAt = stampAfter(hl.noteAt); scheduleSync(); doc.wrapper.querySelectorAll(`mark[data-hl="${id}"]`).forEach((m) => { (m as HTMLElement).title = hl.note ?? ''; m.classList.toggle('has-note', !!hl.note); }); await db.updateBook(doc.book.id, (b) => { b.highlights = doc.book.highlights; }); renumberNotes(doc); sheet.close(); if (was && !hl.note) noteUndo(doc, hl.id, was); else toast(t('noteSaved')); } }, icon('check'), t('done')));
+  }, true);
+
+  // Tapping a name of the glossary (phone) or clicking it (computer): its entry opens beside it. The tap is taken whole — the page
+  // does not turn and the bars do not toggle; a tap anywhere else is as ever, a long press still selects.
+  const openNameCard = (hit: NameHit, rects: DOMRect[]): void => void import('../ui/glosscard').then((m) => m.openGlossCard(hit.entry, { rects, bookId: hit.bookId, title: hit.title, language: hit.language }));
+  flow.addEventListener('click', (e) => {
+    if (!glossMarks || getSettings().glossTap === false) return;
+    if ((e.target as HTMLElement).closest('a, button, input, select, mark, img, .kr-note-badge, .kr-sheet-tabs')) return;
+    if (document.getSelection()?.isCollapsed === false) return;
+    const hit = glossMarks.hitAt(e.clientX, e.clientY); if (!hit) return;
+    e.preventDefault(); e.stopImmediatePropagation(); openNameCard(hit, hit.rects());
   }, true);
 
   function applyHighlights(doc: OpenDoc): void {
@@ -2072,6 +2097,10 @@ async function mountFlow(root: HTMLElement, books: Book[], onDispose: (fn: () =>
     };
     window.setTimeout(prep, 4000);
   }
+  // The glossary's names in the text (the chapters are read for them as they are shown; marks drawn through the page's
+  // highlight registry, so the text itself is untouched).
+  glossMarks = attachGlossMarks(flow, { docs: () => docs.filter((d) => d.render).map((d) => ({ bookId: d.book.id, title: d.book.title, language: d.book.language, root: d.render!.element, units: unitsOf(d) })), textNodes: (u) => textNodesUnder(u) });
+  onDispose(() => { glossMarks?.dispose(); glossMarks = null; });
 
   /** Scroll to a search hit (showing its chapter first when hidden) and mark it. */
   function goToHit(hit: SearchHit): void {
@@ -2965,7 +2994,7 @@ async function mountPdf(root: HTMLElement, book: Book, onDispose: (fn: () => voi
   }
 
   function pdfHighlightSheet(hl: PdfHighlight): void {
-    const sheet = openSheet(t('highlight'), t('close'));
+    const sheet = openSheet(t('highlight'), t('close')); sheet.el.classList.add('hl-sheet');
     sheet.body.style.fontFamily = 'var(--font-ui)';
     const ta = h('textarea', { placeholder: t('notePlaceholder'), rows: '3', style: { width: '100%' }, dir: 'auto' }) as HTMLTextAreaElement;
     ta.value = hl.note ?? '';

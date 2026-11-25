@@ -5,6 +5,7 @@
 import { h, icon, openSheet } from './dom';
 import { t, localDigits } from '../i18n';
 import type { Found } from '../ai';
+import { db } from '../db';
 
 export type AiTab = 'translation' | 'glossary' | 'names' | 'saved';
 export const AI_TABS: AiTab[] = ['translation', 'glossary', 'names', 'saved'];
@@ -23,6 +24,8 @@ export interface AiHooks {
   options(): HTMLElement;
   /** Names accepted: the chapter translated again with them. */
   added(): void;
+  /** The whole book translated (asking about the names first, as any start by hand does). */
+  translateWhole(): void;
 }
 let hooks: AiHooks | null = null;
 export const setAiHooks = (x: AiHooks | null): void => { hooks = x; };
@@ -30,15 +33,15 @@ export const aiHooks = (): AiHooks | null => hooks;
 
 // (The tab last open, for this session.)
 let lastTab: AiTab = 'translation';
-interface Open { el: HTMLElement; show(tab: AiTab): void; addFrom(text: string): void; bookId?: string }
+interface Open { el: HTMLElement; show(tab: AiTab): void; addFrom(text: string): void; focusTerm(id: string): void; bookId?: string }
 let current: Open | null = null;
 
-export interface AiSheetOpts { tab?: AiTab; book?: { id: string; title: string }; addFrom?: string; onDone?: () => void; extra?: HTMLElement }
+export interface AiSheetOpts { tab?: AiTab; book?: { id: string; title: string }; addFrom?: string; /** A term's id: the glossary tab opens on its file with its row focused. */ focusTerm?: string; onDone?: () => void; extra?: HTMLElement }
 
 /** Opens the sheet on a tab (or brings the open one there). */
 export function aiSheet(o: AiSheetOpts = {}): void {
   const book = o.book ?? (hooks ? { id: hooks.bookId, title: hooks.title() } : undefined);
-  if (current && current.el.isConnected && current.bookId === book?.id && !o.extra) { current.show(o.tab ?? lastTab); if (o.addFrom) current.addFrom(o.addFrom); return; }
+  if (current && current.el.isConnected && current.bookId === book?.id && !o.extra) { current.show(o.tab ?? lastTab); if (o.addFrom) current.addFrom(o.addFrom); if (o.focusTerm) current.focusTerm(o.focusTerm); return; }
   const sh = openSheet(t('aiTranslate'), t('close'), { onClose: () => { if (current?.el === sh.el) current = null; offSwipe(); } });
   sh.el.classList.add('ai-sheet', 'gloss-sheet');
   sh.body.style.fontFamily = 'var(--font-ui)';
@@ -66,23 +69,24 @@ export function aiSheet(o: AiSheetOpts = {}): void {
   const done = h('button', { class: 'btn small primary ai-done', type: 'button', onclick: () => { sh.close(); o.onDone?.(); } }, icon('check'), t('done'));
   sh.actions.append(tabActs, done);
 
-  let glossary: { addFrom(text: string): void; refresh(): void } | null = null;
+  let glossary: { addFrom(text: string): void; openTerm(id: string): void; refresh(): void } | null = null;
   function build(k: AiTab): void {
     if (built.has(k)) return; built.add(k); const p = panels.get(k)!;
     if (k === 'translation') {
-      void import('./aisettings').then((m) => { p.append(m.translationPanel(o.extra ?? hooks?.options(), () => show('glossary'))); });
+      void import('./aisettings').then((m) => { p.append(m.translationPanel(o.extra ?? hooks?.options(), () => show('glossary'), book?.id)); });
     } else if (k === 'glossary') {
       void import('./glossarysheet').then((m) => {
         const g = m.glossaryPanel(book, { scan: hooks && book && hooks.bookId === book.id ? (f) => { sh.close(); hooks!.scan(f); } : undefined, toNames: () => show('names') });
         glossary = g; p.append(g.el); acts.set('glossary', g.actions); if (cur === 'glossary') paintActs();
         if (pendingAdd) { g.addFrom(pendingAdd); pendingAdd = ''; }
+        if (pendingTerm) { g.openTerm(pendingTerm); pendingTerm = ''; }
       });
     } else if (k === 'names') {
       void import('./namespanel').then((m) => { const n = m.namesPanel(book, () => { glossary?.refresh(); }); p.append(n.el); acts.set('names', n.actions); if (cur === 'names') paintActs(); });
     } else savedPanel(p);
   }
   function paintActs(): void { tabActs.replaceChildren(...(acts.get(cur) ?? [])); sh.actions.classList.toggle('one', !(acts.get(cur) ?? []).length); }
-  let cur: AiTab = o.tab ?? lastTab; let pendingAdd = o.addFrom ?? '';
+  let cur: AiTab = o.tab ?? lastTab; let pendingAdd = o.addFrom ?? ''; let pendingTerm = o.focusTerm ?? '';
   function show(k: AiTab): void {
     if (panels.get(cur) && !panels.get(cur)!.hidden) scrolls.set(cur, sh.body.scrollTop);
     cur = k; lastTab = k; build(k);
@@ -103,7 +107,7 @@ export function aiSheet(o: AiSheetOpts = {}): void {
   };
   sh.body.addEventListener('pointerdown', down); sh.body.addEventListener('pointerup', up);
   const offSwipe = () => { sh.body.removeEventListener('pointerdown', down); sh.body.removeEventListener('pointerup', up); };
-  current = { el: sh.el, bookId: book?.id, show, addFrom: (text) => { if (glossary) glossary.addFrom(text); else pendingAdd = text; show('glossary'); } };
+  current = { el: sh.el, bookId: book?.id, show, addFrom: (text) => { if (glossary) glossary.addFrom(text); else pendingAdd = text; show('glossary'); }, focusTerm: (id) => { if (glossary) glossary.openTerm(id); else pendingTerm = id; show('glossary'); } };
   show(cur);
 
   /* ---------- «Saved translations»: this book's, kept with it or not, cleared with Undo ---------- */
@@ -117,6 +121,14 @@ export function aiSheet(o: AiSheetOpts = {}): void {
     p.append(h('div', { class: 'ai-saved' }, icon('download'), count),
       h('label', { class: 'row tr-opt gloss-auto' }, h('span', { class: 'label' }, t('trKeepBook'), h('small', { class: 'hint' }, t('trKeepBookHint'))), h('span', { class: 'switch' }, cb, h('i'))),
       h('button', { type: 'button', class: 'btn tonal small ai-clear', onclick: () => { hk.clearCache(); setTimeout(paint, 600); } }, icon('trash'), t('clearTranslationCache')));
+    // «Save the translation as EPUB» — for a book the reader lays out (not a PDF or a picture book); with nothing saved it is there but off, with one line why.
+    void (async () => {
+      const b = await db.getBook(hk.bookId); const { exportable } = await import('../translatedepub'); if (!b || !exportable(b) || !p.isConnected) return;
+      const n = await hk.cacheCount();
+      const why = h('p', { class: 'hint ai-epub-why', hidden: n > 0 }, t('teNone'));
+      const btn = h('button', { type: 'button', class: 'btn tonal small ai-epub', disabled: n === 0, onclick: () => { void import('./trepubsheet').then((m) => m.translatedEpubSheet(b, { translateWhole: () => hk.translateWhole() })); } }, icon('books'), t('teAction')) as HTMLButtonElement;
+      p.append(btn, why);
+    })();
     paint();
   }
 }

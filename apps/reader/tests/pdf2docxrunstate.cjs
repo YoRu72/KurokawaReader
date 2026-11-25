@@ -55,7 +55,7 @@ async function convert(browser, file, flags = {}) {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true });
   const page = await ctx.newPage(); page.on('pageerror', (e) => { console.log('pageerror', e.message); fails++; });
   await page.addInitScript((f) => { if (f.lanes !== undefined) globalThis.krLanes = f.lanes; if (f.two) globalThis.krTwoWorkers = true; }, flags);
-  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate(() => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); }); await page.reload(); await page.waitForSelector('.library-view');
+  await page.goto(`http://127.0.0.1:${PORT}/`); await page.evaluate((r) => { localStorage.setItem('kr.lang', 'en'); localStorage.setItem('kr.update.lastCheck', String(Date.now())); /* KR_DOCX_RESULT=exact|edit: PDF → Word's «Result» */ if (r) localStorage.setItem('kr.convert', JSON.stringify({ docxResult: r })); }, process.env.KR_DOCX_RESULT || ''); await page.reload(); await page.waitForSelector('.library-view');
   await page.setInputFiles('input[type=file]', [file]); await page.waitForSelector('.book-card', { timeout: 60000 }); await page.waitForTimeout(300);
   const card = await page.$('.book-card'); await card.dispatchEvent('contextmenu'); await page.waitForSelector('.sel-actions');
   if (!(await page.$('.sel-actions button:has-text("Convert")'))) { await page.click('.sel-actions button:has-text("More")'); await page.waitForSelector('.sheet'); await page.click('.sheet button:has-text("Convert")'); } else await page.click('.sel-actions button:has-text("Convert")');
