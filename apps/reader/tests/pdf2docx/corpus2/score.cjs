@@ -43,7 +43,7 @@ async function readDocx(buf) {
   // numbering: numId -> abstract -> level formats
   D.numFmt = {}; D.numLv = {}; D.counters = {}; const nb = await get('word/numbering.xml');
   if (nb) {
-    const abs = {}, absLv = {}; for (const a of descend(nb)) if (a.tag === 'w:abstractNum') { const id = a.attrs['w:abstractNumId']; abs[id] = {}; absLv[id] = {}; for (const l of kidsOf(a, 'w:lvl')) { abs[id][l.attrs['w:ilvl']] = attr(kid(l, 'w:numFmt'), 'w:val'); absLv[id][l.attrs['w:ilvl']] = { fmt: attr(kid(l, 'w:numFmt'), 'w:val'), start: +(attr(kid(l, 'w:start'), 'w:val') || 1), text: attr(kid(l, 'w:lvlText'), 'w:val') || '' }; } }
+    const abs = {}, absLv = {}; for (const a of descend(nb)) if (a.tag === 'w:abstractNum') { const id = a.attrs['w:abstractNumId']; abs[id] = {}; absLv[id] = {}; for (const l of kidsOf(a, 'w:lvl')) { abs[id][l.attrs['w:ilvl']] = attr(kid(l, 'w:numFmt'), 'w:val'); absLv[id][l.attrs['w:ilvl']] = { fmt: attr(kid(l, 'w:numFmt'), 'w:val'), start: +(attr(kid(l, 'w:start'), 'w:val') || 1), text: attr(kid(l, 'w:lvlText'), 'w:val') || '', ind: indOf(kid(kid(l, 'w:pPr'), 'w:ind')) }; } }
     for (const n of descend(nb)) if (n.tag === 'w:num') { D.numFmt[n.attrs['w:numId']] = abs[attr(kid(n, 'w:abstractNumId'), 'w:val')] || {}; D.numLv[n.attrs['w:numId']] = absLv[attr(kid(n, 'w:abstractNumId'), 'w:val')] || {}; }
   }
   D.kindOf = (num) => { if (!num) return null; const f = (D.numFmt[num.id] || {})[String(num.lvl)]; return f === undefined ? 'number' : f === 'bullet' ? 'bullet' : f === 'none' ? 'none' : 'number'; };
@@ -51,6 +51,7 @@ async function readDocx(buf) {
   const doc = await get('word/document.xml'); D.body = kid(kid(doc, 'w:document'), 'w:body') || { kids: [] };
   D.paras = []; D.tables = []; D.links = []; D.footRefs = 0; D.drawings = 0; D.smallDrawings = 0; D.hfPics = 0; D.sectCols = []; D.fieldsPage = 0;
   walkBody(D, D.body, { table: null, box: false });
+  { const last = kid(D.body, 'w:sectPr'); if (last) { const sec = sectOf(last); for (const q of D.unsect || []) q.sect = sec; } D.unsect = []; }
   for (const s of descend(D.body)) if (s.tag === 'w:sectPr') { const c = kid(s, 'w:cols'); D.sectCols.push(c ? +(c.attrs['w:num'] || (kidsOf(c, 'w:col').length || 1)) : 1); }
   // footnotes
   D.footnotes = []; const fn = await get('word/footnotes.xml');
@@ -61,12 +62,18 @@ async function readDocx(buf) {
     const x = await get('word/' + r.target.replace(/^\.?\//, '')); if (!x) continue;
     const ps = [...descend(x)].filter((n) => n.tag === 'w:p').map(paraText).join(' ').trim();
     const page = [...descend(x)].some((n) => (n.tag === 'w:instrText' && /\bPAGE\b/.test(textOf(n))) || (n.tag === 'w:fldSimple' && /\bPAGE\b/.test(n.attrs['w:instr'] || '')) || n.tag === 'w:pgNum');
-    D.hfPics += bigPics(x).big; D.hf.push({ kind: /\/header$/.test(r.type) ? 'header' : 'footer', text: ps, page });
+    D.hfPics += bigPics(x).big; D.hfStrips = (D.hfStrips || 0) + thinStrips(x); D.hf.push({ kind: /\/header$/.test(r.type) ? 'header' : 'footer', text: ps, page });
   }
   return D;
 }
 // A "picture" here is a drawing of at least 4 x 2 cm (the figure is 8 x 4.2 cm); smaller ones are the converter's bullets, rules and marks.
 function bigPics(n) { let c = 0, small = 0; for (const d of descend(n)) if (d.tag === 'w:drawing' || d.tag === 'w:pict') { const ex = [...descend(d)].find((x) => x.tag === 'wp:extent'); const hasImg = [...descend(d)].some((x) => x.tag === 'a:blip' || x.tag === 'v:imagedata'); if (!hasImg) continue; if (ex && +ex.attrs.cx >= 1440000 && +ex.attrs.cy >= 720000) c++; else small++; } return { big: c, small }; }
+// A picture pinned to the page in a header/footer part that is only a thin horizontal strip (at most 10 pt high, at least twice as
+// wide): a stroke of the page's drawing (an underline, a rule) left pinned while the text flows - a stray decoration.
+function thinStrips(n) { let c = 0; for (const d of descend(n)) if (d.tag === 'wp:anchor') { const ex = [...descend(d)].find((x) => x.tag === 'wp:extent'); if (!ex || ![...descend(d)].some((x) => x.tag === 'a:blip')) continue; const cx = +ex.attrs.cx, cy = +ex.attrs.cy; if (cy <= 127000 && cx >= 38100 && cx >= 2 * cy) c++; } return c; }
+// A w:ind as numbers (twips): start (or left), end (or right), hanging (positive) or firstLine (negative hanging); undefined when absent.
+function indOf(n) { if (!n) return undefined; const g = (a) => (n.attrs[a] !== undefined ? +n.attrs[a] : undefined); return { start: g('w:start') ?? g('w:left'), end: g('w:end') ?? g('w:right'), hanging: g('w:hanging') !== undefined ? g('w:hanging') : g('w:firstLine') !== undefined ? -g('w:firstLine') : undefined }; }
+function sectOf(sp) { const sz = kid(sp, 'w:pgSz'), mg = kid(sp, 'w:pgMar'), c = kid(sp, 'w:cols'); return { w: +(attr(sz, 'w:w') || 11906), left: +(attr(mg, 'w:left') || 1440), right: +(attr(mg, 'w:right') || 1440), cols: c ? +(c.attrs['w:num'] || 1) : 1 }; }
 function paraText(p) { let t = ''; for (const n of descend(p)) { if (n.tag === 'w:t') t += textOf(n); else if (n.tag === 'w:tab') t += ' '; else if (n.tag === 'w:br') t += ' '; } return t; }
 function numPrOf(np) { const id = attr(kid(np, 'w:numId'), 'w:val'); if (id === undefined || id === '0') return undefined; return { id, lvl: +(attr(kid(np, 'w:ilvl'), 'w:val') || 0) }; }
 
@@ -100,7 +107,9 @@ function readPara(D, p, ctx) {
   let heading = null; // {level}  (Title -> level 0)
   if (outline !== undefined && outline < 9) heading = { level: outline + 1 };
   for (const s of chain) { const m = /^heading (\d)/.exec(s.name); if (m && !heading) heading = { level: +m[1] }; if (s.name === 'title' && !heading) heading = { level: 0, title: true }; }
-  const P = { text: '', runs: [], style: sid, styleName: chain[0]?.name || '', heading, num, numKind: D.kindOf(num), bidi: !!bidi, jc, table: ctx.table, box: ctx.box, pics: 0, rtlRuns: 0, frame: !!kid(pr, 'w:framePr') };
+  const P = { text: '', runs: [], style: sid, styleName: chain[0]?.name || '', heading, num, numKind: D.kindOf(num), bidi: !!bidi, jc, table: ctx.table, box: ctx.box, pics: 0, rtlRuns: 0, frame: !!kid(pr, 'w:framePr'), ind: indOf(kid(pr, 'w:ind')) };
+  // (Its section: the next w:sectPr in the body — this paragraph's own, or a later one.)
+  (D.unsect ??= []).push(P); const sp = kid(pr, 'w:sectPr'); if (sp) { const sec = sectOf(sp); for (const q of D.unsect) q.sect = sec; D.unsect = []; }
   D.paras.push(P); const boxes = [];
   // (A list item's number as Word shows it — what the reader sees of the list: counted per list and level.)
   if (num && P.numKind === 'number') { const lv = (D.numLv[num.id] || {})[String(num.lvl)]; if (lv) { const c = D.counters[num.id] ??= {}; for (const k of Object.keys(c)) if (+k > num.lvl) delete c[k]; c[num.lvl] = c[num.lvl] === undefined ? lv.start : c[num.lvl] + 1; const n = c[num.lvl]; const v = lv.fmt === 'lowerLetter' ? String.fromCharCode(96 + n) : lv.fmt === 'upperLetter' ? String.fromCharCode(64 + n) : lv.fmt === 'lowerRoman' ? ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'][n - 1] || String(n) : lv.fmt === 'upperRoman' ? ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][n - 1] || String(n) : lv.fmt === 'hindiNumbers' ? String(n).replace(/\d/g, (d) => String.fromCharCode(0x660 + +d)) : String(n); P.label = lv.text.replace(/%\d/, v); } }
@@ -109,6 +118,8 @@ function readPara(D, p, ctx) {
     const rp = kid(r, 'w:rPr'); const rf = kid(rp, 'w:rFonts');
     const R = { text: '', b: rp && kid(rp, 'w:b') ? on(kid(rp, 'w:b')) : false, i: rp && kid(rp, 'w:i') ? on(kid(rp, 'w:i')) : false, font: (rf && (rf.attrs['w:ascii'] || rf.attrs['w:hAnsi'] || rf.attrs['w:cs'] || rf.attrs['w:eastAsia'])) || '', link };
     if (rp && kid(rp, 'w:rtl') && on(kid(rp, 'w:rtl'))) P.rtlRuns++;
+    // (For runs_plain: the run's look as written, its size, and whether it holds only text.)
+    R.sig = rp ? JSON.stringify(rp) : ''; R.sz = rp && kid(rp, 'w:sz') ? +attr(kid(rp, 'w:sz'), 'w:val') : null; R.plain = r.kids.every((c) => c.tag === 'w:rPr' || c.tag === 'w:t'); R.field = fieldStack.length > 0;
     for (const c of r.kids) {
       if (c.tag === 'w:t') R.text += textOf(c);
       else if (c.tag === 'w:tab' || c.tag === 'w:br' || c.tag === 'w:noBreakHyphen') R.text += c.tag === 'w:noBreakHyphen' ? '-' : ' ';
@@ -357,4 +368,102 @@ function wordRecall(pdfWords, D) {
   return { recall: pdfWords.length ? hit / pdfWords.length : null, miss };
 }
 
-module.exports = { readDocx, scoreDocx, fold, sim, dist, expectations, parseXml, pdfTextWords, wordRecall };
+// Geometry of the source PDF that the text layer alone does not give (read once per PDF with pdf.js):
+//  decor: the strokes attached to text - thin horizontal strokes (< 3 pt high; duplicates drawn twice counted once) with a line of
+//  text within 1.6 of its size above or below, over the same stretch, leaving out a table's rules (3 or more strokes at one height,
+//  or 3 or more of one extent).
+async function pdfGeometry(file) {
+  const fs = require('fs'); const path = require('path'); const url = require('url');
+  const base = path.join(__dirname, '../../../node_modules/pdfjs-dist/');
+  const pdfjs = await import(url.pathToFileURL(path.join(base, 'legacy/build/pdf.mjs')).href); const { OPS } = pdfjs;
+  const task = pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(file)), password: '', cMapUrl: url.pathToFileURL(path.join(base, 'cmaps/')).href, cMapPacked: true, standardFontDataUrl: url.pathToFileURL(path.join(base, 'standard_fonts/')).href, verbosity: 0, isEvalSupported: false }); const doc = await task.promise;
+  const G = { pages: doc.numPages, decor: 0, lines: [] };
+  // (The list items' places, from listgeo.json — see make/gen_listgeo.py — with each item's text from source.json.)
+  { const id = path.basename(file, '.pdf'); const lg = path.join(__dirname, 'listgeo.json'); const src = JSON.parse(fs.readFileSync(path.join(__dirname, 'source.json'), 'utf8'));
+    const texts = {}; const walk = (bs) => { for (const b of bs) { if (b.type === 'ul' || b.type === 'ol') texts[b.id] = b.items.map((x) => x.text); if (b.type === 'columns') walk(b.blocks); } }; walk(src.blocks);
+    if (fs.existsSync(lg)) { const all = JSON.parse(fs.readFileSync(lg, 'utf8')); if (all[id]) G.lists = all[id].map((x) => ({ ...x, want: (texts[x.list] || [])[x.i] })); } }
+  const mul = (m, k) => [m[0] * k[0] + m[2] * k[1], m[1] * k[0] + m[3] * k[1], m[0] * k[2] + m[2] * k[3], m[1] * k[2] + m[3] * k[3], m[0] * k[4] + m[2] * k[5] + m[4], m[1] * k[4] + m[3] * k[5] + m[5]];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const page = await doc.getPage(n); const ol = await page.getOperatorList(); const tc = await page.getTextContent();
+    const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({ str: it.str, x0: it.transform[4], x1: it.transform[4] + it.width, y: it.transform[5], h: it.height || Math.hypot(it.transform[2], it.transform[3]) || 10 }));
+    G.lines.push(items);
+    let ctm = [1, 0, 0, 1, 0, 0], lw = 1; const st = []; const ss = []; const seen = new Set();
+    for (let i = 0; i < ol.fnArray.length; i++) {
+      const fn = ol.fnArray[i], a = ol.argsArray[i];
+      if (fn === OPS.save) st.push([ctm, lw]); else if (fn === OPS.restore) { const t = st.pop(); if (t) [ctm, lw] = t; }
+      else if (fn === OPS.transform) ctm = mul(ctm, a); else if (fn === OPS.setLineWidth) lw = +a[0] || 0;
+      else if (fn === OPS.paintFormXObjectBegin) { st.push([ctm, lw]); if (Array.isArray(a[0])) ctm = mul(ctm, a[0]); } else if (fn === OPS.paintFormXObjectEnd) { const t = st.pop(); if (t) [ctm, lw] = t; }
+      else if (fn === OPS.constructPath) {
+        const mm = a[2]; if (!mm) continue;
+        const pts = [[mm[0], mm[1]], [mm[2], mm[1]], [mm[0], mm[3]], [mm[2], mm[3]]].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]]);
+        const x0 = Math.min(...pts.map((p) => p[0])), x1 = Math.max(...pts.map((p) => p[0])), y0 = Math.min(...pts.map((p) => p[1])), y1 = Math.max(...pts.map((p) => p[1]));
+        const th = [OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke].includes(a[0]) ? lw * Math.hypot(ctm[2], ctm[3]) : 0;
+        if (x1 - x0 < 3 || y1 - y0 + th >= 3) continue;
+        const key = [x0, x1, y0, y1].map((v) => v.toFixed(1)).join('|'); if (seen.has(key)) continue; seen.add(key); ss.push({ x0, x1, y: (y0 + y1) / 2 });
+      }
+    }
+    for (const s of ss) {
+      if (ss.filter((t) => Math.abs(t.y - s.y) < 0.5).length >= 3 || ss.filter((t) => Math.abs(t.x0 - s.x0) < 0.5 && Math.abs(t.x1 - s.x1) < 0.5).length >= 3) continue;
+      if (items.some((it) => it.x1 > s.x0 && it.x0 < s.x1 && Math.abs(it.y - s.y) < it.h * 1.6)) G.decor++;
+    }
+  }
+  await task.destroy();
+  return G;
+}
+// Measures of the «Easy to edit» result that need the source's geometry (G from pdfGeometry).
+function scoreGeometry(D, G) {
+  const S = {};
+  // decor_stray: share of the source's text-attached strokes not left pinned in the page drawing (1 = none left).
+  S.decor_stray = G.decor ? clamp(1 - (D.hfStrips || 0) / G.decor) : (D.hfStrips ? 0 : null);
+  // runs_plain: 1 - (runs of only spaces at another size than a neighbour + needless run boundaries: two neighbouring runs of plain
+  // text with the same look, in the same link, outside fields) / runs, over the body's paragraphs.
+  { let runs = 0, bad = 0;
+    for (const p of D.paras) { if (p.table || p.box) continue; const rs = p.runs; runs += rs.length;
+      rs.forEach((r, i) => { const a = rs[i - 1], b = rs[i + 1];
+        if (r.plain && r.text.length && !r.text.trim() && r.sz !== null && [a, b].some((n) => n && n.plain && n.text.trim() && n.sz !== null && n.sz !== r.sz)) bad++;
+        else if (a && a.plain && r.plain && !a.field && !r.field && a.sig === r.sig && a.link === r.link && !a.foot && !r.foot) bad++; }); }
+    S.runs_plain = runs ? clamp(1 - bad / runs) : null; }
+  // list_geometry: share of the list items (source.json's, placed on the page by listgeo.json) whose text and mark — where the
+  // .docx puts them: the section's margin, then the paragraph's indent or its list level's, less the hanging — stand within
+  // 2 pt of the page's (from the right edge for a right-to-left item; the mark only where the text layer has it).
+  if (G.lists && G.lists.length) {
+    let n = 0, good = 0;
+    for (const it of G.lists) {
+      if (it.text === null || !it.want) continue; n++;
+      const p = D.paras.find((q) => q.num && !q.table && sim(fold(q.text), fold(it.want)) >= 0.85); if (!p || !p.sect || p.sect.cols > 1) continue;
+      const lv = ((D.numLv[p.num.id] || {})[String(p.num.lvl)] || {}).ind || {}; const own = p.ind || {};
+      const start = own.start ?? lv.start ?? 0, hang = own.hanging ?? lv.hanging ?? 0;
+      const text = ((it.rtl ? p.sect.right : p.sect.left) + start) / 20, mark = text - hang / 20;
+      if (Math.abs(text - it.text) <= 2 && (it.mark === null || Math.abs(mark - it.mark) <= 2)) good++;
+    }
+    S.list_geometry = n ? good / n : null;
+  }
+  return S;
+}
+// The long paragraph's line pitch (median step between its consecutive lines on one page) and the page count of a PDF —
+// the source, or the .docx as LibreOffice lays it out (soffice --convert-to pdf).
+async function pdfFlow(file, src) {
+  const fs = require('fs'); const path = require('path'); const url = require('url');
+  const base = path.join(__dirname, '../../../node_modules/pdfjs-dist/');
+  const pdfjs = await import(url.pathToFileURL(path.join(base, 'legacy/build/pdf.mjs')).href);
+  const task = pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(file)), password: '', cMapUrl: url.pathToFileURL(path.join(base, 'cmaps/')).href, cMapPacked: true, standardFontDataUrl: url.pathToFileURL(path.join(base, 'standard_fonts/')).href, verbosity: 0, isEvalSupported: false }); const doc = await task.promise;
+  const long = src.blocks.find((b) => b.id === 'p-long'); const lw = new Set(words(long ? long.runs.map((r) => r.t || '').join(' ') : '').filter((w) => w.length >= 4));
+  const steps = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const tc = await (await doc.getPage(n)).getTextContent(); const rows = new Map();
+    for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = Math.round(it.transform[5] * 2) / 2; let k = [...rows.keys()].find((v) => Math.abs(v - y) < 1.5); if (k === undefined) rows.set(k = y, []); rows.get(k).push(it.str); }
+    const ys = [...rows.keys()].sort((a, b) => b - a).filter((y) => { const ws = words(rows.get(y).join(' ')).filter((w) => w.length >= 4); return ws.length >= 5 && ws.filter((w) => lw.has(w)).length >= ws.length * 0.9; });
+    for (let i = 1; i < ys.length; i++) { const d = ys[i - 1] - ys[i]; if (d > 5 && d < 30) steps.push(d); }
+  }
+  const pages = doc.numPages; await task.destroy();
+  steps.sort((a, b) => a - b); return { pages, pitch: steps.length >= 3 ? steps[Math.floor(steps.length / 2)] : null };
+}
+// pitch: the long paragraph's line pitch as LibreOffice sets the .docx ÷ the source's: 1 within 0.97-1.04, falling to 0 at ±20 %.
+// pages: 1 when LibreOffice's page count is the source's, 0.5 one off, else 0.
+function scoreFlow(srcFlow, docFlow) {
+  const S = {};
+  if (srcFlow.pitch && docFlow.pitch) { const r = docFlow.pitch / srcFlow.pitch; S.pitch = r >= 0.97 && r <= 1.04 ? 1 : r < 0.97 ? clamp((r - 0.8) / 0.17) : clamp((1.2 - r) / 0.16); }
+  const d = Math.abs(docFlow.pages - srcFlow.pages); S.pages = d === 0 ? 1 : d === 1 ? 0.5 : 0;
+  return S;
+}
+module.exports = { pdfFlow, scoreFlow, pdfGeometry, scoreGeometry, readDocx, scoreDocx, fold, sim, dist, expectations, parseXml, pdfTextWords, wordRecall };

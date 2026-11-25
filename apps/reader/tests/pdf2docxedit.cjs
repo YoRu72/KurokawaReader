@@ -20,6 +20,23 @@
 // 6. Footnotes: a raised number in the text and its note under a short rule at the page's foot, a running foot
 //    under that: (easy to edit) a Word footnote (footnotes.xml) with the note's text, a footnote reference where the
 //    number stood, the note no longer in the text; (both) the note never in the footer part.
+// 7. Decorations (easy to edit): blue words underlined by a drawn stroke under their baseline are underlined runs (w:u in that
+//    colour), a word with a stroke through its middle is struck (w:strike), a rule across the text under the title is the
+//    title's bottom border (w:pBdr), and none of those strokes is left as a thin strip pinned in the page's drawing; the
+//    notes' separator (6.) is gone too once the note is a Word footnote. (Exact look: the strokes stay in the drawing.)
+// 8. Lists (easy to edit): a three-level list — a bullet glyph, a symbol font's bullet, a dash — each item's mark and text
+//    where the page has them (the section's margin plus its level's indent, less the hanging, within 2 pt), the level
+//    holding that indent and a num tab at it, the item no indent of its own and no typed tab or mark left in its text,
+//    the dash level a dash. (Right-to-left lists are scored on the corpus: pdf-lib cannot set Arabic without fontkit.)
+// 9. Spaces and runs (easy to edit): a justified paragraph drawn word by word (TeX's way: each word its own text, the gaps
+//    stretched, some lines tighter than the font's space) is one run of plain text: its spaces plain spaces at the words'
+//    size, no run boundary where nothing changes.
+// 10. Page flow (easy to edit): a page simply full (its last line at the text's foot, a paragraph ending there) runs on
+//    into the next with no page break (a continuous section); a page that ends half way down keeps its break before
+//    the next.
+// 11. Columns with a narrow gutter (easy to edit): two justified columns 9 pt apart under a full-width paragraph are a
+//    section of two columns (w:cols), the left column's text all before the right one's, no paragraph mixing them.
+//    (Their baselines apart, as TeX's are: pdf.js gives a line drawn across both columns on one baseline as one text.)
 // The guard, in both results: every word of each PDF's own text layer is in the .docx (body, tables, text boxes,
 // headers, footers, footnotes) — for these PDFs and for the older fixtures (tests/pdf2docx/fixtures, corpus/design.pdf).
 // With soffice on the PATH every .docx is also opened by LibreOffice (--convert-to pdf must succeed: no repair).
@@ -138,6 +155,62 @@ async function notesPdf() {
   return { file: await save(doc, 'notes'), note: 'The log was kept in the harbour office.' };
 }
 
+async function decorPdf() {
+  const { doc, f, fb } = await newDoc(); const p = doc.addPage([595, 842]);
+  p.drawText('Survey of the Outer Basin', { x: 72, y: 760, size: 20, font: fb });
+  p.drawLine({ start: { x: 72, y: 752 }, end: { x: 523, y: 752 }, thickness: 1, color: rgb(0.2, 0.3, 0.6) });
+  const a = 'The crew followed ', u = 'the marked channel', b = ' past the pier and the ', k = 'old', c = ' new buoy at noon.';
+  let x = 72; const y = 720; const put = (t, col = rgb(0, 0, 0)) => { p.drawText(t, { x, y, size: 11, font: f, color: col }); const w = f.widthOfTextAtSize(t, 11); const x0 = x; x += w; return [x0, x]; };
+  put(a); const [u0, u1] = put(u, rgb(0, 0.2, 0.8)); put(b); const [k0, k1] = put(k); put(c);
+  p.drawLine({ start: { x: u0, y: y - 1.6 }, end: { x: u1, y: y - 1.6 }, thickness: 0.7, color: rgb(0, 0.2, 0.8) });
+  p.drawLine({ start: { x: k0, y: y + 3.4 }, end: { x: k1, y: y + 3.4 }, thickness: 0.7, color: rgb(0, 0, 0) });
+  wrap(PROSE.split(' '), f, 11, 450).forEach((t, i) => p.drawText(t, { x: 72, y: 690 - i * 14, size: 11, font: f }));
+  return { file: await save(doc, 'decor'), u, k };
+}
+
+async function listPdf() {
+  const { doc, f } = await newDoc(); const sym = await doc.embedFont(StandardFonts.Symbol); const p = doc.addPage([595, 842]);
+  p.drawText('The crew packed these things before the morning run along the pier.', { x: 72, y: 760, size: 11, font: f });
+  const items = [[0, 'The depth sounder'], [1, 'Its handheld unit'], [2, 'A spare cable'], [2, 'A spare battery'], [1, 'Its mounted unit'], [0, 'The tide gauge']];
+  const marks = [['\u2022', f, 72, 86], ['\u2022', sym, 86, 100], ['\u2013', f, 100, 114]];
+  items.forEach(([l, t], i) => { const [m, font, mx, tx] = marks[l]; const y = 736 - i * 16; p.drawText(m, { x: mx, y, size: 11, font }); p.drawText(t, { x: tx, y, size: 11, font: f }); });
+  p.drawText('Everything was checked again on the quay before the boat left the harbour.', { x: 72, y: 630, size: 11, font: f });
+  return { file: await save(doc, 'lists'), items, marks };
+}
+
+async function texPdf() {
+  const { doc, f } = await newDoc(); const p = doc.addPage([595, 842]);
+  const words = (PROSE + ' and so the whole of the season was written down in the same small hand by the same keeper').split(' ');
+  // (Set a little wider than the measure, then justified to it: some lines' spaces come out tighter than the font's.)
+  const W = 400; const lines = wrap(words, f, 11, W * 1.04);
+  lines.forEach((ln, i) => { const ws = ln.split(' '); const y = 760 - i * 13.6; const ink = ws.reduce((t, w) => t + f.widthOfTextAtSize(w, 11), 0);
+    const gap = i === lines.length - 1 ? f.widthOfTextAtSize(' ', 11) : (W - ink) / (ws.length - 1);
+    let x = 72; for (const w of ws) { p.drawText(w, { x, y, size: 11, font: f }); x += f.widthOfTextAtSize(w, 11) + gap; } });
+  return { file: await save(doc, 'tex'), text: lines.join(' ') };
+}
+
+async function flowPdf() {
+  const { doc, f } = await newDoc();
+  const para = (n) => { const ws = []; for (let i = 0; i < n; i++) ws.push(...PROSE.split(' ')); const l = wrap(ws, f, 11, 450); l[0] = l[0][0].toUpperCase() + l[0].slice(1); l[l.length - 1] += '.'; return l; };
+  const page = (count) => { const p = doc.addPage([595, 842]); let y = 770; let k = 0; while (y > count) { const ls = para(2 + (k++ % 2)); for (const t of ls) { if (y <= count) break; p.drawText(t, { x: 72, y, size: 11, font: f }); y -= 14; } y -= 8; } return p; };
+  // (Each page's paragraphs end on the page: the last line of the full page is a sentence's end.)
+  const full = doc.addPage([595, 842]); let y = 770; const lines = []; while (lines.length < 51) lines.push(...para(2)); lines.length = 51; lines[50] = lines[50].replace(/[^ ]*$/, 'end.');
+  for (const t of lines) { full.drawText(t, { x: 72, y, size: 11, font: f }); y -= 14; }
+  page(430); page(400);
+  return { file: await save(doc, 'flow') };
+}
+
+async function colsPdf() {
+  const { doc, f } = await newDoc(); const p = doc.addPage([595, 842]);
+  wrap(('The log of the outer basin was kept in two columns, one for each crew, as the board had asked. ' + PROSE + '.').split(' '), f, 11, 450).forEach((t, i) => p.drawText(t, { x: 72, y: 760 - i * 14, size: 11, font: f }));
+  const just = (text, x0, w, y0) => { const ls = wrap(text.split(' '), f, 10, w); ls.forEach((ln, i) => { const ws = ln.split(' '); const ink = ws.reduce((t, x) => t + f.widthOfTextAtSize(x, 10), 0); const gap = i === ls.length - 1 || ws.length < 2 ? f.widthOfTextAtSize(' ', 10) : (w - ink) / (ws.length - 1); let x = x0; for (const wd of ws) { p.drawText(wd, { x, y: y0 - i * 12.5, size: 10, font: f }); x += f.widthOfTextAtSize(wd, 10) + gap; } }); return ls.length; };
+  const left = 'Alpha crew: ' + PROSE + ' while the wind held from the west all day.', right = 'Bravo crew: ' + PROSE + ' until the tide turned in the late afternoon.';
+  // (The right column's baselines a little lower, as TeX sets two columns whose paragraphs break apart.)
+  const n = Math.max(just(left, 72, 221, 690), just(right, 302, 221, 684.5));
+  p.drawText('Both logs were copied into the board\'s book the same evening, and the crews were thanked for their care.', { x: 72, y: 690 - n * 12.5 - 20, size: 11, font: f });
+  return { file: await save(doc, 'cols'), left, right };
+}
+
 // ---- converting ----
 async function convert(browser, file, mode) {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true });
@@ -161,12 +234,12 @@ const cellsOf = (t) => t.rows.map((r) => r.cells.map((c) => c.text.replace(/\s+/
   await new Promise((r) => server.listen(PORT, r));
   const browser = await chromium.launch();
   try {
-    const bt = await booktabs(); const pa = await paragraphs(); const st = await structurePdf(); const ln = await linksPdf(); const nt = await notesPdf();
+    const bt = await booktabs(); const pa = await paragraphs(); const st = await structurePdf(); const ln = await linksPdf(); const nt = await notesPdf(); const dc = await decorPdf(); const ls = await listPdf(); const tx = await texPdf(); const fl = await flowPdf(); const cl = await colsPdf();
     const fixtures = [path.join(__dirname, 'pdf2docx/fixtures/fullpage.pdf'), path.join(__dirname, 'pdf2docx/fixtures/merged.pdf'), path.join(__dirname, 'pdf2docx/corpus/design.pdf')].filter((f) => fs.existsSync(f));
     for (const mode of ['edit', 'exact']) {
       const M = mode === 'edit' ? 'easy to edit' : 'exact look';
       const docs = new Map();
-      for (const f of [bt.file, pa.file, st.file, ln.file, nt.file, ...fixtures]) docs.set(f, await convert(browser, f, mode));
+      for (const f of [bt.file, pa.file, st.file, ln.file, nt.file, dc.file, ls.file, tx.file, fl.file, cl.file, ...fixtures]) docs.set(f, await convert(browser, f, mode));
       // 1. the open table
       {
         const D = await readDocx(fs.readFileSync(docs.get(bt.file)));
@@ -237,7 +310,60 @@ const cellsOf = (t) => t.rows.map((r) => r.cells.map((c) => c.text.replace(/\s+/
         if (mode === 'edit') {
           ok(`${M} 6. the note is a Word footnote (${JSON.stringify(D.footnotes)}), referenced from the text (${D.footRefs})`, D.footnotes.some((x) => flat(x) === nt.note) && D.footRefs === 1);
           ok(`${M} 6. the note is no longer in the text`, !D.paras.some((p) => flat(p.text).includes('harbour office')));
+          ok(`${M} 6. the notes' separator is not left in the page's drawing (${D.hfStrips || 0} thin strips)`, !D.hfStrips);
         } else ok(`${M} 6. the note stays in the page's text`, D.paras.some((p) => flat(p.text).includes(nt.note)));
+      }
+      // 7. decorations
+      {
+        const D = await readDocx(fs.readFileSync(docs.get(dc.file))); const xml = await D.zip.file('word/document.xml').async('string');
+        const runs = (xml.match(/<w:r>[\s\S]*?<\/w:r>/g) || []).map((r) => ({ x: r, t: r.replace(/<[^>]+>/g, '') }));
+        if (mode === 'edit') {
+          const ut = runs.filter((r) => /<w:u w:val="single" w:color="0033CC"\/>/.test(r.x)).map((r) => r.t).join('');
+          ok(`${M} 7. the underlined words are underlined runs in the stroke's colour ("${ut}")`, ut.trim() === dc.u);
+          const st = runs.filter((r) => /<w:strike\/>/.test(r.x)).map((r) => r.t).join('');
+          ok(`${M} 7. the struck word is struck ("${st}")`, st.trim() === dc.k);
+          const tp = (xml.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).find((x) => x.includes('Survey of the Outer Basin')) || '';
+          ok(`${M} 7. the rule under the title is its bottom border (${(/<w:pBdr>[\s\S]*?<\/w:pBdr>/.exec(tp) || ['none'])[0]})`, /<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="\d+" w:color="334C99"\/><\/w:pBdr>/.test(tp));
+          ok(`${M} 7. no stroke is left as a thin strip pinned in the drawing (${D.hfStrips || 0})`, !D.hfStrips);
+        } else ok(`${M} 7. the strokes stay in the page's drawing (${D.hfStrips || 0} thin strips)`, D.hfStrips >= 1);
+      }
+      // 11. narrow gutter
+      if (mode === 'edit') {
+        const D = await readDocx(fs.readFileSync(docs.get(cl.file))); const flat = (t) => t.replace(/\s+/g, ' ').trim();
+        const all = flat(D.paras.map((p) => p.text).join(' '));
+        const iL = all.indexOf('Alpha crew'), iR = all.indexOf('Bravo crew'), eL = all.indexOf('from the west all day.');
+        ok(`${M} 11. a section of two columns (${D.sectCols.join(',')})`, D.sectCols.some((n) => n === 2));
+        ok(`${M} 11. the left column's text whole before the right one's (${iL} .. ${eL} < ${iR})`, iL >= 0 && eL > iL && iR > eL);
+        ok(`${M} 11. no paragraph mixes the columns`, !D.paras.some((p) => /Alpha crew|west all day/.test(p.text) && /Bravo crew|late afternoon/.test(p.text)));
+      }
+      // 10. page flow
+      if (mode === 'edit') {
+        const xml = await (await readDocx(fs.readFileSync(docs.get(fl.file)))).zip.file('word/document.xml').async('string');
+        const types = (xml.match(/<w:type w:val="(\w+)"\/>/g) || []).map((t) => /"(\w+)"/.exec(t)[1]);
+        ok(`${M} 10. the full page runs on, the short one keeps its break (sections: ${types.join(' ')})`, types.join(' ') === 'nextPage continuous nextPage');
+      }
+      // 9. spaces and runs
+      if (mode === 'edit') {
+        const D = await readDocx(fs.readFileSync(docs.get(tx.file))); const flat = (t) => t.replace(/\s+/g, ' ').trim();
+        const p = D.paras.find((q) => flat(q.text) === flat(tx.text));
+        ok(`${M} 9. the word-by-word paragraph is one paragraph`, !!p);
+        if (p) ok(`${M} 9. it is one run of plain text (${p.runs.length} runs, sizes ${[...new Set(p.runs.map((r) => r.sz))].join(',')})`, p.runs.length === 1 && p.runs[0].plain);
+      }
+      // 8. lists
+      if (mode === 'edit') {
+        const D = await readDocx(fs.readFileSync(docs.get(ls.file))); const xml = await D.zip.file('word/document.xml').async('string'); const nx = (await D.zip.file('word/numbering.xml')?.async('string')) || '';
+        const flat = (t) => t.replace(/\s+/g, ' ').trim();
+        for (const [l, t] of ls.items) {
+          const p = D.paras.find((q) => flat(q.text) === t); const [, , mx, tx] = ls.marks[l];
+          if (!p || !p.num) { ok(`${M} 8. "${t}" is a list item`, false); continue; }
+          const lv = ((D.numLv[p.num.id] || {})[String(p.num.lvl)] || {}); const ind = { ...(lv.ind || {}), ...Object.fromEntries(Object.entries(p.ind || {}).filter(([, v]) => v !== undefined)) };
+          const text = (p.sect.left + (ind.start || 0)) / 20, mark = text - (ind.hanging || 0) / 20;
+          ok(`${M} 8. "${t}" is level ${l}, its mark at ${mark.toFixed(1)} (page ${mx}), its text at ${text.toFixed(1)} (page ${tx})`, p.num.lvl === l && Math.abs(mark - mx) <= 2 && Math.abs(text - tx) <= 2);
+          ok(`${M} 8. "${t}" takes its level's indent (no w:ind of its own)`, !p.ind);
+        }
+        const px = (xml.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).filter((x) => /<w:numPr>/.test(x));
+        ok(`${M} 8. no typed tab or mark left in the items' text`, px.length === 6 && px.every((x) => !/<w:tab\/>/.test(x) && !/<w:t[^>]*>\s*[\u2022\u2013]/.test(x)));
+        ok(`${M} 8. each level holds its indent and a num tab there, the third a dash`, /<w:lvl w:ilvl="0">[\s\S]*?<w:tab w:val="num" w:pos="(\d+)"\/><\/w:tabs><w:ind w:start="\1"/.test(nx) && /<w:lvl w:ilvl="2">[\s\S]*?<w:lvlText w:val="\u2013"\/>/.test(nx));
       }
       // the guard: no word lost, and LibreOffice opens each result
       for (const [f, docx] of docs) {

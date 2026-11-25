@@ -36,7 +36,7 @@ export type UseStore = { seqs: GlyphRuns; seen: Map<string, Set<number>>;
   keepAll?: boolean };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
 
-type Piece = { /** For a document to edit: the link the piece stands in (a URL, or #ref of a page in the file). */ link?: string; text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; inked?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
+type Piece = { /** For a document to edit: the link the piece stands in (a URL, or #ref of a page in the file). */ link?: string; /** For a document to edit: underlined (its colour), struck, shaded (its colour) — see decorate. */ u?: string; /** a piece kept as drawn: its text */ was?: string; strike?: boolean; shd?: string; text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; inked?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
   /** Marks put into this piece's text that the page draws in a colour of their own (a red haraka on a black letter). */
   tints?: { base: string; mark: string; color: string }[] };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
@@ -46,10 +46,10 @@ type Line = { pieces: Piece[]; base: number; size: number; l: number; r: number;
 type Box = { l: number; r: number; top: number; bottom: number };
 /** (`fk`: the PDF font the run was set in — its key in the converter's font map — so that two different fonts
  *  that give themselves one name can be told apart once all pages are read; see buildDocFonts.) */
-export type Run = { link?: string; text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; /** Where a line of the page joins the one before in a paragraph to edit (no line break: a space, or a hyphen's word made whole — see joinLines). */ lj?: boolean; tab?: number; tabEnd?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece; fk?: string };
+export type Run = { link?: string; u?: string; strike?: boolean; shd?: string; text: string; font: string; size: number; bold: boolean; italic: boolean; color: string; rtl: boolean; sup: boolean; note?: number; br?: boolean; /** Where a line of the page joins the one before in a paragraph to edit (no line break: a space, or a hyphen's word made whole — see joinLines). */ lj?: boolean; tab?: number; tabEnd?: number; raise?: number; kText?: string; cs?: number; spacing?: number; art?: Piece; fk?: string };
 /** heading: for a document to edit, the paragraph's heading level (0 the title, 1–3); list: its list item (its
  *  list, level, and where its mark and text start, points from the text's edge). */
-type Para = { kind: 'p'; heading?: number; list?: { id: number; lvl: number }; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: { pos: number; type: 'left' | 'right' | 'center' }[]; /** its first line's baseline (PDF units, from the page's foot) */ base0?: number };
+type Para = { kind: 'p'; heading?: number; list?: { id: number; lvl: number }; runs: Run[]; align: 'start' | 'end' | 'center' | 'both'; kashida?: boolean; rtl: boolean; indStart: number; indEnd: number; firstLine: number; before: number; pitch: number; size: number; tabs?: { pos: number; type: 'left' | 'right' | 'center' }[]; /** its first line's baseline (PDF units, from the page's foot) */ base0?: number; /** its last line's */ base1?: number; /** For a list item: where the text after its mark starts (points from the text's start edge). */ lead?: number; /** its indent is its list level's */ listInd?: boolean; /** For a document to edit: rules drawn over / under it (sz eighths of a point, space points). */ bdr?: { top?: { sz: number; color: string; space: number }; bottom?: { sz: number; color: string; space: number } } };
 type Verse = { kind: 'verse'; rows: Run[][][]; rtl: boolean; before: number; pitch: number; size: number; width: number; indStart: number; midW: number; gap: number; exts?: [number, number][]; lead?: boolean };
 /** A ruled table: its columns (page x, left to right) and rows (page y, top down), and per row its cells
  *  left to right — each spanning `span` columns, `cont` when it carries on the cell above (no rule between). */
@@ -70,7 +70,7 @@ type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] }
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
 /** Text set at an angle (a design's stamp, a label up the side): one text box, turned, in page points from the top-left. */
 type TextBox = { runs: Run[]; x: number; y: number; w: number; h: number; rot: number; line: number };
-export type PageModel = { /** For a document to edit: the page goes on from the one before (a paragraph ran over), no page break before it. */ cont?: boolean; /** The page's own object in the file (num_gen): what a link to it names. */ ref?: string; /** For a document to edit: a link to this page lands here (its bookmark's name). */ mark?: string; vert?: VPage; w: number; h: number; pics: Pic[]; boxes?: TextBox[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number;
+export type PageModel = { /** For a document to edit: the page goes on from the one before (a paragraph ran over), no page break before it. */ cont?: boolean; /** The lowest baseline of its text (body and notes, page units from the foot) and its text's usual pitch: whether the page was simply full. */ low?: number; lowPitch?: number; /** The page's own object in the file (num_gen): what a link to it names. */ ref?: string; /** For a document to edit: a link to this page lands here (its bookmark's name). */ mark?: string; vert?: VPage; w: number; h: number; pics: Pic[]; boxes?: TextBox[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number;
   /** The lines taken for the running head as text blocks, and where they start and end (points from the top). */ uncut?: { blocks: Block[]; top: number; bottom: number }; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
@@ -160,6 +160,30 @@ function readOs2(bytes: Uint8Array): Os2 | null {
     return { weight: dv.getUint16(o + 4), italic: !!(sel & 1), bold: !!(sel & 32), usb: [42, 46, 50, 54].map((k) => dv.getUint32(o + k)), csb: version >= 1 ? [dv.getUint32(o + 78), dv.getUint32(o + 82)] : [1, 0], panose: Array.from(bytes.subarray(o + 32, o + 42), (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase() };
   } catch { return null; }
 }
+
+/** A font's "single" line as Word and LibreOffice set it, in ems: Word takes the Windows ascent and descent (and the
+ *  hhea line gap beyond them), LibreOffice the same unless the font asks for its typographic metrics
+ *  (USE_TYPO_METRICS); where the two differ, the mean. */
+export function lineFactor(bytes: Uint8Array): number | null {
+  try {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const n = dv.getUint16(4); const T: Record<string, number> = {};
+    for (let i = 0; i < n; i++) { const r = 12 + i * 16; T[String.fromCharCode(...bytes.subarray(r, r + 4))] = dv.getUint32(r + 8); }
+    if (T.head === undefined || T.hhea === undefined) return null;
+    const upm = dv.getUint16(T.head + 18) || 1000;
+    const hAsc = dv.getInt16(T.hhea + 4), hDesc = dv.getInt16(T.hhea + 6), hGap = dv.getInt16(T.hhea + 8);
+    const hhea = (hAsc - hDesc + Math.max(0, hGap)) / upm;
+    if (T['OS/2'] === undefined) return hhea > 0.8 && hhea < 3 ? hhea : null;
+    const o = T['OS/2']; const sel = dv.getUint16(o + 62);
+    const tA = dv.getInt16(o + 68), tD = dv.getInt16(o + 70), tG = dv.getInt16(o + 72), wA = dv.getUint16(o + 74), wD = dv.getUint16(o + 76);
+    const word = wA + wD > 0 ? (wA + wD + Math.max(0, hGap - (wA + wD - (hAsc - hDesc)))) / upm : hhea;
+    const lo = sel & 128 && tA - tD > 0 ? (tA - tD + Math.max(0, tG)) / upm : wA + wD > 0 ? (wA + wD) / upm : hhea;
+    const f = (word + lo) / 2;
+    return f > 0.8 && f < 3 ? f : null;
+  } catch { return null; }
+}
+/** The "single" line of common fonts a document names without carrying them (as their metric twins set it). */
+const NAMED_LINE: Record<string, number> = { 'Times New Roman': 1.15, Arial: 1.15, Helvetica: 1.15, 'Liberation Serif': 1.15, 'Liberation Sans': 1.15, 'Liberation Mono': 1.13, 'Courier New': 1.13, Courier: 1.13, Calibri: 1.22, Carlito: 1.22, Cambria: 1.17, Caladea: 1.17, Georgia: 1.14, Verdana: 1.22, Tahoma: 1.21, 'Segoe UI': 1.33, 'DejaVu Sans': 1.16, 'DejaVu Serif': 1.16, 'DejaVu Sans Mono': 1.16, 'Noto Sans': 1.36, 'Noto Serif': 1.36, Symbol: 1.23, 'Noto Sans CJK JP': 1.45, 'Noto Sans CJK SC': 1.45, 'Noto Sans CJK TC': 1.45, 'Noto Sans CJK KR': 1.45, 'Noto Serif CJK JP': 1.45, 'Noto Serif CJK SC': 1.45, 'MS Mincho': 1.0, SimSun: 1.0 };
 
 /** Code points a TrueType font's cmap covers (to decide whether embedding it can render the text). */
 /** Text without the tatweels that stretch its words; a tatweel standing alone between spaces is a dash
@@ -498,6 +522,105 @@ function findRules(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][]
   return out;
 }
 
+/** A thin horizontal stroke (a line drawn, or a filled strip under 3 pt high) or a filled rectangle the page draws,
+ *  with its colour (page coordinates, y up). */
+type Stroke = { x0: number; x1: number; y0: number; y1: number; color: string; rect?: boolean; used?: boolean };
+function findStrokes(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][] }): Stroke[] {
+  const { OPS } = pdfjs;
+  const mul = (m: number[], n: number[]) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+  const strokes = new Set([OPS.stroke, OPS.closeStroke]), fills = new Set([OPS.fill, OPS.eoFill]), both = new Set([OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+  let ctm = [1, 0, 0, 1, 0, 0], fill = '#000000', stroke = '#000000', lw = 1; const st: [number[], string, string, number][] = []; const out: Stroke[] = [];
+  const hex = (c: unknown) => (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.slice(1).toUpperCase() : '000000');
+  for (let i = 0; i < ol.fnArray.length; i++) {
+    const fn = ol.fnArray[i], a = ol.argsArray[i] as unknown[];
+    if (fn === OPS.save) st.push([ctm, fill, stroke, lw]); else if (fn === OPS.restore) { const s = st.pop(); if (s) [ctm, fill, stroke, lw] = s; }
+    else if (fn === OPS.transform) ctm = mul(ctm, a as number[]);
+    else if (fn === OPS.setFillRGBColor) fill = hex(a[0]); else if (fn === OPS.setStrokeRGBColor) stroke = hex(a[0]); else if (fn === OPS.setLineWidth) lw = +(a[0] as number) || 0;
+    else if (fn === OPS.paintFormXObjectBegin) { st.push([ctm, fill, stroke, lw]); if (Array.isArray(a[0])) ctm = mul(ctm, a[0] as number[]); }
+    else if (fn === OPS.paintFormXObjectEnd) { const s = st.pop(); if (s) [ctm, fill, stroke, lw] = s; }
+    else if (fn === OPS.constructPath) {
+      const op = a[0] as number; const mm = a[2] as number[] | null; if (!mm) continue;
+      const pts = [[mm[0], mm[1]], [mm[2], mm[1]], [mm[0], mm[3]], [mm[2], mm[3]]].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]]);
+      const x0 = Math.min(...pts.map((p) => p[0])), x1 = Math.max(...pts.map((p) => p[0])); let y0 = Math.min(...pts.map((p) => p[1])), y1 = Math.max(...pts.map((p) => p[1]));
+      if (x1 - x0 < 3) continue;
+      const stroked = strokes.has(op) || both.has(op);
+      if (stroked) { const th = Math.max(0.1, lw * Math.hypot(ctm[2], ctm[3])); y0 -= th / 2; y1 += th / 2; }
+      const h = y1 - y0;
+      if (h <= 3 && (stroked || fills.has(op))) out.push({ x0, x1, y0, y1, color: strokes.has(op) ? stroke : fill });
+      else if (fills.has(op) && h > 3 && h < 40 && fill !== 'FFFFFF') out.push({ x0, x1, y0, y1, color: fill, rect: true });
+    }
+  }
+  return out;
+}
+/** For a document to edit: the page's drawing that belongs to its words. A thin stroke just under words is their
+ *  underline (a link's too), one through their middle strikes them, a filled box hugging them is their shading — each
+ *  put on the pieces (cut at word boundaries where it covers only some) and taken out of the page's drawing. What is
+ *  left of the thin strokes (rules across the text, the notes' separator) is returned for the paragraphs. */
+function decorate(pieces: Piece[], strokes: Stroke[]): Stroke[] {
+  const rest: Stroke[] = []; const done = new Set<string>();
+  const words = () => pieces.filter((p) => p.text.trim() && p.text !== ' ' && !p.art && !p.pic);
+  const erase = (s: Stroke) => eraseNow.push({ l: s.x0 - 0.5, r: s.x1 + 0.5, top: s.y1 + 0.6, bottom: s.y0 - 0.6 });
+  const cut = (p: Piece, x0: number, x1: number): Piece | null => {
+    if (p.l >= x0 - p.h * 0.3 && p.r <= x1 + p.h * 0.3) return p;
+    const n = p.text.length; const at = (x: number) => { const raw = Math.round(((x - p.l) / Math.max(1e-6, p.r - p.l)) * n); let best = raw, d = Infinity; for (let j = 0; j <= n; j++) if ((j === 0 || j === n || /\s/.test(p.text[j - 1]) || /\s/.test(p.text[j])) && Math.abs(j - raw) < d) { d = Math.abs(j - raw); best = j; } return Math.max(0, Math.min(n, best)); };
+    const a = p.l < x0 - p.h * 0.3 ? at(x0) : 0, b = p.r > x1 + p.h * 0.3 ? at(x1) : n;
+    if (b <= a || !p.text.slice(a, b).trim()) return null;
+    const xAt = (j: number) => p.l + ((p.r - p.l) * j) / n;
+    const part = (i: number, j: number): Piece => { const t = p.text.slice(i, j); const lead = t.length - t.trimStart().length, trail = t.length - t.trimEnd().length; return { ...p, text: t.trim(), l: xAt(i + lead), r: xAt(j - trail), codes: undefined }; };
+    const mid = part(a, b); const parts = [a > 0 ? part(0, a) : null, mid, b < n ? part(b, n) : null].filter((x): x is Piece => !!x && !!x.text);
+    parts[0].codes = p.codes;
+    pieces.splice(pieces.indexOf(p), 1, ...parts);
+    return mid;
+  };
+  for (const s of strokes) {
+    const key = `${s.x0.toFixed(1)}|${s.x1.toFixed(1)}|${s.y0.toFixed(1)}|${s.y1.toFixed(1)}|${s.rect ? 1 : 0}`;
+    if (done.has(key)) { erase(s); continue; }
+    const cy = (s.y0 + s.y1) / 2; const sw = s.x1 - s.x0;
+    const over = (p: Piece) => Math.min(p.r, s.x1) - Math.max(p.l, s.x0);
+    let kind: 'u' | 'strike' | 'shd' | null = null; let hit: Piece[] = [];
+    if (s.rect) {
+      hit = words().filter((p) => over(p) > 0.5 && s.y0 <= p.y - p.h * 0.1 && s.y1 >= p.y + p.h * 0.6 && s.y1 - s.y0 <= p.h * 2.2);
+      if (hit.length && hit.every((p) => Math.abs(p.y - hit[0].y) < hit[0].h * 0.3)) kind = 'shd'; else hit = [];
+    } else {
+      for (const [k, lo, hi] of [['u', -0.32, 0.06], ['strike', 0.12, 0.5]] as const) {
+        const h0 = words().filter((p) => over(p) > 0.5 && (cy - p.y) / p.h >= lo && (cy - p.y) / p.h <= hi);
+        if (h0.length && h0.every((p) => Math.abs(p.y - h0[0].y) < h0[0].h * 0.3)) { kind = k; hit = h0; break; }
+      }
+    }
+    if (!kind) { if (!s.rect) rest.push(s); continue; }
+    const h = Math.max(...hit.map((p) => p.h));
+    const covered = hit.reduce((t, p) => t + Math.max(0, over(p)), 0);
+    const lo = Math.min(...hit.map((p) => Math.max(p.l, s.x0))), hi = Math.max(...hit.map((p) => Math.min(p.r, s.x1)));
+    // (A stroke much wider than the words over it — a rule under a title — is the paragraph's, not the words'.)
+    if (covered < sw * 0.5 || sw > hi - lo + h * (s.rect ? 1.5 : 1)) { if (!s.rect) rest.push(s); continue; }
+    done.add(key);
+    for (const p of hit) { const m = cut(p, s.x0, s.x1); if (!m) continue; if (kind === 'u') m.u = s.color; else if (kind === 'strike') m.strike = true; else m.shd = s.color; }
+    erase(s);
+  }
+  return rest;
+}
+/** For a document to edit: a rule across the text just under (or over) a paragraph is that paragraph's border
+ *  (bottom or top), out of the page's drawing. Returns whether any was taken. */
+function ruleBorders(blocks: Block[], rules: Stroke[], L: number, R: number): void {
+  for (const s of rules) {
+    if (s.used || s.x1 - s.x0 < Math.max(40, (R - L) * 0.45) || s.x0 > R || s.x1 < L) continue;
+    const cy = (s.y0 + s.y1) / 2;
+    // (A table's own rules are its borders.)
+    if (blocks.some((b) => b.kind === 'grid' && cy <= b.spec.ys[0] + 2 && cy >= b.spec.ys[b.spec.ys.length - 1] - 2 && s.x1 > b.spec.xs[0] - 4 && s.x0 < b.spec.xs[b.spec.xs.length - 1] + 4)) continue; let best: { b: Para; side: 'top' | 'bottom'; d: number } | null = null;
+    for (const b of blocks) {
+      if (b.kind !== 'p' || b.base0 === undefined || !b.runs.some((r) => r.text.trim())) continue;
+      const b1 = b.base1 ?? b.base0;
+      const dB = b1 - cy, dT = cy - (b.base0 + b.size * 0.8);
+      if (dB > 0 && dB < b.size * 1.5 && (!best || dB < best.d)) best = { b, side: 'bottom', d: dB };
+      if (dT > -b.size * 0.1 && dT < b.size * 1.5 && (!best || dT < best.d)) best = { b, side: 'top', d: dT };
+    }
+    if (!best) continue;
+    const edge = { sz: Math.max(2, Math.min(96, Math.round((s.y1 - s.y0) * 8))), color: s.color, space: Math.max(0, Math.min(31, Math.round(best.side === 'bottom' ? best.d - best.b.size * 0.25 : best.d))) };
+    (best.b.bdr ??= {})[best.side] = edge; s.used = true;
+    eraseNow.push({ l: s.x0 - 0.5, r: s.x1 + 0.5, top: s.y1 + 0.6, bottom: s.y0 - 0.6 });
+  }
+}
+
 /** The page's bullets drawn as shapes: small, about as wide as tall (extents, y up). */
 let eraseNow: Box[] = [];
 /** Whether Word numbers the footnotes from 1 on each page (the page's own numbers) or on through the document. */
@@ -550,10 +673,10 @@ function imageBoxes(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][
   return out;
 }
 const refOf = (page: import('pdfjs-dist').PDFPageProxy): string | undefined => { const r = (page as unknown as { ref?: { num: number; gen: number } }).ref; return r ? `${r.num}_${r.gen}` : undefined; };
-function findDots(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][] }): Box[] {
+function findDots(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][] }): (Box & { kind?: 'ring' | 'square' | 'dot' })[] {
   const { OPS } = pdfjs;
   const mul = (m: number[], n: number[]) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
-  let ctm = [1, 0, 0, 1, 0, 0]; const st: number[][] = []; const out: Box[] = [];
+  let ctm = [1, 0, 0, 1, 0, 0]; const st: number[][] = []; const out: (Box & { kind?: 'ring' | 'square' | 'dot' })[] = [];
   for (let i = 0; i < ol.fnArray.length; i++) {
     const fn = ol.fnArray[i], a = ol.argsArray[i] as unknown[];
     if (fn === OPS.save) st.push(ctm); else if (fn === OPS.restore) ctm = st.pop() ?? ctm;
@@ -565,7 +688,12 @@ function findDots(pdfjs: PdfJs, ol: { fnArray: number[]; argsArray: unknown[][] 
       const pts = [[mm[0], mm[1]], [mm[2], mm[1]], [mm[0], mm[3]], [mm[2], mm[3]]].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]]);
       const l = Math.min(...pts.map((q) => q[0])), r = Math.max(...pts.map((q) => q[0])), bottom = Math.min(...pts.map((q) => q[1])), top = Math.max(...pts.map((q) => q[1]));
       const w = r - l, h = top - bottom;
-      if (w >= 1.5 && h >= 1.5 && w <= 7 && h <= 7 && Math.abs(w - h) < Math.max(w, h) * 0.35) out.push({ l, r, top, bottom });
+      if (w >= 1.5 && h >= 1.5 && w <= 7 && h <= 7 && Math.abs(w - h) < Math.max(w, h) * 0.35) {
+        // (Its kind, for the list's mark: a ring drawn only as a stroke, a square of straight sides, else a dot.)
+        const op = a[0] as number; const buf = (a[1] as (Float32Array | null)[] | undefined)?.[0]; let curves = 0;
+        if (buf) for (let k = 0; k < buf.length;) { const o = buf[k++]; if (o === 2) { curves++; k += 6; } else if (o === 3) { curves++; k += 4; } else if (o === 0 || o === 1) k += 2; }
+        out.push({ l, r, top, bottom, kind: op === OPS.stroke || op === OPS.closeStroke ? 'ring' : buf && !curves ? 'square' : 'dot' });
+      }
     } else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
       // (A small picture as a bullet: the image's unit square where the page puts it.)
       const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]]);
@@ -869,7 +997,12 @@ function buildLines(all: Piece[]): Line[] {
     const base = median(normal.map((p) => p.y));
     const size = median(normal.flatMap((p) => Array(Math.max(1, Math.round(p.text.length))).fill(p.h)));
     const text = g.map((p) => p.text).join('');
-    return { pieces: g, base, size, l: Math.min(...ext.map((p) => p.l)), r: Math.max(...ext.map((p) => p.r)), rtl: isRtlText(text) };
+    const rtl = isRtlText(text);
+    let l = Math.min(...ext.map((p) => p.l)), r = Math.max(...ext.map((p) => p.r));
+    // (Save a list's bullet kept as drawn — a symbol font's glyph — before the line's first word: the line starts
+    // there, where the page has its mark.)
+    if (ext0.length) for (const p of g) if (p.art && !p.pic?.w && p.r - p.l < size * 0.9 && (rtl ? p.l >= r - 0.5 && p.l - r < size * 3 : p.r <= l + 0.5 && l - p.r < size * 3)) { if (rtl) r = Math.max(r, p.r); else l = Math.min(l, p.l); }
+    return { pieces: g, base, size, l, r, rtl };
   }).sort((a, b) => b.base - a.base);
 }
 
@@ -1075,7 +1208,7 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
       const cut = Math.min(trim, /\u0640$/.test(lastText) ? lead : lead - 1);
       if (cut > 0) text = text.slice(cut);
     }
-    const look: Omit<Run, 'text'> = { ...(p.link ? { link: p.link } : {}), font: f.family, fk: p.font, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
+    const look: Omit<Run, 'text'> = { ...(p.link ? { link: p.link } : {}), ...(p.u ? { u: p.u } : {}), ...(p.strike ? { strike: true } : {}), ...(p.shd ? { shd: p.shd } : {}), font: f.family, fk: p.font, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
     // (Marks the page colours apart from their letters: the text cut there, each part a run in its colour.)
     const parts = p.tints ? tintParts(text, p.tints, look.color) : null;
     if (parts) text = parts[0].text;
@@ -1087,13 +1220,40 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     if (blank !== undefined && last) { last.text = last.text.replace(/\s+$/, ''); runs.push({ ...look, sup: false, raise: undefined, text: ' ', spacing: Math.max(0, blank * 0.92 - p.h * 0.3) }); }
     if (space && last?.art) text = ` ${text}`;
     else if (space && last) last.text += ' ';
-    if (last && (!last.spacing || (tracked && last.spacing === look.spacing && last.text !== ' ')) && !last.art && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs && last.link === look.link) last.text += text;
+    if (last && (!last.spacing || (tracked && last.spacing === look.spacing && last.text !== ' ')) && !last.art && blank === undefined && last.font === look.font && last.size === look.size && last.bold === look.bold && last.italic === look.italic && last.color === look.color && last.sup === look.sup && last.rtl === look.rtl && last.cs === look.cs && last.link === look.link && last.u === look.u && last.strike === look.strike && last.shd === look.shd) last.text += text;
     else if (space && last && last.text.endsWith(' ')) runs.push({ ...look, text });
     else runs.push({ ...look, text });
     rest();
   }
   for (const r of runs) r.text = r.text.replace(/\s+(?=[\u064B-\u065F\u0670])/g, '').replace(/([\u060C\u061B\u061F.,:;!)(»«\]\[]+)([\u064B-\u065F\u0670]+)/g, '$2$1').replace(/\s{2,}/g, ' ');
   return fitSpaces(runs.filter((r) => r.text.length || r.art), pieces, fonts);
+}
+
+/** For a document to edit: a paragraph's runs as a word processor writes them — a space is a plain space at its
+ *  neighbours' size (not the narrowed space that holds an exact line's width: see fitSpaces), the letter scale the
+ *  lines were measured at one for the paragraph, and neighbouring runs of one look one run: a run ends only where the
+ *  look, a link, a note mark, a picture, a tab or a line break comes. */
+export function plainRuns(runs: Run[]): Run[] {
+  const text = runs.filter((r) => r.text.trim() && !r.art);
+  // (One letter scale for the paragraph: the one most of its letters were set at, for runs within a few per cent of it.)
+  const csW = new Map<number, number>(); for (const r of text) csW.set(r.cs ?? 100, (csW.get(r.cs ?? 100) ?? 0) + r.text.length);
+  const cs = [...csW].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 100;
+  const out: Run[] = [];
+  const same = (a: Run, b: Run) => a.font === b.font && a.size === b.size && a.bold === b.bold && a.italic === b.italic && a.color === b.color && a.rtl === b.rtl && a.sup === b.sup && a.raise === b.raise && a.link === b.link && a.u === b.u && a.strike === b.strike && a.shd === b.shd && (a.spacing ?? 0) === (b.spacing ?? 0) && (a.cs ?? 100) === (b.cs ?? 100);
+  runs.forEach((r0, i) => {
+    let r = r0;
+    if (!r.art && r.cs !== cs && Math.abs((r.cs ?? 100) - cs) <= 6) r = { ...r, cs: cs === 100 ? undefined : cs };
+    // (A space between words takes its neighbours' look: the one before, else the one after.)
+    if (!r.art && r.text && !r.text.trim() && r.note === undefined && !r.spacing) {
+      const nb = [out[out.length - 1], runs[i + 1]].find((n) => n && !n.art && n.text.trim() && n.note === undefined);
+      if (nb) r = { ...r, font: nb.font, size: nb.size, bold: nb.bold, italic: nb.italic, color: nb.color, rtl: nb.rtl, sup: nb.sup, raise: nb.raise, cs: nb.cs, link: r.link ?? nb.link, u: r.u === undefined ? undefined : nb.u, strike: r.strike && nb.strike, shd: r.shd === undefined ? undefined : nb.shd };
+    }
+    const last = out[out.length - 1];
+    if (last && !last.art && !r.art && last.note === undefined && r.note === undefined && !r.br && r.tab === undefined && !r.lj && same(last, r)) {
+      out[out.length - 1] = { ...last, text: last.text + r.text, ...(last.kText !== undefined || r.kText !== undefined ? { kText: (last.kText ?? last.text) + (r.kText ?? r.text) } : {}) };
+    } else out.push(r);
+  });
+  return out;
 }
 
 /** A line whose words, set with the font's own space between them, are wider than the page sets the line (Word
@@ -1227,7 +1387,23 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       if (align === 'center' || ls.length === 1) { indStart = 0; indEnd = 0; firstLine = Math.max(0, startGap(first)); }
       align = 'start';
     }
-    blocks.push({ kind: 'p', runs, align, kashida, rtl, indStart, indEnd, firstLine, before, pitch, size, tabs, base0: first.base });
+    // (Where the text after a list's mark starts on the page — its indent in the list — read off the first line's pieces.)
+    let lead: number | undefined;
+    if (edit) {
+      const ps = first.pieces.filter((p) => (p.text.trim() && p.text !== '\u2009') || p.art).sort((a, b) => (first.rtl ? b.r - a.r : a.l - b.l));
+      const p0 = ps[0]; const edgeOf = (x: number) => (first.rtl ? R - x : x - L);
+      const solo = /^\s*(?:[\u2022\u25e6\u25aa\u25ab\u25a0\u25cf\u25cb\u2023\u2219\u00b7\u2043\u2013\u2014*\-\uf0b7\uf0a7\uf0d8o]|\(?(?:[0-9]{1,3}|[a-zA-Z]|[ivxIVX]{1,4}|[\u0621-\u064a]|[\u0660-\u0669]{1,3})[.)]|\([0-9a-zA-Z\u0621-\u064a]{1,3}\)|[0-9]{1,3})\s*$/;
+      if (p0 && ps[1] && ((p0.art && p0.r - p0.l < first.size * 0.9) || solo.test(p0.text))) lead = edgeOf(first.rtl ? ps[1].r : ps[1].l);
+      else if (p0 && !p0.art) {
+        const m = /^\s*([\u2022\u25e6\u25aa\u25ab\u25a0\u25cf\u25cb\u2023\u2219\u00b7\u2043\u2013\u2014*\-\uf0b7\uf0a7\uf0d8]|\(?(?:[0-9]{1,3}|[a-zA-Z]|[ivxIVX]{1,4}|[\u0621-\u064a]|[\u0660-\u0669]{1,3})[.)]|\([0-9a-zA-Z\u0621-\u064a]{1,3}\)|[0-9]{1,3})\s+\S/u.exec(p0.text);
+        if (m) {
+          const ns = m[1].replace(/\s/g, '').length; const gl = (p0.codes ?? []).filter((u) => u[1] && u[1].trim()).sort((a, b) => (first.rtl ? b[2] - a[2] : a[2] - b[2]));
+          if (gl.length > ns) lead = edgeOf(first.rtl ? gl[ns][2] + gl[ns][5] * gl[ns][4] : gl[ns][2]);
+          else { const k = m[0].length - 1; const f = k / Math.max(1, p0.text.length); lead = edgeOf(first.rtl ? p0.r - (p0.r - p0.l) * f : p0.l + (p0.r - p0.l) * f); }
+        }
+      }
+    }
+    blocks.push({ kind: 'p', runs, align, kashida, rtl, indStart, indEnd, firstLine, before, pitch, size, tabs, base0: first.base, base1: ls[ls.length - 1].base, lead });
     prevBase = ls[ls.length - 1].base; prevPitch = pitch;
     cur = null;
   };
@@ -1562,7 +1738,7 @@ const END_PUNCT = /[.!?:;…"”’'»)\]؟۔。！？」』]\s*$/;
  *  in the page's text. */
 function realNotes(pg: PageModel): boolean {
   if (!p2d.edit || !pg.notes.length || pg.notes.some((n) => n.num < 0)) return false;
-  const refs = new Set<number>(); for (const b of pg.body) { const rs = b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []; for (const runs of rs) for (const r of runs) if (r.note !== undefined) refs.add(r.note); }
+  const refs = new Set<number>(); for (const b of [...pg.body, ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) { const rs = b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []; for (const runs of rs) for (const r of runs) if (r.note !== undefined) refs.add(r.note); }
   return pg.notes.every((n) => refs.has(n.num));
 }
 function mergeAcrossPages(pages: PageModel[]): void {
@@ -1583,6 +1759,30 @@ function mergeAcrossPages(pages: PageModel[]): void {
     last.runs.push(...first.runs);
     b.body.shift(); b.cont = true;
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D cross-page', k + 1, lt.slice(-30), '|', ft.slice(0, 30));
+  }
+}
+
+/** For a document to edit: where the pages simply ran full — the page's lowest line within a line and a half of the
+ *  lowest the document's pages reach — the text goes on with no page break (Word finds its own pages); a page that ends
+ *  visibly early (a chapter's end) keeps its break. Pages whose margins differ by a little (under 12 pt) take the
+ *  first's, the indents keeping their text where it was: one geometry, no needless section changes. */
+function flowPages(pages: PageModel[]): void {
+  const lows = pages.filter((p) => p.low !== undefined && !p.placed?.length && !p.vert).map((p) => p.low!);
+  if (lows.length < 2) return;
+  const floor = Math.min(...lows);
+  for (let k = 0; k + 1 < pages.length; k++) {
+    const a = pages[k], b = pages[k + 1];
+    if (a.low === undefined || a.placed?.length || b.placed?.length || a.vert || b.vert || a.w !== b.w || a.h !== b.h) continue;
+    if (a.low - floor <= 1.5 * (a.lowPitch ?? 14)) b.cont = true;
+  }
+  for (let k = 1; k < pages.length; k++) {
+    const a = pages[k - 1], b = pages[k];
+    if (!b.cont || a.w !== b.w || a.h !== b.h) continue;
+    const dl = b.m.left - a.m.left, dr = b.m.right - a.m.right;
+    if (Math.abs(dl) >= 12 || Math.abs(dr) >= 12) continue;
+    const sl = (b.m.slack?.[0] ?? 0) + dl, sr = (b.m.slack?.[1] ?? 0) + dr;
+    if (sl < -0.5 || sr < -0.5) continue;
+    b.m = { ...b.m, left: a.m.left, right: a.m.right, top: a.m.top, bottom: Math.min(a.m.bottom, b.m.bottom), slack: [sl, sr] };
   }
 }
 
@@ -1672,21 +1872,31 @@ function structure(pages: PageModel[], outline: { title: string; depth: number; 
   for (const c of cands) c.b.heading = c.b === title ? 0 : Math.min(3, ranked.indexOf(c.key) + 1);
   // The outline, where it names a heading, says its level.
   if (outline.length) {
-    const want = new Map<string, number>(); for (const o of outline) { const f = fold(o.title); if (f && !want.has(f)) want.set(f, Math.min(3, o.depth)); }
+    const want = new Map<string, number>(); for (const o of outline) { const f = fold(o.title); if (f && !want.has(f)) want.set(f, o.depth); }
     const minDepth = Math.min(...outline.map((o) => o.depth));
-    for (const pg of pages) for (const bs of flowOf(pg)) for (const b of bs) if (b.kind === 'p' && b.heading !== 0) { const d = want.get(fold(textOf(b))); if (d !== undefined && textOf(b).length <= 200) b.heading = Math.min(3, d - minDepth + 1); }
+    // (An outline whose one top entry is on the first page and holds all the others is the document's title over its
+    // headings: that entry is the Title, the levels under it Heading 1, 2, 3.)
+    const tops = outline.filter((o) => o.depth === minDepth);
+    const titleKey = tops.length === 1 && outline.length > 1 && tops[0].page === 0 ? fold(tops[0].title) : null;
+    if (titleKey) for (const pg of pages) for (const bs of flowOf(pg)) for (const b of bs) if (b.kind === 'p' && b.heading === 0 && fold(textOf(b)) !== titleKey) b.heading = 1;
+    for (const pg of pages) for (const bs of flowOf(pg)) for (const b of bs) if (b.kind === 'p') {
+      const k = fold(textOf(b)); const d = want.get(k); if (d === undefined || textOf(b).length > 200) continue;
+      if (titleKey && k === titleKey) b.heading = 0; else if (b.heading !== 0 || titleKey) b.heading = Math.max(1, Math.min(3, d - minDepth + (titleKey ? 0 : 1)));
+    }
   }
   // ---- lists
   type Item = { b: Para; kind: 'bullet' | 'number'; fmt: string; text: string; start: number; at: number; mark: string; font?: string };
   const markOf = (b: Para): Item | null => {
     const i = b.runs.findIndex((r) => r.text.trim() || r.art); if (i < 0) return null;
     const r = b.runs[i];
-    if (r.art) { if (r.art.r - r.art.l > b.size * 0.9) return null; b.runs.splice(i, 1); return { b, kind: 'bullet', fmt: 'bullet', text: '•', start: 1, at: 0, mark: '' }; }
+    // (A bullet kept as drawn — a symbol font's glyph — is the list's mark: the glyph it stands for, Word's own.)
+    const glyph = (c: string) => ({ '\uf0b7': '•', '\uf0a7': '▪', '\uf0d8': '➢', '\uf06f': '◦', o: '◦', '\uf0fc': '✓', '\u25cf': '•', '\u25cb': '◦', '\u25a0': '▪', '\u25aa': '▪', '\u2043': '–' } as Record<string, string>)[c.trim()] ?? (/^[•◦▪▫‣∙·–—]$/.test(c.trim()) ? c.trim() : '•');
+    let it: Item | null = null; let m: RegExpExecArray | null = null;
+    if (r.art) { if (r.art.r - r.art.l > b.size * 0.9) return null; b.runs.splice(i, 1); it = { b, kind: 'bullet', fmt: 'bullet', text: glyph(r.art.was ?? ''), start: 1, at: 0, mark: '' }; }
     // (A tab between the mark and the text counts as the space after the mark.)
-    const t = b.runs.slice(i).map((x, k) => (k > 0 && x.tab !== undefined ? '\t' : '') + x.text).join('');
-    let m = /^\s*([•◦▪▫■●○‣∙·⁃–—*\-])(?:\s+|$)/.exec(t);
-    let it: Item | null = null;
-    if (m) it = { b, kind: 'bullet', fmt: 'bullet', text: /[-]/.test(m[1]) ? '•' : m[1] === '-' ? '–' : m[1], start: 1, at: 0, mark: m[0] };
+    const t = it ? '' : b.runs.slice(i).map((x, k) => (k > 0 && x.tab !== undefined ? '\t' : '') + x.text).join('');
+    if (it) { /* a drawn bullet */ }
+    else if ((m = /^\s*([•◦▪▫■●○‣∙·⁃–—*\-\uf0b7\uf0a7\uf0d8o])(?:\s+)/.exec(t)) && (m[1] !== 'o' || /\t/.test(m[0]))) it = { b, kind: 'bullet', fmt: 'bullet', text: m[1] === '-' || m[1] === '–' || m[1] === '—' || m[1] === '⁃' ? '–' : m[1] === '*' ? '•' : glyph(m[1]), start: 1, at: 0, mark: m[0] };
     else if ((m = /^\s*(\()?([0-9]{1,3}|[٠-٩]{1,3}|[a-z]|[A-Z]|[ivx]{1,4}|[IVX]{1,4}|[ء-ي])([.)])?(?:\s*[\-–]\s|\s+)/u.exec(t)) && (m[3] || m[1] || /[\-–]\s$/.test(m[0]))) {
       const v = m[2]; let fmt = 'decimal', start = 1;
       if (/^[0-9]+$/.test(v)) start = +v; else if (/^[٠-٩]+$/.test(v)) { fmt = 'hindiNumbers'; start = +v.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)); }
@@ -1706,7 +1916,7 @@ function structure(pages: PageModel[], outline: { title: string; depth: number; 
     return it;
   };
   for (const pg of pages) for (const bs of flowOf(pg)) {
-    let group: Item[] = [];
+    let group: Item[] = []; let slackStart = 0;
     const close = () => {
       if (!group.length) return;
       // Levels by where the marks stand; a mark of another kind at the first level starts another list.
@@ -1717,10 +1927,14 @@ function structure(pages: PageModel[], outline: { title: string; depth: number; 
         const base = Math.min(...items.map(lvlOf));
         const levels: ListDef = [];
         for (const g of items) {
-          const l = lvlOf(g) - base; const text = g.b.indStart; const hang = Math.max(g.b.size * 1.1, text - g.at);
-          if (!levels[l]) levels[l] = { fmt: g.fmt, text: g.kind === 'bullet' ? g.text : g.text.replace('%1', `%${l + 1}`), start: g.start, left: Math.round(text * 20), hanging: Math.round(hang * 20) };
+          // (Where the page has the text after the mark, and the mark: the level's indent and hanging, measured from the
+          // margin — the text's edge and the room the page's margins leave before it.)
+          const l = lvlOf(g) - base; const text = g.b.lead !== undefined && g.b.lead > g.at + 1 ? g.b.lead : Math.max(g.b.indStart, g.at + g.b.size * 1.1); const hang = text - g.at;
+          const tw = Math.round((text + slackStart) * 20), hw = Math.round(hang * 20);
+          if (!levels[l]) levels[l] = { fmt: g.fmt, text: g.kind === 'bullet' ? g.text : g.text.replace('%1', `%${l + 1}`), start: g.start, left: tw, hanging: hw };
           g.b.list = { id: lists.length + 1, lvl: l };
-          g.b.indStart = g.at + hang; g.b.firstLine = -hang; g.b.tabs = undefined;
+          g.b.indStart = text; g.b.firstLine = -hang; g.b.tabs = undefined;
+          g.b.listInd = Math.abs(levels[l].left - tw) <= 20 && Math.abs(levels[l].hanging - hw) <= 20 && g.b.indEnd === 0;
         }
         for (let l = 0; l < levels.length; l++) levels[l] ??= { fmt: 'bullet', text: '•', start: 1, left: 720 * (l + 1), hanging: 360 };
         lists.push(levels);
@@ -1737,6 +1951,8 @@ function structure(pages: PageModel[], outline: { title: string; depth: number; 
       if (counted.has(b)) { const r0 = b.runs.findIndex((x) => x.text.trim()); const m = /^\s*([0-9]{1,3})\s+/.exec(b.runs[r0].text); if (m && !LIST_MARK.test(textOf(b))) b.runs[r0] = { ...b.runs[r0], text: `${m[1]}. ${b.runs[r0].text.slice(m[0].length)}` }; }
       const g = markOf(b);
       if (!g) { close(); continue; }
+      // (The room the page's margins leave beyond the text's start edge: see indentOf.)
+      if (!group.length) slackStart = (b.rtl ? pg.m.slack?.[1] : pg.m.slack?.[0]) ?? 0;
       g.at = at; group.push(g);
     }
     close();
@@ -1792,7 +2008,13 @@ function pitchTable(runs: Line[][]): (size: number) => number {
 }
 
 /** A vertical gutter through the middle of the text: page x range [g0, g1], or null. */
+// (A document to edit: failing a gutter down the page, a narrow one — TeX's, some 10 pt — down a part of it only: the same
+// empty band on six lines or more one after another, the right column's lines starting at one x and the left one's
+// ending at one x, as set columns do.)
 function findGutter(lines: Line[], W: number): [number, number] | null {
+  return findGutterWide(lines, W) ?? (p2d.edit ? narrowGutter(lines.filter((l) => l.pieces.some((p) => p.text.trim())), W) : null);
+}
+function findGutterWide(lines: Line[], W: number): [number, number] | null {
   const ls = lines.filter((l) => l.pieces.some((p) => p.text.trim()));
   if (ls.length < 8) return null;
   const x0 = Math.floor(W * 0.25), x1 = Math.ceil(W * 0.75);
@@ -1842,6 +2064,57 @@ function findGutter(lines: Line[], W: number): [number, number] | null {
     if (paired >= 0.85) return null;
   }
   return best;
+}
+
+function narrowGutter(ls: Line[], W: number): [number, number] | null {
+  // (Not on a right-to-left page: verse sets its halves that way, and a long line's last words would be cut off.)
+  if (ls.filter((l) => l.rtl).length > ls.length / 3) return null;
+  // (The two columns' lines need not share baselines: a line may hold one column's text, or both.)
+  const ink = ls.map((l) => l.pieces.filter((p) => p.text.trim() && p.text !== '\u2009'));
+  // Candidate starts of a right column: x where three lines or more start a piece in the middle half of the page.
+  const starts: number[] = []; for (const ps of ink) for (const p of ps) if (p.l > W * 0.3 && p.l < W * 0.7 && !ps.some((q) => q !== p && q.r > p.l - 6 && q.l < p.l - 0.5)) starts.push(p.l);
+  starts.sort((x, y) => x - y);
+  let best: [number, number] | null = null; let bestN = 0;
+  for (let k = 0; k < starts.length; k++) {
+    const x = starts[k]; if (k > 0 && x - starts[k - 1] < 1.5) continue;
+    if (starts.filter((v) => Math.abs(v - x) <= 1.5).length < 3) continue;
+    // Runs of lines one after another that leave [x - 6, x] empty.
+    let i = 0;
+    while (i < ink.length) {
+      if (ink[i].some((p) => p.l < x - 0.5 && p.r > x - 6)) { i++; continue; }
+      let j = i; while (j < ink.length && !ink[j].some((p) => p.l < x - 0.5 && p.r > x - 6)) j++;
+      const run = ink.slice(i, j);
+      const rights = run.filter((ps) => ps.some((p) => Math.abs(p.l - x) <= 1.5)).length;
+      const ends = run.map((ps) => Math.max(-Infinity, ...ps.filter((p) => p.r <= x - 6).map((p) => p.r))).filter((e) => e > x - 40);
+      const top = ends.length ? Math.max(...ends) : -Infinity; const flush = ends.filter((e) => top - e <= 1.5).length;
+      if (j - i >= 6 && rights >= 3 && flush >= 3 && flush >= ends.length * 0.5 && j - i > bestN) { best = [top, x]; bestN = j - i; }
+      i = j;
+    }
+  }
+  return best;
+}
+
+/** A page's notes, split at their numbers (a table or verse belongs to the note it follows). */
+function splitNotes(blocks: Block[]): Note[] {
+  const notes: Note[] = [];
+  for (const b of blocks) {
+    if (b.kind !== 'p') { if (notes.length) notes[notes.length - 1].paras.push(b); else notes.push({ num: -1, paras: [b] }); continue; }
+    const first = b.runs[0];
+    const m = first && (/^\s*[(（]?([0-9٠-٩۰-۹]+)[)）]?\s*/.exec(first.text));
+    if (m) {
+      first.text = first.text.slice(m[0].length);
+      if (!first.text) b.runs.shift();
+      notes.push({ num: toInt(m[1]), paras: [b] });
+    } else if (notes.length) notes[notes.length - 1].paras.push(b);
+    else notes.push({ num: -1, paras: [b] });
+  }
+  return notes;
+}
+/** Note references in blocks (small raised numbers that name a note of the page); whether every note is referenced. */
+function markNoteRefs(blocks: Block[], notes: Note[]): boolean {
+  const nums = new Set(notes.map((n) => n.num)); const refs = new Set<number>();
+  for (const b of blocks) for (const runs of b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []) for (const r of runs) { const m = r.sup && DIGITS.exec(r.text); if (m && nums.has(toInt(m[1]))) { r.note = toInt(m[1]); refs.add(r.note); } }
+  return notes.length > 0 && notes.every((n) => n.num >= 0 && refs.has(n.num));
 }
 
 /** Text boxes scattered over a designed page (a worksheet, a slide): lines cut where a wide gap separates
@@ -2456,7 +2729,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D art', f.family, pua, latinArt, foreign, JSON.stringify(p.text.slice(0, 40)));
     // (Its place stays taken: a stand-in that sets nothing keeps the line's extent and its gaps true.)
-    keepFonts.add(p.font); if (p.drawnAs) keepFonts.add(p.drawnAs); pieces[i] = { ...p, text: '\uFFFC', art: true, codes: undefined };
+    keepFonts.add(p.font); if (p.drawnAs) keepFonts.add(p.drawnAs); pieces[i] = { ...p, text: '\uFFFC', art: true, was: p.text, codes: undefined };
   }
   const boxes = turnedBoxes(turnedItems, fonts, H);
   // Vertical writing (tategaki): its columns are read as paragraphs, set in a section whose text runs top
@@ -2521,6 +2794,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     }
   }
   eraseNow = []; figNow = [];
+  // (For a document to edit: underlines, strikes and shading go onto their words; the rules left over may be paragraphs' borders.)
+  const leftRules = p2d.edit ? decorate(pieces, findStrokes(pdfjs, ol)) : [];
   if (p2d.edit) for (const d of findDots(pdfjs, ol)) {
     const cy = (d.top + d.bottom) / 2;
     const band = pieces.filter((p) => p.text.trim() && cy > p.y - p.h * 0.1 && cy < p.y + p.h * 0.8);
@@ -2529,7 +2804,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     if (next && (band.some((p) => p.r <= d.l + 0.5 && d.l - p.r < next!.h * 6) || isRtlText(next.text))) next = undefined;
     if (!next) { next = band.filter((p) => p.r <= d.l + 0.5 && d.l - p.r < p.h * 2.5).sort((a, b) => b.r - a.r)[0]; if (next && (!isRtlText(next.text) || band.some((p) => p.l >= d.r - 0.5 && p.l - d.r < next!.h * 6))) next = undefined; }
     if (!next || d.r - d.l > next.h * 0.6) continue;
-    pieces.push({ text: '\u2022', l: d.l, r: d.r, y: next.y, h: next.h, font: next.font, color: next.color, bold: false });
+    pieces.push({ text: d.kind === 'ring' ? '\u25e6' : d.kind === 'square' ? '\u25aa' : '\u2022', l: d.l, r: d.r, y: next.y, h: next.h, font: next.font, color: next.color, bold: false });
     eraseNow.push({ l: d.l - 0.5, r: d.r + 0.5, top: d.top + 0.5, bottom: d.bottom - 0.5 });
   }
   const arts = pieces.filter((p) => p.art);
@@ -2626,6 +2901,22 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const ruledLines = pullGrids(body, findShapes(pdfjs, ol, true), W, H).filter((l) => l.grid);
   const ruled = ruledLines.map((l) => l.grid!);
   const inRuled = (l: Line) => ruled.some((g) => l.base < g.ys[0] + 1 && l.base > g.ys[g.ys.length - 1] - 1 && l.l > g.xs[0] - 2 && l.r < g.xs[g.xs.length - 1] + 2);
+  const findNoteRule = () => {
+    const rules = findRules(pdfjs, ol);
+    const Lb = median(body.map((l) => l.l)), Rb = median(body.map((l) => l.r));
+    return rules.filter((r) => r.y < H * 0.75 && r.y > H * 0.05 && r.x1 - r.x0 < (Rb - Lb) * 0.75)
+      .filter((r) => body.some((l) => l.base < r.y) && body.some((l) => l.base > r.y))
+      // (A border of a ruled table is no footnote rule: the table's lower rows are not footnotes.)
+      .filter((r) => !ruled.some((g) => r.y <= g.ys[0] + 2 && r.y >= g.ys[g.ys.length - 1] - 2 && r.x0 >= g.xs[0] - 2 && r.x1 <= g.xs[g.xs.length - 1] + 2))
+      // (Nor is a line under words — a link's underline: text stands on it, where a footnote rule has room above.)
+      .filter((r) => !body.some((l) => l.base >= r.y - 0.5 && l.base - r.y < l.size * 0.45 && l.l < r.x1 && l.r > r.x0))
+      .sort((a, b) => b.y - a.y)[0];
+  };
+  let early: { rule: { x0: number; x1: number; y: number }; lines: Line[] } | null = null;
+  if (p2d.edit) {
+    const r0 = findNoteRule();
+    if (r0) { const below = body.filter((l) => l.base < r0.y), above = body.filter((l) => l.base >= r0.y); if (below.length && median(below.map((l) => l.size)) < median(above.map((l) => l.size)) * 0.97) { early = { rule: r0, lines: below }; body = above; } }
+  }
   const gutter = findGutter(ruled.length ? body.filter((l) => !inRuled(l)) : body, W);
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D gutter', JSON.stringify(gutter), body.length);
   // A designed page (a worksheet, a slide, an infographic): text in boxes scattered over the page, not a column
@@ -2677,6 +2968,16 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
       if ((i > 0 && !raw[i - 1].full) || (i < raw.length - 1 && !raw[i + 1].full)) continue;
       raw[i] = { full: r.orig };
     }
+    // (A document to edit: lines under the columns that stand on one side only, well below the other side's last line, are
+    // the text after the columns — a short line, code — not a column's.)
+    if (p2d.edit) for (let i = 0; i < raw.length; i++) {
+      const r = raw[i]; if (r.full || !r.left!.length || !r.right!.length) continue;
+      const lowL = Math.min(...r.left!.map((l) => l.base)), lowR = Math.min(...r.right!.map((l) => l.base));
+      const cut = Math.max(lowL, lowR) - 1.5 * median(r.orig!.map((l) => l.size));
+      const tail = r.orig!.filter((l) => l.base < cut); if (!tail.length) continue;
+      r.orig = r.orig!.filter((l) => l.base >= cut); r.left = r.left!.filter((l) => l.base >= cut); r.right = r.right!.filter((l) => l.base >= cut);
+      raw.splice(i + 1, 0, { full: tail });
+    }
     for (let i = raw.length - 1; i > 0; i--) if (raw[i].full && raw[i - 1].full) { raw[i - 1].full!.push(...raw[i].full!); raw.splice(i, 1); }
     // Lines were grouped across the whole page: a big title in one column can have swallowed the other
     // column's lines beside it (as raised pieces). Regroup each column on its own.
@@ -2692,17 +2993,20 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const pitchCol = pitchTable(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])));
     const edgesOf = (ls: Line[]): [number, number] => [Math.min(...ls.map((l) => l.l)), Math.max(...ls.map((l) => l.r))];
     const regions: Region[] = []; let prevBase: number | null = null; let colTop: number | null = null;
+    // (A document to edit: the next region's space above is measured from the foot of what stands above it — a table's
+    // last rule, not its first line.)
+    const endOf = (l: Line) => (p2d.edit && l.grid ? l.grid.ys[l.grid.ys.length - 1] + (1 - BASE) * pitchCol(l.size) : l.base);
     const pageLo = Math.min(...body.map((l) => l.l)), pageHi = Math.max(...body.map((l) => l.r));
     for (const r of raw) {
       if (r.full) {
         regions.push({ cols: [buildBlocks(r.full, fonts, pageLo, pageHi, pitchCol, prevBase)], edges: [[pageLo, pageHi]] });
-        prevBase = r.full[r.full.length - 1].base;
+        prevBase = endOf(r.full[r.full.length - 1]);
       } else {
         const sides = [r.left!, r.right!].filter((x) => x.length);
         if (sides.length < 2) {
           const ls = sides[0] ?? []; if (!ls.length) continue;
           regions.push({ cols: [buildBlocks(ls, fonts, pageLo, pageHi, pitchCol, prevBase)], edges: [[pageLo, pageHi]] });
-          prevBase = ls[ls.length - 1].base; continue;
+          prevBase = endOf(ls[ls.length - 1]); continue;
         }
         const ordered = rtlPage ? [r.right!, r.left!] : [r.left!, r.right!];
         // Columns at the top of the page start where the page's top line starts: each column's first line keeps
@@ -2710,9 +3014,11 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
         let start = prevBase;
         if (start === null && !regions.length) { const t = [...r.left!, ...r.right!].reduce((a, b) => (b.base > a.base ? b : a)); start = t.base + BASE * pitchCol(t.size); colTop = start; }
         regions.push({ cols: ordered.map((ls) => { const e = edgesOf(ls); return buildBlocks(ls, fonts, e[0], e[1], pitchCol, start); }), edges: ordered.map(edgesOf) });
-        prevBase = Math.min(...[...r.left!, ...r.right!].map((l) => l.base));
+        prevBase = Math.min(...[...r.left!, ...r.right!].map(endOf));
       }
     }
+    // (A document to edit: regions of one column one after another are one — a section break only where the columns change.)
+    if (p2d.edit) for (let i = regions.length - 1; i > 0; i--) if (regions[i].cols.length === 1 && regions[i - 1].cols.length === 1) { regions[i - 1].cols[0].push(...regions[i].cols[0]); regions.splice(i, 1); }
     // (Figures, a document to edit: into the region and column they stand in — the first whose text goes on below
     // the figure's top, its column under the figure's middle.)
     if (p2d.edit) for (const f of findFigs(pdfjs, ol, body, W, H, pageLo, pageHi)) {
@@ -2726,6 +3032,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
       if (!put && regions.length) insertFig(regions[regions.length - 1].cols[0], f);
     }
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D regions', JSON.stringify(regions.map((r) => r.cols.map((c) => c.map((b) => (b.kind === 'p' ? b.runs.map((x) => x.text).join('').slice(0, 25) : 'verse'))))));
+    if (p2d.edit) for (const rg of regions) rg.cols.forEach((bs, k) => ruleBorders(bs, leftRules, rg.edges[k][0], rg.edges[k][1]));
     const lowestL = body[body.length - 1];
     const lo = Math.min(...regions.flatMap((r) => r.edges.map((e) => e[0]))), hi = Math.max(...regions.flatMap((r) => r.edges.map((e) => e[1])));
     const furnitureC = pinnedFurniture(header, footer, fonts, H);
@@ -2736,24 +3043,24 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
       bottom: Math.max(8, Math.min(lowestL.base - (1 - BASE) * pitchOf(lowestL.size) - 3 * pitchOf(lowestL.size), ...footer.map((l) => l.base + l.size * 1.2 + 4))),
       left: Math.max(10, lo - 3), right: Math.max(10, W - hi - 3), header: 6, footer: 6, slack: [3, 3] as [number, number],
     };
+    // (A document to edit: the page's notes, found before the columns.)
+    let notesC: Note[] = [], notesRawC: Block[] = [];
+    if (early) {
+      const nl = pullGrids(early.lines, shapesC, W, H);
+      notesRawC = buildBlocks(nl, fonts, pageLo, pageHi, pitchCol, null); notesC = splitNotes(buildBlocks(nl, fonts, pageLo, pageHi, pitchCol, null));
+      if (markNoteRefs(regions.flatMap((r) => r.cols.flat()), notesC)) eraseNow.push({ l: early.rule.x0 - 0.5, r: early.rule.x1 + 0.5, top: early.rule.y + 2, bottom: early.rule.y - 2 });
+    }
     const gridsC = [...new Set(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])).flat().filter((l) => l.grid).map((l) => l.grid!))];
     const picsC = withGraphics ? await renderGraphics(page, 2, keepFonts, gridsC, arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
     if (withGraphics) picsC.push(...await renderRegions(page, 3, formulasC).catch(() => [] as Pic[]));
     page.cleanup();
-    return { ref: refOf(page), vert, w: W, h: H, pics: picsC, boxes, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: [], notesRaw: [], notesBox: null, bodyBottom: 0, m: mC };
+    return { ref: refOf(page), vert, w: W, h: H, pics: picsC, boxes, furniture: furnitureC, regions, header: [], footer: [], body: [], notes: notesC, notesRaw: notesRawC, notesBox: null, bodyBottom: 0, m: mC, low: Math.min(lowestL.base, ...(early ? early.lines.map((l) => l.base) : [])), lowPitch: pitchOf(lowestL.size) };
   }
   // Footnotes: below a short rule in the lower part of the page, in a smaller size.
-  let notesLines: Line[] = [];
-  const rules = findRules(pdfjs, ol);
-  const Lb = median(body.map((l) => l.l)), Rb = median(body.map((l) => l.r));
-  const rule = rules.filter((r) => r.y < H * 0.75 && r.y > H * 0.05 && r.x1 - r.x0 < (Rb - Lb) * 0.75)
-    .filter((r) => body.some((l) => l.base < r.y) && body.some((l) => l.base > r.y))
-    // (A border of a ruled table is no footnote rule: the table's lower rows are not footnotes.)
-    .filter((r) => !ruled.some((g) => r.y <= g.ys[0] + 2 && r.y >= g.ys[g.ys.length - 1] - 2 && r.x0 >= g.xs[0] - 2 && r.x1 <= g.xs[g.xs.length - 1] + 2))
-    // (Nor is a line under words — a link's underline: text stands on it, where a footnote rule has room above.)
-    .filter((r) => !body.some((l) => l.base >= r.y - 0.5 && l.base - r.y < l.size * 0.45 && l.l < r.x1 && l.r > r.x0))
-    .sort((a, b) => b.y - a.y)[0];
-  if (rule) {
+  // (A document to edit finds them before looking for columns — see early — so a page in columns keeps its notes too.)
+  let notesLines: Line[] = early ? early.lines : [];
+  const rule = early ? early.rule : findNoteRule();
+  if (rule && !early) {
     const below = body.filter((l) => l.base < rule.y);
     const above = body.filter((l) => l.base >= rule.y);
     if (below.length && median(below.map((l) => l.size)) < median(above.map((l) => l.size)) * 0.97) { notesLines = below; body = above; }
@@ -2808,24 +3115,18 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   notesLines = pullGrids(notesLines, shapes, W, H);
   const notesRaw = buildBlocks(notesLines, fonts, L, R, pitchOf, body.length ? body[body.length - 1].base : null);
   const notesBox = notesLines.length ? { top: H - (rule ? rule.y : notesLines[0].base + notesLines[0].size), bottom: H - notesLines[notesLines.length - 1].base + notesLines[notesLines.length - 1].size * 0.4, l: L, r: R } : null;
-  const notes: Note[] = [];
-  for (const b of buildBlocks(notesLines, fonts, L, R, pitchOf, null)) {
-    // (A table or verse in a note belongs to the note it follows.)
-    if (b.kind !== 'p') { if (notes.length) notes[notes.length - 1].paras.push(b); else notes.push({ num: -1, paras: [b] }); continue; }
-    const first = b.runs[0];
-    const m = first && (/^\s*[(（]?([0-9٠-٩۰-۹]+)[)）]?\s*/.exec(first.text));
-    if (m) {
-      first.text = first.text.slice(m[0].length);
-      if (!first.text) b.runs.shift();
-      notes.push({ num: toInt(m[1]), paras: [b] });
-    } else if (notes.length) notes[notes.length - 1].paras.push(b);
-    else notes.push({ num: -1, paras: [b] });
-  }
+  const notes = splitNotes(buildBlocks(notesLines, fonts, L, R, pitchOf, null));
   // Note references in the body: small raised numbers.
   const nums = new Set(notes.map((n) => n.num));
   for (const b of bodyBlocks) {
     const rowsRuns = b.kind === 'p' ? [b.runs] : b.rows.flat();
     for (const runs of rowsRuns) for (const r of runs) { const m = r.sup && DIGITS.exec(r.text); if (m && nums.has(toInt(m[1]))) r.note = toInt(m[1]); }
+  }
+  if (p2d.edit) {
+    // (A document to edit: the notes' separator goes when the notes become Word's footnotes, which draw their own.)
+    const refs = new Set<number>(); for (const b of bodyBlocks) for (const runs of b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []) for (const r of runs) if (r.note !== undefined) refs.add(r.note);
+    if (rule && notes.length && notes.every((n) => n.num >= 0 && refs.has(n.num))) eraseNow.push({ l: rule.x0 - 0.5, r: rule.x1 + 0.5, top: rule.y + 2, bottom: rule.y - 2 });
+    ruleBorders(bodyBlocks, leftRules.filter((s) => !rule || Math.abs((s.y0 + s.y1) / 2 - rule.y) > 1 || s.x0 > rule.x1 || s.x1 < rule.x0), L, R);
   }
   // Margins from where the text sits.
   const top = body.length ? body[0] : textLines[0];
@@ -2851,6 +3152,10 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   if (m.top + m.bottom > H - 36) m.bottom = Math.max(8, H - 36 - m.top);
   const grids = [...bodyBlocks, ...notesRaw].filter((b): b is Grid => b.kind === 'grid').map((b) => b.spec);
   lap('layout');
+  const headBlocks = header.length && bodyBlocks.length ? buildBlocks(header, fonts, L, R, pitchOf, null) : [];
+  // The lines taken as the running head, set as the text would have them — for sortFurniture to put back.
+  // (A rule under a title taken for the running head goes with it, should it come back to the text.)
+  if (p2d.edit && headBlocks.length) ruleBorders(headBlocks, leftRules, L, R);
   const pics = withGraphics ? await renderGraphics(page, 2, keepFonts, [...new Set(grids)], arts, !drawsGraphics(pdfjs, ol)).catch(() => [] as Pic[]) : [];
   lap('graphics');
   if (withGraphics) pics.push(...await renderRegions(page, 3, formulas).catch(() => [] as Pic[]));
@@ -2859,10 +3164,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
   const notesAt = notesLines.length && notesRaw[0] ? H - notesLines[0].base - BASE * notesRaw[0].pitch : undefined;
-  // The lines taken as the running head, set as the text would have them — for sortFurniture to put back.
-  const headBlocks = header.length && bodyBlocks.length ? buildBlocks(header, fonts, L, R, pitchOf, null) : [];
   const uncut = headBlocks.length ? { blocks: headBlocks, top: H - header[0].base - BASE * headBlocks[0].pitch, bottom: H - header[header.length - 1].base + (1 - BASE) * headBlocks[headBlocks.length - 1].pitch } : undefined;
-  return { ref: refOf(page), vert, w: W, h: H, pics, boxes, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m, uncut };
+  return { ref: refOf(page), vert, w: W, h: H, pics, boxes, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m, uncut, low: lowest0?.base, lowPitch: lowest0 ? pitchOf(lowest0.size) : undefined };
 }
 
 /* ------------------------------------------------------------------ */
@@ -3101,7 +3404,7 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
   // Page numbers and running heads, across the pages.
   sortFurniture(pages);
   // For a document to edit: a paragraph cut by a page break is one again, and a paragraph's lines are one text.
-  if (p2d.edit) { mergeAcrossPages(pages); structure(pages, outline, writerLists); joinLines(pages); placeLinks(pages); }
+  if (p2d.edit) { mergeAcrossPages(pages); flowPages(pages); structure(pages, outline, writerLists); joinLines(pages); placeLinks(pages); }
   // (Footnotes numbered on from page to page — a later page's first note not 1 — count on in Word too.)
   notesRestart = !pages.some((pg) => realNotes(pg) && Math.min(...pg.notes.map((n) => n.num)) > 1);
   // (Between the passes over the whole book, the screen gets its turn: each is tens of milliseconds on a long one.)
@@ -3135,7 +3438,7 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
   const rtlDoc = nRtl > nBlocks / 2;
   const writer = new W_.DocxWriter({ creator: 'KurokawaReader', title: book.title, rtl: rtlDoc, defaultFont: rtlDoc ? { ascii: 'Times New Roman', cs: 'Traditional Arabic', hAnsi: 'Times New Roman', eastAsia: 'Times New Roman' } : 'Times New Roman' });
   // (A document to edit: its heading styles, and its lists in the order structure() numbered them.)
-  if (p2d.edit) { writer.structure = true; for (const l of writerLists) writer.listOf(l); writerLists.length = 0; }
+  if (p2d.edit) { writer.structure = true; writer.thinSections = true; for (const l of writerLists) writer.listOf(l); writerLists.length = 0; }
 
   const usedChars = new Map<string, Set<number>>();
   const propsOf = (r: Run): import('./docxwrite').RunProps => ({
@@ -3147,6 +3450,7 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
     rtl: r.rtl || undefined,
     // Raised by exactly what the page raises it, at its own size (Word's superscript would shrink it again).
     ...(r.sup ? (r.raise ? { position: Math.round(r.raise * 2) } : { superScript: true }) : {}),
+    ...(r.u ? { underline: r.u } : {}), ...(r.strike ? { strike: true } : {}), ...(r.shd ? { shading: r.shd } : {}),
   });
   const runFor = (r: Run, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>): string => {
     if (r.art) {
@@ -3197,8 +3501,17 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
     const addEnd = b.align === 'end' || b.align === 'center' ? end : 0;
     return { start: Math.round((b.indStart + addStart) * PT), end: Math.round((b.indEnd + addEnd) * PT), ...(b.firstLine >= 0 ? { firstLine: Math.round(b.firstLine * PT) } : { hanging: Math.round(-b.firstLine * PT) }) };
   };
+  // (For a document to edit: a paragraph's lines at the page's pitch, as a multiple of the "single" line of the font its
+  // text is set in — the font the file carries, known once the fonts are built, so the body's paragraphs hold a token
+  // filled in then: see lineFix.)
+  const lineFix: { pitch: number; size: number; font: string }[] = [];
+  const domFont = (runs: Run[]) => { const w = new Map<string, number>(); for (const r of runs) if (!r.art && r.text.trim()) w.set(r.font, (w.get(r.font) ?? 0) + r.text.length); return [...w].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''; };
+  const autoLine = (pitch: number, size: number, runs: Run[], part: InstanceType<typeof W_.Part>): number | string => {
+    if (part !== writer.body) return Math.max(200, Math.min(720, Math.round(240 * pitch / (size * (NAMED_LINE[domFont(runs)] ?? 1.17)))));
+    lineFix.push({ pitch, size, font: domFont(runs) }); return `\u00a7${lineFix.length - 1}\u00a7`;
+  };
   const paraFor = (b0: Para, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>, extra: { before?: number; colBreak?: boolean; frame?: import('./docxwrite').Frame } = {}): string => {
-    const b = ownStretch(b0);
+    const b1 = ownStretch(b0); const b = p2d.edit && !extra.frame ? { ...b1, runs: plainRuns(b1.runs) } : b1;
     return W_.paragraph({
       style: b.heading === undefined ? undefined : b.heading === 0 ? 'Title' : `Heading${b.heading}`,
       outline: b.heading ? b.heading - 1 : undefined,
@@ -3207,12 +3520,14 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
       // (Justified by its spaces even where the page used tatweels: a line ending in a line break is stretched by
       // Word and LibreOffice alike only that way.)
       align: alignOf(b.align),
-      indent: indentOf(b),
+      indent: b.list && b.listInd && b.align !== 'center' && b.align !== 'end' ? undefined : indentOf(b),
       // (For a document to edit, the lines' pitch as a multiple of the type's own line — Word's automatic spacing,
       // which grows with a bigger letter or a picture in the line instead of cutting it off.)
-      spacing: p2d.edit && !extra.frame && b.runs.length ? { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.max(200, Math.min(720, Math.round(240 * b.pitch / (b.size * 1.17)))), lineRule: 'auto' } : { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: 'exact' },
-      tabs: b.tabs?.map((t) => ({ type: t.type, pos: Math.round(t.pos * PT) })),
-      frame: extra.frame,
+      spacing: p2d.edit && !extra.frame && b.runs.length ? { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: autoLine(b.pitch, b.size, b.runs, part), lineRule: 'auto' } : { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: 'exact' },
+      // (Stops are measured from the text's edge less 3 pt; the margin stands further out by the page's slack — see
+      // indentOf: a stop is set from the margin, as Word measures it.)
+      tabs: b.tabs?.map((t) => ({ type: t.type, pos: Math.round((t.pos + (extra.frame ? 0 : (b.rtl ? slackNow[1] : slackNow[0]) - 3)) * PT) })),
+      frame: extra.frame, borders: b.bdr,
     }, (extra.colBreak ? W_.columnBreak() : '') + linked(b.runs, (r) => runFor(r, footnotes, part), part));
   };
   const none: import('./docxwrite').Border = { style: 'none', size: 0, color: 'FFFFFF' };
@@ -3265,7 +3580,7 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
           // (An open table: only the rules the page draws across, each at its row's edge.)
           borders: g.spec.rules ? { top: g.spec.rules[i] ? line : none, bottom: g.spec.rules[i + 1] ? line : none, left: none, right: none } : undefined,
           margins: { top: 0, bottom: 0, left: Math.round(pad * PT), right: Math.round(pad * PT) },
-        }, W_.paragraph({ bidi: g.rtl, widowControl: false, align: alignOf(meta.align), spacing: { before: 0, after: 0, line: Math.round(meta.pitch * PT), lineRule: 'exact' } }, runs.map((r) => runFor(r, footnotes, part)).join('')))).join(''))).join(''));
+        }, W_.paragraph({ bidi: g.rtl, widowControl: false, align: alignOf(meta.align), spacing: p2d.edit && runs.some((r) => r.text.trim()) ? { before: 0, after: 0, line: autoLine(meta.pitch, median(runs.filter((r) => r.text.trim()).map((r) => r.size)), runs, part), lineRule: 'auto' } : { before: 0, after: 0, line: Math.round(meta.pitch * PT), lineRule: 'exact' } }, (p2d.edit ? plainRuns(runs) : runs).map((r) => runFor(r, footnotes, part)).join('')))).join(''))).join(''));
   };
   const hairline = (before: number, children = ''): string => W_.paragraph({ spacing: { before: Math.round(before), after: 0, line: 20, lineRule: 'exact' } }, children || W_.textRun('', { size: 2 }));
   // (A table has no space above of its own: an empty line of that height goes before it.)
@@ -3382,12 +3697,16 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
         rg.cols.forEach((bs, c) => {
           // The second column starts with a column break inside its first paragraph (a paragraph of its own
           // would add its height to the column).
-          if (c > 0 && bs[0]?.kind === 'p') { kids.push(paraFor(bs[0], null, body, { colBreak: true }), blocksFor(bs.slice(1), null, body)); return; }
+          // (The page's notes, when Word footnotes, are referenced from the columns: see map.)
+          const fm = map.size ? map : null;
+          if (c > 0 && bs[0]?.kind === 'p') { kids.push(paraFor(bs[0], fm, body, { colBreak: true }), blocksFor(bs.slice(1), fm, body)); return; }
           // (A table first in its column: the break goes in the hairline paragraph that sets its space above.)
-          if (c > 0 && bs[0]?.kind === 'grid') { const g = bs[0]; kids.push(hairline(Math.max(0, g.before - 1) * PT, W_.columnBreak()), gridFor(g, null, body), blocksFor(bs.slice(1), null, body)); return; }
+          if (c > 0 && bs[0]?.kind === 'grid') { const g = bs[0]; kids.push(hairline(Math.max(0, g.before - 1) * PT, W_.columnBreak()), gridFor(g, fm, body), blocksFor(bs.slice(1), fm, body)); return; }
           if (c > 0) kids.push(hairline(0, W_.columnBreak()));
-          kids.push(blocksFor(bs, null, body));
+          kids.push(blocksFor(bs, fm, body));
         });
+        // (Notes that are not Word footnotes follow the page's last region, in the flow.)
+        if (i === pg.regions!.length - 1 && flowNotes.length) kids.push(blocksFor(flowNotes, null, body));
         if (!kids.join('')) kids.push(emptyPara);
         let columns: import('./docxwrite').Columns | undefined;
         if (rg.cols.length > 1) {
@@ -3466,10 +3785,10 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
   const best = new Map<string, { score: number }>();
   // (A copy of a face whose glyphs no text of the document used — a subset met only for its spaces — does not
   // compete with the copy rebuilt or carried for the text: an equal score let it in, missing what the text set.)
-  const usedFace = new Set([...fonts.values()].filter((f) => f.raw && (f.uses || f.rebuilt)).map((f) => `${f.family}|${faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic)}`));
+  const usedFace = new Set([...fonts.values()].filter((f) => f.raw && (f.uses || f.rebuilt)).map((f) => `${f.family}|${faceOf(f.bold && (f.weight ?? (f.bold ? 700 : 400)) >= 600, f.italic)}`));
   for (const f of fonts.values()) {
     if (!f.raw) continue;
-    const face = faceOf(f.bold && (f.weight ?? 400) >= 600, f.italic);
+    const face = faceOf(f.bold && (f.weight ?? (f.bold ? 700 : 400)) >= 600, f.italic);
     if (!f.uses && !f.rebuilt && usedFace.has(`${f.family}|${face}`)) continue;
     // (A font carried as the PDF has it whose maker allows no editable embedding — "preview & print" or
     // restricted — is not put in an editable document: Word may open such a file read-only, and LibreOffice
@@ -3557,6 +3876,15 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
     const info = [...fonts.values()].find((f) => f.family === family);
     const sub = fontSubstitute(family, info);
     if (sub) subs.set(family, sub);
+  }
+  // (The body's line spacing, now the fonts it carries are known: see autoLine.)
+  if (lineFix.length) {
+    const fac = new Map<string, number>();
+    const factorOf = (font: string) => { let f = fac.get(font); if (f === undefined) { const m = faces.get(font); const bytes = m ? m.get('Regular') ?? m.values().next().value : undefined; const own = bytes ? lineFactor(bytes) : null;
+      // (A carried font whose metrics are its glyphs' extremes — some PDFs' CJK subsets say nearly three lines — is not
+      // what a word processor sets it at: the name's own line, else 1.2.)
+      f = own && own <= 1.6 ? own : NAMED_LINE[font] || (own ? Math.min(own, 1.2) : 1.2); fac.set(font, f); } return f; };
+    await writer.mapBody((xml) => xml.replace(/w:line="\u00a7(\d+)\u00a7"/g, (_m, i: string) => { const x = lineFix[+i]; return `w:line="${Math.max(120, Math.min(720, Math.round(240 * x.pitch / (x.size * factorOf(x.font)))))}"`; }), yieldNow);
   }
   const tc0 = performance.now();
   const zip = await writer.pack(embedded);

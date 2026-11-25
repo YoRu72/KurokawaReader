@@ -14,11 +14,11 @@
 //   Owner PDFs (corpus2/owner/*.pdf, optional name.truth.json) are converted and scored too; they never fail the test.
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const { execSync } = require('child_process');
-const { readDocx, scoreDocx, fold, sim, pdfTextWords, wordRecall } = require('./pdf2docx/corpus2/score.cjs');
+const { readDocx, scoreDocx, fold, sim, pdfTextWords, wordRecall, pdfGeometry, scoreGeometry, pdfFlow, scoreFlow } = require('./pdf2docx/corpus2/score.cjs');
 const ROOT = path.join(__dirname, 'pdf2docx/corpus2'); const DIST = path.resolve(process.env.KR_DIST || path.join(__dirname, '../dist'));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
-let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); if (!c) fails++; };
+const FLOW = {}; let fails = 0; const ok = (n, c) => { console.log((c ? 'ok   ' : 'FAIL ') + n); if (!c) fails++; };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'p2dc-')); const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'source.json'), 'utf8')); const man = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
 const haveSoffice = (() => { if (process.env.KR_NOSOFFICE) return false; try { execSync('soffice --version', { stdio: 'ignore' }); return true; } catch { return false; } })();
 const only = process.env.KR_CORPUS_ONLY ? process.env.KR_CORPUS_ONLY.split(',') : null; const outDir = path.resolve(process.env.KR_CORPUS_OUT || path.join(ROOT, 'out')); fs.mkdirSync(outDir, { recursive: true });
@@ -72,7 +72,7 @@ function tables(results, measures) {
   let browser = null; const pre = process.env.KR_CORPUS_DOCX ? path.resolve(process.env.KR_CORPUS_DOCX) : null;
   if (!pre) { await new Promise((r) => server.listen(5213, r)); browser = await chromium.launch(); }
   for (const e of entries) {
-    const layer = e.owner ? null : await pdfTextWords(e.file).catch(() => null);
+    const layer = e.owner ? null : await pdfTextWords(e.file).catch(() => null); const geo = e.owner ? null : await pdfGeometry(e.file).catch(() => null); const flow0 = e.owner || !haveSoffice ? null : await pdfFlow(e.file, src).catch(() => null);
     for (const mode of modes) {
       if (e.owner && mode === 'exact') continue; const results = R[mode]; const tag = e.id.replace(/^owner:/, 'owner-') + (mode === 'exact' ? '.exact' : '');
       let docx, secs = 0, errs = [];
@@ -82,14 +82,19 @@ function tables(results, measures) {
       if (e.owner) { const tf = e.file.replace(/\.pdf$/i, '.truth.json'); const D = await readDocx(fs.readFileSync(docx)); const pages = +(/Pages:\s+(\d+)/.exec(execSync(`pdfinfo "${e.file}" 2>/dev/null || true`).toString()) || [0, 1])[1] || 1; const S = await scoreOwner(D, fs.existsSync(tf) ? JSON.parse(fs.readFileSync(tf, 'utf8')) : null, { pages }); if (haveSoffice && !pre) S.lo_opens = opensInLO(docx); results[e.id] = { scores: S, secs, pages, owner: true }; continue; }
       const D = await readDocx(fs.readFileSync(docx)); const meta = { ...e.meta, scanned: e.id.startsWith('scan-') };
       const S = scoreDocx(D, src, e.meta.features, meta);
+      // (Measures of the flowing result: «Easy to edit» only.)
+      if (geo && mode === 'edit' && !meta.scanned) Object.assign(S, scoreGeometry(D, geo));
       const wr = layer && layer.length ? wordRecall(layer, D) : null; S.text_layer_recall = wr ? wr.recall : null;
       if (haveSoffice && !pre) S.lo_opens = opensInLO(docx);
+      // (soffice only: the long paragraph's pitch and the page count as LibreOffice lays the flowing result out.)
+      if (haveSoffice && !pre && mode === 'edit' && flow0 && !meta.scanned && S.lo_opens) { const lp = docx.replace(/\.docx$/, '.pdf'); const f1 = fs.existsSync(lp) ? await pdfFlow(lp, src).catch(() => null) : null; if (f1) Object.assign(S, scoreFlow(flow0, f1)); FLOW[e.id] = { src: flow0, lo: f1 }; }
       results[e.id] = { scores: S, secs, secsPerPage: secs / (e.meta.pages || 1), pages: e.meta.pages, docxBytes: fs.statSync(docx).size, errs, missed: wr ? wr.miss.slice(0, 30) : [] };
       console.log(e.id.padEnd(20), mode.padEnd(5), 'ok', secs.toFixed(1) + 's', (Object.values(S).filter((x) => x !== null && x !== undefined).reduce((a, b) => a + b, 0) / Math.max(1, Object.values(S).filter((x) => x !== null && x !== undefined).length)).toFixed(2), wr ? 'layer ' + wr.recall.toFixed(3) + (wr.miss.length ? ' missing: ' + wr.miss.slice(0, 12).join(' ') : '') : '');
     }
   }
   if (browser) { await browser.close(); server.close(); }
-  const order = ['text_lat_acc', 'text_lat_rec', 'text_ar_acc', 'text_ar_rec', 'ar_digits', 'text_ja_acc', 'text_ja_rec', 'text_zh_acc', 'text_zh_rec', 'text_layer_recall', 'para_f1', 'para_long_whole', 'hyphen_join', 'headings_rec', 'headings_level', 'headings_text', 'lists_real', 'lists_marker', 'table_cells', 'table_shape', 'table_merged', 'table_header', 'table_text_any', 'table_ar_cells', 'picture', 'caption', 'footnotes', 'links', 'hf_pollution', 'hf_present', 'columns_order', 'columns_set', 'emphasis_bold', 'emphasis_italic', 'mono', 'direction', 'ocr_recovered', 'lo_opens'];
+  if (Object.keys(FLOW).length) console.log('\npages, source vs LibreOffice (easy to edit); long paragraph pitch, source vs LibreOffice:\n' + Object.entries(FLOW).map(([id, f]) => `${id.padEnd(20)} ${f.src.pages} -> ${f.lo ? f.lo.pages : '?'}   ${f.src.pitch ? f.src.pitch.toFixed(2) : '-'} -> ${f.lo && f.lo.pitch ? f.lo.pitch.toFixed(2) : '-'}`).join('\n'));
+  const order = ['text_lat_acc', 'text_lat_rec', 'text_ar_acc', 'text_ar_rec', 'ar_digits', 'text_ja_acc', 'text_ja_rec', 'text_zh_acc', 'text_zh_rec', 'text_layer_recall', 'para_f1', 'para_long_whole', 'hyphen_join', 'headings_rec', 'headings_level', 'headings_text', 'lists_real', 'lists_marker', 'table_cells', 'table_shape', 'table_merged', 'table_header', 'table_text_any', 'table_ar_cells', 'picture', 'caption', 'footnotes', 'links', 'hf_pollution', 'hf_present', 'columns_order', 'columns_set', 'emphasis_bold', 'emphasis_italic', 'mono', 'direction', 'ocr_recovered', 'decor_stray', 'list_geometry', 'runs_plain', 'pitch', 'pages', 'lo_opens'];
   const floorsFile = path.join(ROOT, 'floors.json'); const F = fs.existsSync(floorsFile) ? JSON.parse(fs.readFileSync(floorsFile, 'utf8')) : null;
   const md = ['# PDF to Word corpus scores', ''];
   const totals = {};

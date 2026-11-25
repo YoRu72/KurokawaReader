@@ -50,18 +50,21 @@ const fontsXml = (f: Fonts | string) => (typeof f === 'string' ? `<w:rFonts w:as
 
 /** A run's look (what docx's TextRun took). Sizes in half-points; `position` in half-points; `spacing` (letter
  *  spacing) in twips; `scale` a percentage. */
-export type RunProps = { font?: Fonts | string; size?: number; bold?: boolean; italic?: boolean; color?: string; rtl?: boolean; scale?: number; spacing?: number; position?: number; superScript?: boolean; eastAsiaRun?: boolean };
+export type RunProps = { font?: Fonts | string; size?: number; bold?: boolean; italic?: boolean; color?: string; rtl?: boolean; scale?: number; spacing?: number; position?: number; superScript?: boolean; eastAsiaRun?: boolean; /** underlined, in this colour (hex) */ underline?: string; strike?: boolean; /** shaded behind, this colour (hex) */ shading?: string };
 
 export function rPr(p: RunProps): string {
   let x = '';
   if (p.font) x += fontsXml(p.font);
   if (p.bold !== undefined) x += p.bold ? '<w:b/><w:bCs/>' : '<w:b w:val="false"/><w:bCs w:val="false"/>';
   if (p.italic !== undefined) x += p.italic ? '<w:i/><w:iCs/>' : '<w:i w:val="false"/><w:iCs w:val="false"/>';
+  if (p.strike) x += '<w:strike/>';
   if (p.color) x += `<w:color w:val="${att(p.color)}"/>`;
   if (p.spacing) x += `<w:spacing w:val="${Math.round(p.spacing)}"/>`;
   if (p.scale && p.scale !== 100) x += `<w:w w:val="${Math.round(p.scale)}"/>`;
   if (p.position) x += `<w:position w:val="${Math.round(p.position)}"/>`;
   if (p.size) x += `<w:sz w:val="${Math.round(p.size)}"/><w:szCs w:val="${Math.round(p.size)}"/>`;
+  if (p.underline) x += `<w:u w:val="single" w:color="${att(p.underline)}"/>`;
+  if (p.shading) x += `<w:shd w:val="clear" w:color="auto" w:fill="${att(p.shading)}"/>`;
   if (p.superScript) x += '<w:vertAlign w:val="superscript"/>';
   if (p.rtl) x += '<w:rtl/>';
   return x ? `<w:rPr>${x}</w:rPr>` : '';
@@ -95,11 +98,14 @@ export type ParaProps = {
   num?: { id: number; lvl: number };
   bidi?: boolean; widowControl?: boolean; align?: Align;
   indent?: { start?: number; end?: number; left?: number; right?: number; firstLine?: number; hanging?: number };
-  spacing?: { before?: number; after?: number; line?: number; lineRule?: 'exact' | 'auto' | 'atLeast' };
+  /** (line: twips, or 240ths of a line for auto; a string is written as it is — a token filled in later.) */
+  spacing?: { before?: number; after?: number; line?: number | string; lineRule?: 'exact' | 'auto' | 'atLeast' };
   tabs?: { type: 'left' | 'right' | 'center'; pos: number }[];
   frame?: Frame;
   /** The paragraph mark's run properties. */
   mark?: RunProps;
+  /** Rules over / under the paragraph (sz in eighths of a point, space in points). */
+  borders?: { top?: { sz: number; color: string; space: number }; bottom?: { sz: number; color: string; space: number } };
   /** Section properties this paragraph carries (the last paragraph of a section that another follows). */
   sectPr?: string;
 };
@@ -110,8 +116,9 @@ export function pPr(p: ParaProps): string {
   if (p.frame) { const f = p.frame; x += `<w:framePr${f.anchorLock ? ' w:anchorLock="true"' : ''} w:w="${Math.round(f.w)}" w:h="${Math.round(f.h)}" w:x="${Math.round(f.x)}" w:y="${Math.round(f.y)}" w:hAnchor="page" w:vAnchor="page" w:hRule="${f.rule ?? 'auto'}" w:wrap="none"/>`; }
   if (p.widowControl === false) x += '<w:widowControl w:val="false"/>';
   if (p.num) x += `<w:numPr><w:ilvl w:val="${p.num.lvl}"/><w:numId w:val="${p.num.id}"/></w:numPr>`;
+  if (p.borders && (p.borders.top || p.borders.bottom)) { const e = (n: string, b?: { sz: number; color: string; space: number }) => (b ? `<w:${n} w:val="single" w:sz="${Math.round(b.sz)}" w:space="${Math.round(b.space)}" w:color="${att(b.color)}"/>` : ''); x += `<w:pBdr>${e('top', p.borders.top)}${e('bottom', p.borders.bottom)}</w:pBdr>`; }
   if (p.bidi) x += '<w:bidi/>';
-  if (p.spacing) { const s = p.spacing; x += `<w:spacing${s.after !== undefined ? ` w:after="${Math.round(s.after)}"` : ''}${s.before !== undefined ? ` w:before="${Math.round(s.before)}"` : ''}${s.line !== undefined ? ` w:line="${Math.round(s.line)}"` : ''}${s.lineRule ? ` w:lineRule="${s.lineRule}"` : ''}/>`; }
+  if (p.spacing) { const s = p.spacing; x += `<w:spacing${s.after !== undefined ? ` w:after="${Math.round(s.after)}"` : ''}${s.before !== undefined ? ` w:before="${Math.round(s.before)}"` : ''}${s.line !== undefined ? ` w:line="${typeof s.line === 'string' ? s.line : Math.round(s.line)}"` : ''}${s.lineRule ? ` w:lineRule="${s.lineRule}"` : ''}/>`; }
   if (p.indent) { const i = p.indent; x += `<w:ind${i.start !== undefined ? ` w:start="${Math.round(i.start)}"` : ''}${i.end !== undefined ? ` w:end="${Math.round(i.end)}"` : ''}${i.left !== undefined ? ` w:left="${Math.round(i.left)}"` : ''}${i.right !== undefined ? ` w:right="${Math.round(i.right)}"` : ''}${i.firstLine !== undefined ? ` w:firstLine="${Math.round(i.firstLine)}"` : ''}${i.hanging !== undefined ? ` w:hanging="${Math.round(i.hanging)}"` : ''}/>`; }
   if (p.align) x += `<w:jc w:val="${p.align}"/>`;
   if (p.outline !== undefined) x += `<w:outlineLvl w:val="${p.outline}"/>`;
@@ -253,7 +260,7 @@ export class DocxWriter {
   /** A list: its levels (format, text, start, indents in twips), its w:num id (1, 2, …). */
   listOf(levels: { fmt: string; text: string; start: number; left: number; hanging: number; font?: string }[]): number {
     const id = this.lists.length + 1;
-    const lv = levels.map((l, i) => `<w:lvl w:ilvl="${i}"><w:start w:val="${Math.max(0, Math.round(l.start))}"/><w:numFmt w:val="${att(l.fmt)}"/><w:lvlText w:val="${att(l.text)}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${Math.round(l.left)}" w:hanging="${Math.round(l.hanging)}"/></w:pPr>${l.font ? `<w:rPr><w:rFonts w:ascii="${att(l.font)}" w:hAnsi="${att(l.font)}" w:cs="${att(l.font)}"/></w:rPr>` : ''}</w:lvl>`).join('');
+    const lv = levels.map((l, i) => `<w:lvl w:ilvl="${i}"><w:start w:val="${Math.max(0, Math.round(l.start))}"/><w:numFmt w:val="${att(l.fmt)}"/><w:lvlText w:val="${att(l.text)}"/><w:lvlJc w:val="left"/><w:pPr><w:tabs><w:tab w:val="num" w:pos="${Math.round(l.left)}"/></w:tabs><w:ind w:start="${Math.round(l.left)}" w:hanging="${Math.round(l.hanging)}"/></w:pPr>${l.font ? `<w:rPr><w:rFonts w:ascii="${att(l.font)}" w:hAnsi="${att(l.font)}" w:cs="${att(l.font)}"/></w:rPr>` : ''}</w:lvl>`).join('');
     this.lists.push(`<w:abstractNum w:abstractNumId="${id}"><w:multiLevelType w:val="${levels.length > 1 ? 'multilevel' : 'singleLevel'}"/>${lv}</w:abstractNum>`);
     return id;
   }
@@ -302,10 +309,15 @@ export class DocxWriter {
     if (s.footer) { const n = ++this.nFooters; const id = `rIdF${n}`; this.hfParts.push({ name: `footer${n}.xml`, xml: s.footer.xml, part: s.footer.part, kind: 'footer' }); this.hfRels.push({ id, type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', target: `footer${n}.xml` }); refs.footer = id; }
     // (The section's properties ride in a paragraph of their own at its end, as Word writes them — written with
     // the next section's text, once it is known not to be the last; the last section's close the body.)
-    const before = this.lastSect !== null ? `<w:p><w:pPr>${this.lastSect}</w:pPr></w:p>` : '';
+    // (For text that flows — a document to edit — that paragraph is a hairline: an empty paragraph at the type's size
+    // would add a line to the page wherever a section changes.)
+    const carrier = this.thinSections ? '<w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr>' : '';
+    const before = this.lastSect !== null ? `<w:p><w:pPr>${carrier}${this.lastSect}</w:pPr></w:p>` : '';
     this.lastSect = this.sectPrXml(s, refs);
     this.bodyOut(before + s.children.join(''));
   }
+  /** Section-carrying paragraphs as hairlines (see addSection). */
+  thinSections = false;
   private bodyOut(xml: string): void { if (xml) this.bodyBytes.push(this.enc.encode(this.fixBody(xml))); }
   /** The body's pieces as bytes, to be changed in place (decoded, changed, encoded again) by `fix`; a piece it
    *  returns as it was given stays as it is. */
