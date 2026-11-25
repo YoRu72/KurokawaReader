@@ -16,7 +16,8 @@
 //    bookmark at that page's start.
 // 5. Pictures (easy to edit): a figure (a picture of 6 x 3 cm in the text) with its caption under it is an inline
 //    picture in the body, in the paragraph right before its caption, and no longer in the header part; the page's
-//    drawing keeps no copy of it. (Exact look: it stays pinned with the page's drawing.)
+//    drawing keeps no copy of it. Its paragraph, under a table, is single-spaced with its space before kept (under a
+//    line multiple below one LibreOffice lifted the picture onto the table). (Exact look: it stays pinned with the page's drawing.)
 // 6. Footnotes: a raised number in the text and its note under a short rule at the page's foot, a running foot
 //    under that: (easy to edit) a Word footnote (footnotes.xml) with the note's text, a footnote reference where the
 //    number stood, the note no longer in the text; (both) the note never in the footer part.
@@ -37,6 +38,19 @@
 // 11. Columns with a narrow gutter (easy to edit): two justified columns 9 pt apart under a full-width paragraph are a
 //    section of two columns (w:cols), the left column's text all before the right one's, no paragraph mixing them.
 //    (Their baselines apart, as TeX's are: pdf.js gives a line drawn across both columns on one baseline as one text.)
+// 12. A font with no space glyph (both): a Type 1 (CFF) face the PDF carries (pdf.js's FoxitSerif) whose code 32 is another glyph (an underscore)
+//    declared half an em wide, never drawn, no code a space in its encoding or Unicode map (TeX's visible-space slot), its words set justified by kerns:
+//    the font the .docx carries has a space as wide as the page's natural word gap (Times' 0.25 em), not the declared 0.5.
+// 13. Columns on shared baselines (both): two ragged columns side by side, LibreOffice's way, one left line reaching a
+//    few points further toward the gutter than the rest: one section of two columns (easy to edit), the left column's
+//    text whole before the right one's, no table made of that line pair, no paragraph mixing the columns.
+// 14. A column region's end on the next page (easy to edit): two columns run to a page's foot, the right one's last
+//    paragraph going on at the next page's top in both columns (two lines left, the rest right), a full-width paragraph
+//    under them: that paragraph is one, whole and in order (no line holding both columns' words), the full-width one after
+//    it. (The paragraph before it, cut by the column break, is read in order, not checked whole.)
+// 15. A running foot repeats (both): a short line alone at the first page's foot of a two-page file, seen on no other page
+//    («Mill Quay», a table row's first cell a page break cut), is the text's: in the body after the page's last line, in no
+//    footer part.
 // The guard, in both results: every word of each PDF's own text layer is in the .docx (body, tables, text boxes,
 // headers, footers, footnotes) — for these PDFs and for the older fixtures (tests/pdf2docx/fixtures, corpus/design.pdf).
 // With soffice on the PATH every .docx is also opened by LibreOffice (--convert-to pdf must succeed: no repair).
@@ -44,7 +58,7 @@
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const { execSync } = require('child_process');
 const { PDFDocument, StandardFonts, rgb, PDFName, PDFString } = require('pdf-lib');
-const { readDocx, pdfTextWords, wordRecall } = require('./pdf2docx/corpus2/score.cjs');
+const { readDocx, pdfTextWords, wordRecall, docxSpaces } = require('./pdf2docx/corpus2/score.cjs');
 const DIST = path.resolve(process.env.KR_DIST || path.join(__dirname, '../dist'));
 const PORT = 5214;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
@@ -211,6 +225,61 @@ async function colsPdf() {
   return { file: await save(doc, 'cols'), left, right };
 }
 
+async function spacePdf() {
+  const { doc } = await newDoc(); const ctx = doc.context; const m = await (await PDFDocument.create()).embedFont(StandardFonts.TimesRoman); // (metrics only)
+  // (The file is a bare CFF font: a Type 1 face as FontFile3 /Type1C.)
+  const ff = ctx.register(ctx.stream(fs.readFileSync(path.join(__dirname, '../node_modules/pdfjs-dist/standard_fonts/FoxitSerif.pfb')), { Subtype: 'Type1C' }));
+  const tu = ctx.register(ctx.stream('/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfrange <21> <7E> <0021> endbfrange endcmap CMapName currentdict /CMap defineresource pop end end'));
+  const widths = []; for (let k = 32; k <= 126; k++) widths.push(k === 32 ? 500 : Math.round(m.widthOfTextAtSize(String.fromCharCode(k), 1000)));
+  const desc = ctx.register(ctx.obj({ Type: 'FontDescriptor', FontName: 'KRTEST+TestRoman-Regular', Flags: 34, FontBBox: [-170, -220, 1000, 900], ItalicAngle: 0, Ascent: 683, Descent: -217, CapHeight: 662, StemV: 84, FontFile3: ff }));
+  const font = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'KRTEST+TestRoman-Regular', FirstChar: 32, LastChar: 126, Widths: widths, Encoding: ctx.obj({ Type: 'Encoding', Differences: [32, PDFName.of('underscore')] }), FontDescriptor: desc, ToUnicode: tu }));
+  const p = doc.addPage([595, 842]); p.node.setFontDictionary(PDFName.of('T1'), font);
+  const words = (PROSE + ' and every page of it was read again by the keeper before the lamps were lit').split(' ');
+  // (Justified: its gaps the natural one or wider, as most of TeX's.)
+  const W = 400, size = 11; const lines = wrap(words, m, size, W); let ops = 'BT /T1 11 Tf\n';
+  lines.forEach((ln, i) => { const ws = ln.split(' '); const ink = ws.reduce((t, w) => t + m.widthOfTextAtSize(w, size), 0); const gap = i === lines.length - 1 ? 0.25 * size : (W - ink) / (ws.length - 1);
+    ops += `1 0 0 1 72 ${760 - i * 13.6} Tm [${ws.map((w) => `(${w.replace(/[()\\]/g, '\\$&')})`).join(` ${(-gap / size * 1000).toFixed(1)} `)}] TJ\n`; });
+  p.node.set(PDFName.of('Contents'), ctx.register(ctx.stream(ops + 'ET')));
+  return { file: await save(doc, 'nospace'), text: lines.join(' ') };
+}
+
+async function pairPdf() {
+  const { doc, f } = await newDoc(); const tr = await doc.embedFont(StandardFonts.TimesRoman); const p = doc.addPage([595, 842]);
+  wrap('The harbour log for the spring was kept in two columns, one for each crew, as the board had asked them to do.'.split(' '), f, 11, 450).forEach((t, i) => p.drawText(t, { x: 72, y: 760 - i * 14, size: 11, font: f }));
+  const left = 'Alpha crew: ' + PROSE + ' while the wind held from the west and ' + PROSE + ' and then ' + PROSE + ' until noon.', right = 'Bravo crew: ' + PROSE + ' until the tide turned and ' + PROSE + ' and then ' + PROSE + ' before dark.';
+  const L = wrap(left.split(' '), f, 10, 200), Rr = wrap(right.split(' '), tr, 10, 200);
+  // (One left line holds one word more, reaching toward the gutter: LibreOffice's «…on the old signal».)
+  for (let k = 3; k < L.length - 2; k++) { const nx = L[k + 1].split(' '); const t = L[k] + ' ' + nx[0]; const w = f.widthOfTextAtSize(t, 10); if (w > 204 && w < 216) { L[k] = t; L[k + 1] = nx.slice(1).join(' '); break; } }
+  const n = Math.max(L.length, Rr.length); for (let i = 0; i < n; i++) { if (L[i]) p.drawText(L[i], { x: 72, y: 700 - i * 13, size: 10, font: f }); if (Rr[i]) p.drawText(Rr[i], { x: 302, y: 700 - i * 13, size: 10, font: tr }); }
+  wrap('Both logs were copied into the board\'s book the same evening.'.split(' '), f, 11, 450).forEach((t, i) => p.drawText(t, { x: 72, y: 700 - n * 13 - 20 - i * 14, size: 11, font: f }));
+  return { file: await save(doc, 'pair'), left: L.join(' '), right: Rr.join(' ') };
+}
+
+async function remnantPdf() {
+  const { doc, f } = await newDoc(); const tr = await doc.embedFont(StandardFonts.TimesRoman);
+  const A = 'Alpha entry: ' + PROSE + ' and then ' + PROSE + ' and later ' + PROSE + ' and at last ' + PROSE + ' while the wind held.', B = 'Delta entry: ' + PROSE + ' and the sheets were handed to the harbour master before the lamps were lit.';
+  const la = wrap(A.split(' '), f, 10, 210), lb = wrap(B.split(' '), f, 10, 210); const all = [...la, ...lb];
+  const rest = (all.length - 3) % 2 ? 4 : 3; const N = (all.length - rest) / 2;
+  const p1 = doc.addPage([595, 842]);
+  wrap('The field log of the season was kept in two columns, as the board had asked.'.split(' '), f, 11, 450).forEach((t, i) => p1.drawText(t, { x: 72, y: 760 - i * 14, size: 11, font: f }));
+  const y0 = 80 + (N - 1) * 12.5;
+  for (let i = 0; i < N; i++) { p1.drawText(all[i], { x: 72, y: y0 - i * 12.5, size: 10, font: f }); p1.drawText(all[N + i], { x: 302, y: y0 - i * 12.5, size: 10, font: tr }); }
+  const p2 = doc.addPage([595, 842]); const tail = all.slice(2 * N);
+  tail.slice(0, 2).forEach((t, i) => p2.drawText(t, { x: 72, y: 770 - i * 12.5, size: 10, font: f })); tail.slice(2).forEach((t, i) => p2.drawText(t, { x: 302, y: 770 - i * 12.5, size: 10, font: tr }));
+  wrap('The reading routine on the boat was written down the same evening and kept with the log for the board to see.'.split(' '), f, 11, 450).forEach((t, i) => p2.drawText(t, { x: 72, y: 720 - i * 14, size: 11, font: f }));
+  return { file: await save(doc, 'remnant'), A: la.join(' '), B: lb.join(' ') };
+}
+
+async function footPdf() {
+  const { doc, f } = await newDoc();
+  for (let k = 0; k < 2; k++) {
+    const p = doc.addPage([595, 842]); const ls = wrap((PROSE + ' and ' + PROSE + ' and ' + PROSE + '.').split(' '), f, 11, 450); ls[0] = ls[0][0].toUpperCase() + ls[0].slice(1);
+    ls.forEach((t, i) => p.drawText(t, { x: 72, y: (k ? 760 : 160) - i * 14, size: 11, font: f }));
+    if (!k) p.drawText('Mill Quay', { x: 72, y: 50, size: 11, font: f });
+  }
+  return { file: await save(doc, 'foot') };
+}
+
 // ---- converting ----
 async function convert(browser, file, mode) {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 900 }, acceptDownloads: true });
@@ -234,12 +303,12 @@ const cellsOf = (t) => t.rows.map((r) => r.cells.map((c) => c.text.replace(/\s+/
   await new Promise((r) => server.listen(PORT, r));
   const browser = await chromium.launch();
   try {
-    const bt = await booktabs(); const pa = await paragraphs(); const st = await structurePdf(); const ln = await linksPdf(); const nt = await notesPdf(); const dc = await decorPdf(); const ls = await listPdf(); const tx = await texPdf(); const fl = await flowPdf(); const cl = await colsPdf();
+    const bt = await booktabs(); const pa = await paragraphs(); const st = await structurePdf(); const ln = await linksPdf(); const nt = await notesPdf(); const dc = await decorPdf(); const ls = await listPdf(); const tx = await texPdf(); const fl = await flowPdf(); const cl = await colsPdf(); const ns = await spacePdf(); const pr = await pairPdf(); const rm = await remnantPdf(); const ft = await footPdf();
     const fixtures = [path.join(__dirname, 'pdf2docx/fixtures/fullpage.pdf'), path.join(__dirname, 'pdf2docx/fixtures/merged.pdf'), path.join(__dirname, 'pdf2docx/corpus/design.pdf')].filter((f) => fs.existsSync(f));
     for (const mode of ['edit', 'exact']) {
       const M = mode === 'edit' ? 'easy to edit' : 'exact look';
       const docs = new Map();
-      for (const f of [bt.file, pa.file, st.file, ln.file, nt.file, dc.file, ls.file, tx.file, fl.file, cl.file, ...fixtures]) docs.set(f, await convert(browser, f, mode));
+      for (const f of [bt.file, pa.file, st.file, ln.file, nt.file, dc.file, ls.file, tx.file, fl.file, cl.file, ns.file, pr.file, rm.file, ft.file, ...fixtures]) docs.set(f, await convert(browser, f, mode));
       // 1. the open table
       {
         const D = await readDocx(fs.readFileSync(docs.get(bt.file)));
@@ -287,6 +356,8 @@ const cellsOf = (t) => t.rows.map((r) => r.cells.map((c) => c.text.replace(/\s+/
         const ci = D.paras.findIndex((p) => flat(p.text) === 'Figure 1. The quay at low water.');
         ok(`${M} 5. the figure is one picture in the body, in the paragraph before its caption (${D.drawings} in the body, caption at ${ci}, picture before it: ${ci > 0 && D.paras[ci - 1].pics})`, D.drawings === 1 && ci > 0 && D.paras[ci - 1].pics === 1);
         ok(`${M} 5. no big picture left in the header part (${D.hfPics})`, D.hfPics === 0);
+        { const xml = await D.zip.file('word/document.xml').async('string'); const fp = (xml.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).find((x) => /<w:drawing>/.test(x)) || ''; const sp = /<w:spacing[^>]*\/>/.exec(fp)?.[0] || '';
+          ok(`${M} 5. the picture's paragraph after the table is single-spaced, its space before kept (${sp})`, !!fp && !(/w:line="(\d+)"/.test(sp) && +/w:line="(\d+)"/.exec(sp)[1] < 240) && +(/w:before="(\d+)"/.exec(sp)?.[1] || 0) > 0); }
       } else {
         const D = await readDocx(fs.readFileSync(docs.get(st.file)));
         ok(`${M} 5. the figure stays with the page's drawing in the header part (${D.hfPics} there, ${D.drawings} in the body)`, D.hfPics >= 1 && D.drawings === 0);
@@ -348,6 +419,33 @@ const cellsOf = (t) => t.rows.map((r) => r.cells.map((c) => c.text.replace(/\s+/
         const p = D.paras.find((q) => flat(q.text) === flat(tx.text));
         ok(`${M} 9. the word-by-word paragraph is one paragraph`, !!p);
         if (p) ok(`${M} 9. it is one run of plain text (${p.runs.length} runs, sizes ${[...new Set(p.runs.map((r) => r.sz))].join(',')})`, p.runs.length === 1 && p.runs[0].plain);
+      }
+      // 15. a running foot repeats
+      {
+        const D = await readDocx(fs.readFileSync(docs.get(ft.file)));
+        ok(`${M} 15. the one-off line at the first page's foot is in no footer (${JSON.stringify(D.hf.filter((h) => h.text).map((h) => h.kind + ': ' + h.text))})`, !D.hf.some((h) => /Mill Quay/.test(h.text)));
+        ok(`${M} 15. it is in the text (${D.paras.filter((q) => /Mill Quay/.test(q.text)).length} paragraph)`, D.paras.some((q) => q.text.trim() === 'Mill Quay'));
+      }
+      // 14. a column region's end on the next page
+      if (mode === 'edit') {
+        const D = await readDocx(fs.readFileSync(docs.get(rm.file))); const flat = (t) => t.replace(/\s+/g, ' ').trim(); const ps = D.paras.filter((q) => flat(q.text));
+        const all = flat(ps.map((q) => q.text).join(' ')); const iA = all.indexOf(flat(rm.A)), iB = ps.findIndex((q) => flat(q.text) === flat(rm.B)), iC = ps.findIndex((q) => flat(q.text).startsWith('The reading routine'));
+        ok(`${M} 14. the paragraph cut by the page and the columns is one, whole, after the text before it (${iA}, ${iB}: ${JSON.stringify(ps.filter((q) => /Delta entry|lamps were lit/.test(q.text)).map((q) => flat(q.text).slice(-60)))})`, iA >= 0 && iB >= 0 && all.indexOf(flat(rm.B)) > iA);
+        ok(`${M} 14. the full-width paragraph follows it (${iC})`, iC > iB);
+      }
+      // 13. columns on shared baselines
+      {
+        const D = await readDocx(fs.readFileSync(docs.get(pr.file))); const flat = (t) => t.replace(/\s+/g, ' ').trim();
+        const all = flat(D.paras.filter((q) => !q.table).map((q) => q.text).join(' ')); const iL = all.indexOf('Alpha crew'), eL = all.indexOf('until noon.'), iR = all.indexOf('Bravo crew'), eR = all.indexOf('before dark.');
+        if (mode === 'edit') ok(`${M} 13. one section of two columns (${D.sectCols.join(',')})`, D.sectCols.filter((x) => x === 2).length === 1);
+        ok(`${M} 13. the left column's text whole before the right one's, no table (${iL} .. ${eL} < ${iR} .. ${eR}; ${D.tables.length} tables)`, iL >= 0 && eL > iL && iR > eL && eR > iR && !D.tables.length);
+        ok(`${M} 13. no paragraph mixes the columns`, !D.paras.some((q) => /Alpha crew|until noon/.test(q.text) && /Bravo crew|before dark/.test(q.text)));
+      }
+      // 12. a font with no space glyph
+      {
+        const D = await readDocx(fs.readFileSync(docs.get(ns.file))); const sp = await docxSpaces(D); const v = Object.values(sp); const flat = (t) => t.replace(/\s+/g, ' ').trim();
+        ok(`${M} 12. the font carried for a face with no space glyph has the page's word gap for its space (${JSON.stringify(sp)}; natural 0.25, declared 0.5)`, v.length >= 1 && v.every((x) => x >= 0.22 && x <= 0.3));
+        ok(`${M} 12. its words keep their order and spaces`, flat(D.paras.map((q) => q.text).join(' ')).includes(flat(ns.text)));
       }
       // 8. lists
       if (mode === 'edit') {

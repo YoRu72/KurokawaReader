@@ -22,7 +22,7 @@ type PdfJs = Awaited<ReturnType<typeof loadPdfjs>>;
  *  pictures in the text, still looking like the page — or «Exact look» (edit false): every line where the page
  *  sets it, the page's furniture pinned in the header parts. Set by the conversion, for its pages (and its lanes). */
 export const p2d = { edit: true };
-export type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; winCov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; gaps?: number[]; wordFont?: boolean };
+export type FontInfo = { family: string; bold: boolean; italic: boolean; raw?: Uint8Array; noUnicode?: boolean; symbolic?: boolean; cov?: Set<number>; winCov?: Set<number>; weight?: number; serif?: boolean; mono?: boolean; rebuilt?: boolean; spaceCode?: number; src?: { data: Uint8Array; toFontChar: Record<string, number> }; legacy?: boolean; uses?: number; spaceW?: number; spaceDecl?: boolean; drawnSp?: number; adv?: number; gaps?: number[]; wordFont?: boolean };
 /** How the document uses its embedded fonts' glyphs: runs of glyphs along a line, cut where a word ends (each
  *  glyph tagged with its PDF font — a legacy Arabic font spreads one word over several). */
 export type UseStore = { seqs: GlyphRuns; seen: Map<string, Set<number>>;
@@ -35,6 +35,7 @@ export type UseStore = { seqs: GlyphRuns; seen: Map<string, Set<number>>;
   /** Every glyph run kept (a lane: the cap on uses is applied where the lanes' pages come together). */
   keepAll?: boolean };
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
+const GAP_CAP = 2000; // word gaps kept per font (spaceEm: a sample from more than the first page or two)
 
 type Piece = { /** For a document to edit: the link the piece stands in (a URL, or #ref of a page in the file). */ link?: string; /** For a document to edit: underlined (its colour), struck, shaded (its colour) — see decorate. */ u?: string; /** a piece kept as drawn: its text */ was?: string; strike?: boolean; shd?: string; text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; inked?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
   /** Marks put into this piece's text that the page draws in a colour of their own (a red haraka on a black letter). */
@@ -63,15 +64,15 @@ type Note = { num: number; paras: Block[] };
  *  number it holds (between those characters of its text, as the page writes it), for a PAGE field. */
 type Furniture = { runs: Run[]; cx: number; base: number; size: number; top: boolean; num?: { from: number; to: number; value: number; fmt: 'decimal' | 'hindiNumbers' | 'lowerRoman' | 'upperRoman' } };
 /** Part of a page: full width (one column) or set in columns (blocks per column in reading order, column edges in page x). */
-type Region = { cols: Block[][]; edges: [number, number][] };
+type Region = { cols: Block[][]; edges: [number, number][]; /** Set in columns by its edges, its blocks flowing from one column into the next (no column break). */ flow?: boolean };
 /** A box of text at its own place on a designed page (points from the page's top-left corner). */
 type PlacedBox = { x: number; y: number; w: number; h: number; blocks: Block[] };
 /** A page set in vertical writing: its paragraphs (columns run together) and where its columns stand. */
 type VPage = { paras: { runs: Run[]; firstLine: number }[]; pitch: number; size: number; top: number; bottom: number; left: number; right: number };
 /** Text set at an angle (a design's stamp, a label up the side): one text box, turned, in page points from the top-left. */
 type TextBox = { runs: Run[]; x: number; y: number; w: number; h: number; rot: number; line: number };
-export type PageModel = { /** For a document to edit: the page goes on from the one before (a paragraph ran over), no page break before it. */ cont?: boolean; /** The lowest baseline of its text (body and notes, page units from the foot) and its text's usual pitch: whether the page was simply full. */ low?: number; lowPitch?: number; /** The page's own object in the file (num_gen): what a link to it names. */ ref?: string; /** For a document to edit: a link to this page lands here (its bookmark's name). */ mark?: string; vert?: VPage; w: number; h: number; pics: Pic[]; boxes?: TextBox[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number;
-  /** The lines taken for the running head as text blocks, and where they start and end (points from the top). */ uncut?: { blocks: Block[]; top: number; bottom: number }; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
+export type PageModel = { /** For a document to edit: the page goes on from the one before (a paragraph ran over), no page break before it. */ cont?: boolean; /** For a document to edit: the page's leading lines read as the end of a column region (see leadColumns), taken when the page before ends in columns: that region, and how many of the body's first blocks it stands for. */ leadCols?: { region: Region; n: number }; /** The lowest baseline of its text (body and notes, page units from the foot) and its text's usual pitch: whether the page was simply full. */ low?: number; lowPitch?: number; /** The page's own object in the file (num_gen): what a link to it names. */ ref?: string; /** For a document to edit: a link to this page lands here (its bookmark's name). */ mark?: string; vert?: VPage; w: number; h: number; pics: Pic[]; boxes?: TextBox[]; furniture: Furniture[]; regions?: Region[]; placed?: PlacedBox[]; header: Block[]; footer: Block[]; body: Block[]; notes: Note[]; notesRaw: Block[]; notesBox: { top: number; bottom: number; l: number; r: number } | null; /** Where the notes' first line box starts (points from the page's top). */ notesAt?: number; bodyBottom: number;
+  /** The lines taken for the running head as text blocks, and where they start and end (points from the top). */ uncut?: { blocks: Block[]; top: number; bottom: number }; /** The lines taken for the running foot as text blocks (following the body's last line, or the notes'), and the bottom margin that leaves them room. */ uncutFoot?: { blocks: Block[]; bottom: number }; m: { top: number; bottom: number; left: number; right: number; header: number; footer: number; /** Room left beyond the text's edges on each side (points), which the paragraphs' indents take back on their aligned side. */ slack?: [number, number] } };
 
 const PT = 20; // twips per point
 // In a line with exact spacing Word puts the baseline about 4/5 of the line height below the line's top.
@@ -1269,7 +1270,7 @@ function fitSpaces(runs: Run[], pieces: Piece[], fonts: Map<string, FontInfo>): 
   for (const p of words) { for (const c of p.codes!) if (c[5] > 0) adv += c[5] * c[4]; lo = Math.min(lo, p.l); hi = Math.max(hi, p.r); }
   const spaces = runs.reduce((n, r) => n + (r.text.match(/ /g)?.length ?? 0), 0);
   if (!spaces) return runs;
-  const sw = median(words.map((p) => (fonts.get(p.font)?.spaceW ?? 0.25) * p.h));
+  const sw = median(words.map((p) => { const fi = fonts.get(p.font); return (fi ? spaceEm(fi) : 0.25) * p.h; }));
   const over = adv + spaces * sw - (hi - lo);
   if ((globalThis as { krDebugLine?: string }).krDebugLine === 'fit') console.warn('P2D fit', (hi - lo).toFixed(1), adv.toFixed(1), spaces, sw.toFixed(2), over.toFixed(1));
   if (over <= 0.3) return runs;
@@ -1286,7 +1287,7 @@ function fitSpaces(runs: Run[], pieces: Piece[], fonts: Map<string, FontInfo>): 
 }
 
 /** (edit: lay out a paragraph to edit — see editBreak; off for a designed page's boxes, which keep their lines.) */
-function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: number, pitchOf: (size: number) => number, prevBaseStart: number | null, edit = p2d.edit): Block[] {
+function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: number, pitchOf: (size: number) => number, prevBaseStart: number | null, edit = p2d.edit, inColumn = false): Block[] {
   const blocks: Block[] = [];
   let cur: { lines: Line[] } | null = null;
   let prevBase = prevBaseStart;
@@ -1419,6 +1420,12 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     // (Or by its number set before it, with one half stretched: a lone verse quoted in a commentary, «-٦٥ سَلِي…».)
     if (!near && !(stretched(h[0]) && stretched(h[1])) && !(h.numbered && (stretched(h[0]) || stretched(h[1])))) splits[i] = null;
   });
+  // (A left-to-right line split in two halves of running text — several words each — with no split line beside it is
+  // not a table of one row: a line pair of two columns of prose was set as one, cutting the columns. A table's lone
+  // row of a few words, between rows its wrapped cells keep apart, stays a row.)
+  const prose = (ps: Piece[]) => ps.map((p) => p.text).join(' ').trim().split(/\s+/).length >= 4;
+  const lone = lines.map((l, i) => { const h = splits[i]; return !l.rtl && !!h && !splits[i - 1] && !splits[i + 1] && prose(h[0]) && prose(h[1]); });
+  lone.forEach((x, i) => { if (x) splits[i] = null; });
   // The pitch a paragraph's lines are set at, for each size: the tighter of the steps between lines here (a
   // quarter of them are at most this). The page's median step, on a page of many short paragraphs, is the wider
   // step between paragraphs.
@@ -1615,7 +1622,9 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
       const gap = last.base - line.base;
       const brk = Math.abs(line.size - last.size) > last.size * 0.12
         || gap > pitch * 1.45
-        || (endGap(last) > tolOf(last) * 1.2 && !centered(last))
+        // (In a column — «Exact look» — a line ends its paragraph only where the next line's first word had room at
+        // its end: a ragged column's lines all stop short of its widest.)
+        || (endGap(last) > tolOf(last) * 1.2 && !centered(last) && !(inColumn && endGap(last) <= firstWordW(line) + last.size * 0.6 + tolOf(last) * 0.5))
         || (startGap(line) > startGap(last) + tolOf(line) && full(last) && !(cur.lines.length === 1 && /^\s*[(（[]?[0-9\u0660-\u0669\u06F0-\u06F9]+[)）\].\-–]/.test(joinLine(last.pieces.map((p) => ({ text: p.text, l: p.l, r: p.r, h: p.h, keep: p.keep }))).text)))
         || (cur.lines.length > 1 && Math.abs(startGap(line) - startGap(cur.lines[cur.lines.length - 1])) > tolOf(line) && startGap(cur.lines[1]) - startGap(cur.lines[0]) > tolOf(line) && full(last))
         || centered(line) !== centered(last)
@@ -1741,11 +1750,71 @@ function realNotes(pg: PageModel): boolean {
   const refs = new Set<number>(); for (const b of [...pg.body, ...(pg.regions ?? []).flatMap((r) => r.cols.flat())]) { const rs = b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []; for (const runs of rs) for (const r of runs) if (r.note !== undefined) refs.add(r.note); }
   return pg.notes.every((n) => refs.has(n.num));
 }
+/** For a document to edit: the end of a column region carried over to the top of a page (the gutter is not found on a
+ *  page that holds only its last lines): the page's leading lines whose first splits in two at a band in the page's
+ *  middle, the lines after it keeping to the two sides of that band (± 3 pt) with their left edges on the two
+ *  columns' x, at one pitch; it ends at the first line that does not. Built as a region of two columns, the right
+ *  column's first paragraph joined to the left column's last when that one stops mid-sentence (one paragraph
+ *  flowing from one column into the next). Taken only where the page before ends in columns (mergeAcrossPages):
+ *  carried for the whole page it split a table further down. Undefined when the leading lines are not that, or do
+ *  not make whole blocks of the page as read in one column. */
+function leadColumns(body: Line[], blocks: Block[], fonts: Map<string, FontInfo>, W: number, L: number, R: number, pitchOf: (size: number) => number): PageModel['leadCols'] {
+  const ink = (l: Line) => l.pieces.filter((p) => p.text.trim() && p.text !== ' ').sort((a, b) => a.l - b.l);
+  const ls = body.filter((l) => !l.grid && !l.spacer && ink(l).length);
+  const l0 = ls[0]; if (!l0 || l0.rtl) return undefined;
+  const ps = ink(l0); let gi = -1, gw = 0, hi = -Infinity;
+  for (let i = 0; i < ps.length; i++) { if (i > 0) { const g = ps[i].l - hi; if (g >= 8 && ps[i].l > W * 0.35 && ps[i].l < W * 0.65 && g > gw) { gw = g; gi = i; } } hi = Math.max(hi, ps[i].r); }
+  if (gi < 1) return undefined;
+  const g0 = Math.max(...ps.slice(0, gi).map((p) => p.r)), g1 = ps[gi].l, xl = ps[0].l, xr = g1;
+  if (Math.abs(xl - L) > 3) return undefined;
+  const lead = [l0]; let step = 0;
+  for (let k = 1; k < ls.length; k++) {
+    const l = ls[k], ip = ink(l); const d = lead[lead.length - 1].base - l.base;
+    if (l.rtl || (step ? d > step * 1.4 : d > l.size * 1.6)) break;
+    const left = ip.filter((p) => p.r <= g0 + 3), right = ip.filter((p) => p.l >= g1 - 3);
+    if (left.length + right.length !== ip.length || (left.length && Math.abs(left[0].l - xl) > 3) || (right.length && Math.abs(right[0].l - xr) > 3)) break;
+    if (!step) step = d; lead.push(l);
+  }
+  const lastBase = lead[lead.length - 1].base;
+  // (Whole blocks of the page as read in one column: those before the cut all paragraphs within the lead, the next below it.)
+  let n = 0; while (n < blocks.length && blocks[n].kind === 'p' && (blocks[n] as Para).base0 !== undefined && (blocks[n] as Para).base0! >= lastBase - 0.5) n++;
+  if (!n || blocks.slice(0, n).some((b) => (b as Para).base1 === undefined || (b as Para).base1! < lastBase - 0.5)) return undefined;
+  const sideL = lead.map((l) => subLine(l, l.pieces.filter((p) => p.r <= g0 + 3))).filter((l) => ink(l).length);
+  const sideR = lead.map((l) => subLine(l, l.pieces.filter((p) => p.l >= g1 - 3))).filter((l) => ink(l).length);
+  if (!sideL.length || !sideR.length) return undefined;
+  const colL = buildBlocks(sideL, fonts, xl, g0, pitchOf, null), colR = buildBlocks(sideR, fonts, xr, R, pitchOf, null);
+  const a = colL[colL.length - 1], b = colR[0];
+  const edges: [number, number][] = [[xl, g0], [xr, Math.max(...sideR.map((l) => l.r))]];
+  if (a?.kind === 'p' && b?.kind === 'p' && a.runs.length && b.runs.length) {
+    const at = a.runs.map((r) => r.text).join('').trimEnd(), bt = b.runs.map((r) => r.text).join('').trimStart();
+    if (at && bt && !END_PUNCT.test(at) && /^\p{Ll}/u.test(bt)) {
+      a.runs.push({ ...b.runs[0], lj: true, br: false }, ...b.runs.slice(1)); a.base1 = b.base1;
+      return { region: { cols: [[...colL, ...colR.slice(1)]], edges, flow: true }, n };
+    }
+  }
+  return { region: { cols: [colL, colR], edges }, n };
+}
+
 function mergeAcrossPages(pages: PageModel[]): void {
+  // (A page whose leading lines end the column region the page before ends in: those lines in that region's columns.)
+  for (let k = 0; k < pages.length; k++) {
+    const b = pages[k], lc = b.leadCols; if (!lc) continue; delete b.leadCols;
+    const a = k > 0 ? pages[k - 1] : null; const last = a?.regions?.[a.regions.length - 1];
+    if (!a || !last || (last.cols.length < 2 && !last.flow) || b.regions?.length || b.placed?.length || b.vert) continue;
+    const rest = b.body.slice(lc.n);
+    b.regions = [lc.region, ...(rest.length ? [{ cols: [rest], edges: [[b.m.left, b.w - b.m.right]] as [number, number][] }] : [])]; b.body = [];
+    if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D lead-columns', k + 1, lc.n, lc.region.flow ? 'flow' : 'two');
+  }
+  // (A page in columns ends with its last region's last column's last paragraph; a page whose text begins in a region
+  // begins with its first column's first.)
+  const lastOf = (pg: PageModel): { list: Block[] } | null => { const r = pg.regions?.[pg.regions.length - 1]; if (r) { const c = r.cols[r.cols.length - 1]; return c?.length ? { list: c } : null; } return pg.body.length ? { list: pg.body } : null; };
+  const firstOf = (pg: PageModel): { list: Block[] } | null => { const r = pg.regions?.[0]; if (r) { const c = r.cols[0]; return c?.length ? { list: c } : null; } return pg.body.length ? { list: pg.body } : null; };
   for (let k = 0; k + 1 < pages.length; k++) {
+
     const a = pages[k], b = pages[k + 1];
-    if (a.placed?.length || b.placed?.length || a.regions?.length || b.regions?.length || a.vert || b.vert || (a.notesRaw.length && !realNotes(a))) continue;
-    const last = a.body[a.body.length - 1], first = b.body[0];
+    if (a.placed?.length || b.placed?.length || a.vert || b.vert || (a.notesRaw.length && !realNotes(a))) continue;
+    const la = lastOf(a), fb = firstOf(b); if (!la || !fb) continue;
+    const last = la.list[la.list.length - 1], first = fb.list[0];
     if (!last || !first || last.kind !== 'p' || first.kind !== 'p' || !last.runs.length || !first.runs.length) continue;
     const lt = last.runs.map((r) => r.text).join('').trimEnd(), ft = first.runs.map((r) => r.text).join('').trimStart();
     if (!lt || !ft || END_PUNCT.test(lt) || LIST_MARK.test(ft) || LIST_MARK.test(lt)) continue;
@@ -1757,7 +1826,7 @@ function mergeAcrossPages(pages: PageModel[]): void {
     if (!/^\p{Ll}/u.test(ft) && !(caseless && /\p{L}/u.test(ft.slice(0, 1)))) continue;
     first.runs[0] = { ...first.runs[0], lj: true, br: false };
     last.runs.push(...first.runs);
-    b.body.shift(); b.cont = true;
+    fb.list.shift(); b.cont = true;
     if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D cross-page', k + 1, lt.slice(-30), '|', ft.slice(0, 30));
   }
 }
@@ -1998,6 +2067,23 @@ function sortFurniture(pages: PageModel[]): void {
     pg.m.top = Math.max(6, u.top);
     pg.furniture = pg.furniture.filter((f) => !f.top);
   });
+  // A running foot repeats: a foot with no page's number in it whose words no page near has at its foot (the same
+  // words, or the same around a changing number) goes back into the text after the page's last line — a table's row
+  // a page break cut took for one, «Mill Quay», printed at the foot of every page. (A number alone, «- 3 -», is a
+  // page's number even on a document of one page.)
+  const feet = pages.map((pg) => new Set(pg.furniture.filter((f) => !f.top).map(key).filter(Boolean)));
+  pages.forEach((pg, k) => {
+    const u = pg.uncutFoot; delete pg.uncutFoot;
+    const foot = pg.furniture.filter((f) => !f.top);
+    if (!u || !foot.length || foot.some((f) => f.num || folioIn(textOf(f)))) return;
+    const keys = foot.map(key).filter(Boolean); if (!keys.length) return;
+    for (let j = Math.max(0, k - 4); j <= Math.min(pages.length - 1, k + 4); j++) if (j !== k && keys.some((x) => feet[j].has(x))) return;
+    if (pg.regions?.length) pg.regions.push({ cols: [u.blocks], edges: [[pg.m.left, pg.w - pg.m.right]] });
+    else if (pg.notesRaw.length && !realNotes(pg)) pg.notesRaw.push(...u.blocks);
+    else pg.body.push(...u.blocks);
+    pg.m.bottom = Math.min(pg.m.bottom, u.bottom);
+    pg.furniture = pg.furniture.filter((f) => f.top);
+  });
 }
 
 /** Typical baseline-to-baseline pitch for a given size, measured on runs of consecutive lines. */
@@ -2036,6 +2122,18 @@ function findGutterWide(lines: Line[], W: number): [number, number] | null {
   const dbg = (globalThis as { krDebugP2D?: boolean }).krDebugP2D;
   if (dbg) console.warn('P2D gutter-scan', JSON.stringify(best), allowed, JSON.stringify(cover.map((c, i) => [x0 + i, c]).filter(([, c]) => c <= allowed + 3)));
   if (!best) return null;
+  // (A justified column line may reach a few points into the band — LibreOffice's «…on the old signal» beside «and the
+  // small difference…»: a line of both columns whose only ink in the band enters it from one edge, short of its
+  // middle, narrows the gutter to clear it. It is its column's line, not one across both columns that cut the column region in three.)
+  { let a = best[0], b = best[1]; const mid = (a + b) / 2;
+    for (const l of ls) {
+      const ink = l.pieces.filter((p) => p.text.trim() && p.text !== '\u2009'); const inb = ink.filter((p) => p.r > best![0] && p.l < best![1]);
+      if (inb.length !== 1) continue; const p = inb[0];
+      // (A pair: the line has its other column's text too, beyond the band's far edge.)
+      if (p.l < best[0] && p.r < mid && ink.some((q) => q.l >= best![1] - 1)) a = Math.max(a, Math.ceil(p.r) + 1);
+      else if (p.r > best[1] && p.l > mid && ink.some((q) => q.r <= best![0] + 1)) b = Math.min(b, Math.floor(p.l) - 1);
+    }
+    if (b - a >= 6) best = [a, b]; }
   const [g0, g1] = best;
   // Both sides must carry text on many lines (a centred title over empty space is not a gutter).
   // (A line that runs on across the gutter is a line of neither column: a page in one column whose stretched lines
@@ -2346,7 +2444,7 @@ async function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stre
     // The space code's glyph, when it is a blank one (a legacy font's "space" may be a letter).
     let sp = !lead.legacy && lead.spaceCode !== undefined && idx.has(keys[0]) ? c2g[idx.get(keys[0])!].get(lead.spaceCode) : undefined;
     if (sp !== undefined) { try { if (sources[idx.get(keys[0])!].outline(sp).contours.length) sp = undefined; } catch { sp = undefined; } }
-    const meta = { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(ownFamily.get(k) ?? fonts.get(k)!.family)), space: lead.spaceW ?? spaceFromGaps(keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) };
+    const meta = { family: lead.family, bold: lead.bold, italic: lead.italic, raw: !!lead.wordFont, tatweel: keys.some((k) => stretched.has(ownFamily.get(k) ?? fonts.get(k)!.family)), space: spaceEm(lead, keys.flatMap((k) => fonts.get(k)!.gaps ?? [])) };
     const spaceGid = sp === undefined ? undefined : idx.get(keys[0])! * 65536 + sp;
     const family = lead.family;
     builds.push({ keys, lead, lines, built: builder.build(datas, lines, meta, spaceGid, () => buildFont(sources, unpackLines(lines), meta, spaceGid)).catch((e) => { console.warn('P2D font rebuild failed', family, e); return null; }) });
@@ -2405,11 +2503,19 @@ function fontBuilder(): { build(datas: Uint8Array[], lines: ReturnType<LinePack[
 /** An Arabic letter (one that joins its word, or a hamza / alef form): not a mark, digit, sign or punctuation. */
 const ARABIC_LETTER = /[ؠ-ؿف-يٮٯٱ-ۓەۮۯۺ-ۼۿ]/;
 
-/** A space as wide as the commonest gap between words (em), when the PDF draws none. */
-function spaceFromGaps(gaps: number[]): number {
-  if (gaps.length < 3) return 0.25;
-  const s = [...gaps].sort((a, b) => a - b);
-  return Math.min(0.5, Math.max(0.2, s[Math.floor(s.length * 0.25)]));
+/** The width of a font's space (em): the width it declares where it has a space (its Unicode map has one, or
+ *  the page draws it); else a monospaced face's advance; else the word gap the page shows in it — the median of
+ *  its gaps near the narrowest (a justified line's gaps sit about the natural one; bold and italic faces are
+ *  measured on their own lines); else by weight. (The 25th percentile of the gaps, or code 32's width taken for a space, gave TeX's
+ *  faces a space of half an em: headings letter-spaced, justified lines that no longer fit.) */
+function spaceEm(fi: FontInfo, gaps = fi.gaps ?? []): number {
+  if (fi.spaceW !== undefined && (fi.spaceDecl || fi.drawnSp)) return fi.spaceW;
+  if (fi.adv) return fi.adv;
+  // (The gaps about the narrow end only: a wrapped title's stretched first line, the quad after a section's
+  // number and a sentence's wider end are not the font's space — TeX's bold title showed 0.47 em on one line,
+  // 0.375 on the next.)
+  if (gaps.length >= 5) { const s = [...gaps].sort((x, y) => x - y); const q = s[Math.floor(s.length / 4)]; return Math.min(0.5, Math.max(0.2, median(s.filter((g) => g <= q * 1.2)))); }
+  return fi.bold ? 0.38 : 0.33;
 }
 
 /** Runs set in fonts merged into another take its name, and runs that now match are joined (Arabic joins only
@@ -2599,7 +2705,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     // not bold in Word's terms (setting bold would draw it heavier than the page shows).
     pieces.push({ text, l: e, r: e + it.width, y: f, h, font: it.fontName, color: it.color || '000000', bold: !!it.fakeBold && (it.strokeEm ?? 0.03) >= 0.014, ...(conn ? { conn: true } : {}), ...(it.hidden ? { hidden: true } : {}), ...(it.krLead ? { keep: true } : {}), ...(it.krInked ? { inked: true } : {}), ...(drawnAs !== it.fontName ? { drawnAs } : {}), ...(it.krTints?.length ? { tints: it.krTints } : {}) });
     if (it.fontName && !fonts.has(it.fontName)) {
-      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
+      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; defaultWidth?: number; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
       // The same font file seen already (under the first copy's name): one font, not two.
       if (store.same && fo) {
@@ -2611,13 +2717,19 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     }
     if (store.pageFonts && it.fontName && !store.pageFonts.includes(it.fontName)) store.pageFonts.push(it.fontName);
     if (it.fontName && !fonts.has(it.fontName)) {
-      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; fontMatrix?: number[] } | null = null;
+      let fo: { name?: string; bold?: boolean; black?: boolean; italic?: boolean; krRaw?: Uint8Array; krNoToUnicode?: boolean; isSymbolicFont?: boolean; isSerifFont?: boolean; isMonospace?: boolean; krSpaceCode?: number; krLegacy?: boolean; data?: Uint8Array; toFontChar?: Record<string, number>; widths?: Record<string, number>; defaultWidth?: number; fontMatrix?: number[] } | null = null;
       try { fo = page.commonObjs.has(it.fontName) ? page.commonObjs.get(it.fontName) : null; } catch { /* not loaded */ }
       const info: FontInfo = { ...parseFontName(fo?.name, fo), raw: fo?.krRaw, noUnicode: !!fo?.krNoToUnicode, symbolic: !!fo?.isSymbolicFont, serif: !!fo?.isSerifFont, mono: !!fo?.isMonospace, spaceCode: fo?.krSpaceCode, legacy: !!fo?.krLegacy, src: fo?.data && fo.toFontChar ? { data: fo.data, toFontChar: fo.toFontChar } : undefined };
       // Word carries TrueType outlines only: a CFF-flavoured OpenType file is rebuilt, never embedded as is.
       if (info.raw && info.raw[0] === 0x4f) info.raw = undefined;
       // The width of its space (em), for a rebuilt font whose space glyph pdf.js dropped.
-      { const sc = fo?.krSpaceCode ?? 32; const w = fo?.widths?.[sc]; if (w) info.spaceW = w * (fo?.fontMatrix?.[0] ?? 0.001); }
+      // (A width the font declares at its space code counts only when the font has a space there — its Unicode map
+      // says so, or the page draws it (spaceEm): TeX's fonts draw none, and their code 32 is the visible-space
+      // glyph, half an em wide.)
+      { const sc = fo?.krSpaceCode ?? 32; const w = fo?.widths?.[sc]; if (w) { info.spaceW = w * (fo?.fontMatrix?.[0] ?? 0.001); info.spaceDecl = fo?.krSpaceCode !== undefined; } }
+      // (A monospaced face's space is its glyphs' advance: one the file calls fixed-pitch, or whose dozen or more
+      // widths are all one; a CID face with no widths of its own has its default; never a CJK face's, all an em wide.)
+      if (fo) { const ws = Object.values(fo.widths ?? {}).filter((w) => w > 0); if (!ws.length && fo.defaultWidth) ws.push(fo.defaultWidth); const m = median(ws); const em = m * (fo.fontMatrix?.[0] ?? 0.001); if (ws.length && em < 0.9 && (fo.isMonospace || (ws.length >= 12 && ws.every((w) => Math.abs(w - m) <= m * 0.01)))) info.adv = em; }
       // The font file says whether it is a bold (or italic) face.
       const os2 = fo?.krRaw ? readOs2(fo.krRaw) : null;
       // (A face whose own tables say regular is regular, even named "… Bold": "AL-Mohanad Bold" is a family.)
@@ -2828,7 +2940,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     for (const p of [...l.pieces].sort((a, b) => a.l - b.l)) {
       if (!p.codes) {
         // (A drawn space's width is the font's space, which a rebuilt font must have.)
-        if (p.text === '\u2009' && p.r - p.l > 0.05 * p.h) { const fi = fonts.get(p.font); if (fi && (fi.gaps ??= []).length < 400) fi.gaps.push((p.r - p.l) / p.h); }
+        if (p.text === '\u2009' && p.r - p.l > 0.05 * p.h) { const fi = fonts.get(p.font); if (fi) { fi.drawnSp = (fi.drawnSp ?? 0) + 1; if ((fi.gaps ??= []).length < GAP_CAP) fi.gaps.push((p.r - p.l) / p.h); } }
         if (p.text === '\u2009' || p.l - prevR > 0.5) flush(); prevR = Math.max(prevR, p.r); continue;
       }
       if (p.l - prevR > p.h * 0.12) flush();
@@ -2837,7 +2949,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
       let end = NaN;
       for (const c of p.codes) {
         const gap = (c[2] - end) / c[4];
-        if (gap > 0.12) { flush(); if (gap < 1) { const fi = fonts.get(p.font); if (fi && (fi.gaps ??= []).length < 400) fi.gaps.push(gap); } }
+        if (gap > 0.12) { flush(); if (gap < 1) { const fi = fonts.get(p.font); if (fi && (fi.gaps ??= []).length < GAP_CAP) fi.gaps.push(gap); } }
         seq.push([p.font, c]);
         if (c[5] > 0) end = c[2] + c[5] * c[4];
       }
@@ -2893,7 +3005,10 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   // (Nor is a line that reads as a note — its number or mark, then words — whatever its place.)
   const noteLike = (l: Line) => { const t = l.pieces.map((p) => p.text).join(' ').replace(/\s+/g, ' ').trim(); return /^([0-9]{1,3}|[*\u2020\u2021\u00a7])\s?\p{L}/u.test(t) && t.split(/\s+/).length >= 3 && !edgeFolio(l) && !/\d\s*$/.test(t); };
   const nearerFoot = () => !noteLike(body[body.length - 1]) && (!footer.length || body.length < 2 || body[body.length - 1].base - footer[0].base < body[body.length - 2].base - body[body.length - 1].base);
-  while (body.length > 1 && footer.length < 2 && cutBottom(body.length - 1) && nearerFoot()) footer.unshift(body.pop()!);
+  // (Nor a line inside a ruled table: the first cell of a row a page break cuts — «Mill Quay» — is the table's.)
+  const preGrids = body.length > 1 ? pullGrids(body, findShapes(pdfjs, ol, true), W, H).filter((l) => l.grid).map((l) => l.grid!) : [];
+  const inGrid = (l: Line) => preGrids.some((g) => l.base < g.ys[0] + 1 && l.base > g.ys[g.ys.length - 1] - 1 && l.l > g.xs[0] - 2 && l.r < g.xs[g.xs.length - 1] + 2);
+  while (body.length > 1 && footer.length < 2 && cutBottom(body.length - 1) && nearerFoot() && !inGrid(body[body.length - 1])) footer.unshift(body.pop()!);
   // Columns: a gutter down the middle splits the text into regions — full-width lines (titles, an abstract)
   // and runs of lines set in two columns.
   // (A ruled table's columns are not the page's: its lines are left out when looking for a gutter, or a table of
@@ -2960,6 +3075,11 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
       if (lp.some((p) => p.text.trim())) cur.left!.push(subLine(l, lp));
       if (rp.some((p) => p.text.trim())) cur.right!.push(subLine(l, rp));
     }
+    // (A stretch whose one side holds no line of running text — a table's last column of figures beside its first
+    // ones, «Tide (cm) / 35 / 31» — is not in columns: its rows read across.)
+    const wordy = (ls: Line[]) => ls.some((l) => l.pieces.map((p) => p.text).join(' ').trim().split(/\s+/).length >= 4);
+    for (let i = 0; i < raw.length; i++) { const r = raw[i]; if (!r.full && r.left!.length && r.right!.length && !(wordy(r.left!) && wordy(r.right!))) raw[i] = { full: r.orig }; }
+    for (let i = raw.length - 1; i > 0; i--) if (raw[i].full && raw[i - 1].full) { raw[i - 1].full!.push(...raw[i].full!); raw.splice(i, 1); }
     // A line or two between full-width ones that merely leaves the gutter blank (authors set apart under a
     // title) belongs with them, not in columns.
     for (let i = 0; i < raw.length; i++) {
@@ -2993,9 +3113,9 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const pitchCol = pitchTable(raw.flatMap((r) => (r.full ? [r.full] : [r.left!, r.right!])));
     const edgesOf = (ls: Line[]): [number, number] => [Math.min(...ls.map((l) => l.l)), Math.max(...ls.map((l) => l.r))];
     const regions: Region[] = []; let prevBase: number | null = null; let colTop: number | null = null;
-    // (A document to edit: the next region's space above is measured from the foot of what stands above it — a table's
-    // last rule, not its first line.)
-    const endOf = (l: Line) => (p2d.edit && l.grid ? l.grid.ys[l.grid.ys.length - 1] + (1 - BASE) * pitchCol(l.size) : l.base);
+    // (The next region's space above is measured from the foot of what stands above it — a table's last rule, not its
+    // first line: «Exact look» too, where a figure's caption under a table otherwise sat the table's height too low.)
+    const endOf = (l: Line) => (l.grid ? l.grid.ys[l.grid.ys.length - 1] + (1 - BASE) * pitchCol(l.size) : l.base);
     const pageLo = Math.min(...body.map((l) => l.l)), pageHi = Math.max(...body.map((l) => l.r));
     for (const r of raw) {
       if (r.full) {
@@ -3013,7 +3133,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
         // its own height below it (a title in one column, text higher up in the other).
         let start = prevBase;
         if (start === null && !regions.length) { const t = [...r.left!, ...r.right!].reduce((a, b) => (b.base > a.base ? b : a)); start = t.base + BASE * pitchCol(t.size); colTop = start; }
-        regions.push({ cols: ordered.map((ls) => { const e = edgesOf(ls); return buildBlocks(ls, fonts, e[0], e[1], pitchCol, start); }), edges: ordered.map(edgesOf) });
+        regions.push({ cols: ordered.map((ls) => { const e = edgesOf(ls); return buildBlocks(ls, fonts, e[0], e[1], pitchCol, start, p2d.edit, true); }), edges: ordered.map(edgesOf) });
         prevBase = Math.min(...[...r.left!, ...r.right!].map(endOf));
       }
     }
@@ -3102,6 +3222,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const bodyBlocks = buildBlocks(pullFormulas(pullDiagrams(pullGrids(body, shapes, W, H), boxShapes, formulas, W, H, labels), formulas), fonts, L, R, pitchOf, null);
   // Figures (a document to edit): a picture standing in the text, no words over it, its own paragraph where it stands.
   if (p2d.edit) for (const f of findFigs(pdfjs, ol, body, W, H, L, R)) insertFig(bodyBlocks, f);
+  const leadCols = p2d.edit ? leadColumns(body, bodyBlocks, fonts, W, L, R, pitchOf) : undefined;
   for (const l of labels ?? []) {
     const runs = runsOf(l.pieces, fonts, l.rtl); if (!runs.some((r) => r.text.trim())) continue;
     const lh = l.size * 1.3;
@@ -3164,8 +3285,12 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const lastBody = body[body.length - 1];
   if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D notes', JSON.stringify({ lastBody: lastBody?.base, firstNote: notesLines[0]?.base, before: notesRaw[0] && notesRaw[0].before, pitch: notesRaw[0] && notesRaw[0].pitch, bodyBlocks: bodyBlocks.map((b) => [b.kind, +b.before.toFixed(1), +b.pitch.toFixed(1)]) }));
   const notesAt = notesLines.length && notesRaw[0] ? H - notesLines[0].base - BASE * notesRaw[0].pitch : undefined;
+  // (The lines taken as the running foot, the same way: a foot seen on one page only is the text's — see sortFurniture.)
+  const footFrom = notesLines.length ? notesLines[notesLines.length - 1] : body[body.length - 1];
+  const footBlocks = footer.length && bodyBlocks.length && footFrom ? buildBlocks(footer, fonts, L, R, pitchOf, footFrom.base) : [];
+  const uncutFoot = footBlocks.length ? { blocks: footBlocks, bottom: Math.max(8, footer[footer.length - 1].base - (1 - BASE) * pitchOf(footer[footer.length - 1].size) - pitchOf(footer[footer.length - 1].size)) } : undefined;
   const uncut = headBlocks.length ? { blocks: headBlocks, top: H - header[0].base - BASE * headBlocks[0].pitch, bottom: H - header[header.length - 1].base + (1 - BASE) * headBlocks[headBlocks.length - 1].pitch } : undefined;
-  return { ref: refOf(page), vert, w: W, h: H, pics, boxes, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m, uncut, low: lowest0?.base, lowPitch: lowest0 ? pitchOf(lowest0.size) : undefined };
+  return { ref: refOf(page), vert, w: W, h: H, pics, boxes, furniture, header: headerBlocks, footer: footerBlocks, body: bodyBlocks, ...(leadCols ? { leadCols } : {}), notes, notesRaw, notesBox, notesAt, bodyBottom: lastBody ? lastBody.base - lastBody.size * 0.4 : 0, m, uncut, ...(uncutFoot ? { uncutFoot } : {}), low: lowest0?.base, lowPitch: lowest0 ? pitchOf(lowest0.size) : undefined };
 }
 
 /* ------------------------------------------------------------------ */
@@ -3288,7 +3413,8 @@ async function readInLanes(file: Blob, nPages: number, nLanes: number, fonts: Ma
         }
         if (keep) { for (const [font, u] of s.uses) { const fi = fonts.get(font)!; fi.uses = (fi.uses ?? 0) + 1; store.seen.get(font)!.add(u[0]); } store.seqs.push(s.uses, s.rtl); }
       }
-      for (const [id, add] of r.gaps) { const fi = fonts.get(id); if (!fi) continue; const g = (fi.gaps ??= []); for (const x of add) { if (g.length >= 400) break; g.push(x); } }
+      for (const id of r.drawn ?? []) { const fi = fonts.get(id); if (fi) fi.drawnSp = (fi.drawnSp ?? 0) + 1; }
+      for (const [id, add] of r.gaps) { const fi = fonts.get(id); if (!fi) continue; const g = (fi.gaps ??= []); for (const x of add) { if (g.length >= GAP_CAP) break; g.push(x); } }
       const found = r.wordFound.filter((id) => !words.has(id));
       if (found.length) { for (const id of found) { words.add(id); const fi = fonts.get(id); if (fi) fi.wordFont = true; } for (const l of lanes) l.w.postMessage({ t: 'word', ids: found }); }
       pages.push(r.model);
@@ -3522,8 +3648,10 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
       align: alignOf(b.align),
       indent: b.list && b.listInd && b.align !== 'center' && b.align !== 'end' ? undefined : indentOf(b),
       // (For a document to edit, the lines' pitch as a multiple of the type's own line — Word's automatic spacing,
-      // which grows with a bigger letter or a picture in the line instead of cutting it off.)
-      spacing: p2d.edit && !extra.frame && b.runs.length ? { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: autoLine(b.pitch, b.size, b.runs, part), lineRule: 'auto' } : { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: 'exact' },
+      // which grows with a bigger letter or a picture in the line instead of cutting it off. A paragraph holding
+      // only a picture is single-spaced: under a multiple below one LibreOffice lifts the picture by the
+      // paragraph's space before, onto the table above it, and leaves a hole under it.)
+      spacing: p2d.edit && !extra.frame && b.runs.length ? { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: b.runs.every((r) => r.art || !r.text.trim()) ? 240 : autoLine(b.pitch, b.size, b.runs, part), lineRule: 'auto' } : { before: Math.round((extra.before ?? b.before) * PT), after: 0, line: Math.round(b.pitch * PT), lineRule: 'exact' },
       // (Stops are measured from the text's edge less 3 pt; the margin stands further out by the page's slack — see
       // indentOf: a stop is set from the margin, as Word measures it.)
       tabs: b.tabs?.map((t) => ({ type: t.type, pos: Math.round((t.pos + (extra.frame ? 0 : (b.rtl ? slackNow[1] : slackNow[0]) - 3)) * PT) })),
@@ -3709,7 +3837,8 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
         if (i === pg.regions!.length - 1 && flowNotes.length) kids.push(blocksFor(flowNotes, null, body));
         if (!kids.join('')) kids.push(emptyPara);
         let columns: import('./docxwrite').Columns | undefined;
-        if (rg.cols.length > 1) {
+        // (A region that flows one paragraph from one column into the next has one list of blocks, two columns.)
+        if (rg.cols.length > 1 || (rg.flow && rg.edges.length > 1)) {
           // Visual left-to-right column boxes, then in the section's reading order.
           const boxes = rg.edges.map(([a, b]) => [Math.max(textL, a - 3), Math.min(textR, b + 3)] as [number, number]).sort((x, y) => x[0] - y[0]);
           const widths = [boxes[0][1] - textL, textR - boxes[1][0]];

@@ -2,8 +2,8 @@
  "note": "cells: floors of the «Easy to edit» result (the default); exact: floors of the «Exact look» result, from the scores the converter had before «Easy to edit» existed. Each cell is a score minus 0.02 (never below 0); the test fails when a cell falls under its floor. KR_CORPUS_WRITE_FLOORS=1 only raises floors.",
  "cells": {
   "chain-lo-draw": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.976,
    "text_ar_acc": 0.974,
    "text_ar_rec": 0.922,
    "ar_digits": 0.98,
@@ -11,7 +11,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.811,
+   "para_f1": 0.887,
    "para_long_whole": 0.514,
    "headings_rec": 0.98,
    "headings_level": 0.813,
@@ -30,7 +30,7 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -42,7 +42,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "chrome-cli": {
    "text_lat_acc": 0.98,
@@ -54,8 +55,8 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.913,
-   "para_long_whole": 0.883,
+   "para_f1": 0.966,
+   "para_long_whole": 0.98,
    "hyphen_join": 0.98,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -84,7 +85,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "chrome-pw-tagged": {
    "text_lat_acc": 0.98,
@@ -96,8 +98,8 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.913,
-   "para_long_whole": 0.883,
+   "para_f1": 0.966,
+   "para_long_whole": 0.98,
    "hyphen_join": 0.98,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -128,7 +130,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "chrome-pw-untagged": {
    "text_lat_acc": 0.98,
@@ -140,8 +143,8 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.913,
-   "para_long_whole": 0.883,
+   "para_f1": 0.966,
+   "para_long_whole": 0.98,
    "hyphen_join": 0.98,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -172,11 +175,12 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "lo-docx-pdfa": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.976,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -184,7 +188,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.848,
+   "para_f1": 0.926,
    "para_long_whole": 0.976,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -203,7 +207,7 @@
    "links": 0.98,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -215,11 +219,12 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "lo-docx-tagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.976,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -227,7 +232,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.848,
+   "para_f1": 0.926,
    "para_long_whole": 0.976,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -246,7 +251,7 @@
    "links": 0.98,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -258,11 +263,12 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "lo-docx-untagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.976,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -270,7 +276,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.848,
+   "para_f1": 0.926,
    "para_long_whole": 0.976,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -289,7 +295,7 @@
    "links": 0.98,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -301,11 +307,12 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "lo-odt-tagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.976,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -313,7 +320,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.848,
+   "para_f1": 0.926,
    "para_long_whole": 0.976,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -332,7 +339,7 @@
    "links": 0.98,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -344,11 +351,12 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "lo-odt-untagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.976,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -356,7 +364,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.848,
+   "para_f1": 0.926,
    "para_long_whole": 0.976,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -375,7 +383,7 @@
    "links": 0.98,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -387,7 +395,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "pdflatex": {
    "text_lat_acc": 0.98,
@@ -421,13 +430,14 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "pdflib": {
-   "text_lat_acc": 0.938,
-   "text_lat_rec": 0.944,
-   "para_f1": 0.756,
-   "para_long_whole": 0.925,
+   "text_lat_acc": 0.964,
+   "text_lat_rec": 0.98,
+   "para_f1": 0.869,
+   "para_long_whole": 0.98,
    "headings_rec": 0.98,
    "headings_level": 0.98,
    "headings_text": 0.98,
@@ -442,9 +452,9 @@
    "caption": 0.98,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.313,
+   "columns_order": 0.98,
    "columns_set": 0.98,
-   "emphasis_bold": 0.78,
+   "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
    "lo_opens": 0.98,
@@ -452,7 +462,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "qpdf-encrypted": {
    "text_lat_acc": 0.98,
@@ -489,11 +500,12 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "qpdf-linearized": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.976,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -501,7 +513,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.848,
+   "para_f1": 0.926,
    "para_long_whole": 0.976,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -520,7 +532,7 @@
    "links": 0.98,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -532,7 +544,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "qpdf-objstm": {
    "text_lat_acc": 0.98,
@@ -544,8 +557,8 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.913,
-   "para_long_whole": 0.883,
+   "para_f1": 0.966,
+   "para_long_whole": 0.98,
    "hyphen_join": 0.98,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -576,7 +589,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "reportlab": {
    "text_lat_acc": 0.98,
@@ -613,7 +627,8 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   },
   "scan-image": {
    "ocr_recovered": 0,
@@ -629,7 +644,7 @@
    "text_ja_rec": 0,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.393,
+   "para_f1": 0.413,
    "para_long_whole": 0.722,
    "headings_rec": 0.647,
    "headings_level": 0.313,
@@ -689,7 +704,7 @@
    "pages": 0.48
   },
   "xelatex": {
-   "text_lat_acc": 0.97,
+   "text_lat_acc": 0.98,
    "text_lat_rec": 0.976,
    "text_ar_acc": 0.974,
    "text_ar_rec": 0.966,
@@ -698,7 +713,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.899,
+   "para_f1": 0.926,
    "para_long_whole": 0.98,
    "headings_rec": 0.98,
    "headings_level": 0.98,
@@ -717,7 +732,7 @@
    "links": 0.98,
    "hf_pollution": 0.813,
    "hf_present": 0.98,
-   "columns_order": 0.929,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
@@ -729,13 +744,14 @@
    "list_geometry": 0.98,
    "runs_plain": 0.98,
    "pitch": 0.98,
-   "pages": 0.98
+   "pages": 0.98,
+   "space_adv": 0.98
   }
  },
  "exact": {
   "chain-lo-draw": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.98,
    "text_ar_acc": 0.974,
    "text_ar_rec": 0.922,
    "ar_digits": 0.98,
@@ -743,7 +759,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.432,
+   "para_f1": 0.503,
    "para_long_whole": 0.071,
    "headings_rec": 0,
    "headings_level": 0,
@@ -762,14 +778,16 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
-   "direction": 0.935,
+   "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "chrome-cli": {
    "text_lat_acc": 0.98,
@@ -781,7 +799,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.712,
+   "para_f1": 0.815,
    "para_long_whole": 0.869,
    "hyphen_join": 0,
    "headings_rec": 0,
@@ -806,7 +824,9 @@
    "mono": 0.98,
    "direction": 0.813,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "chrome-pw-tagged": {
    "text_lat_acc": 0.98,
@@ -818,7 +838,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.671,
+   "para_f1": 0.775,
    "para_long_whole": 0.869,
    "hyphen_join": 0,
    "headings_rec": 0,
@@ -845,7 +865,9 @@
    "mono": 0.98,
    "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "chrome-pw-untagged": {
    "text_lat_acc": 0.98,
@@ -857,7 +879,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.671,
+   "para_f1": 0.775,
    "para_long_whole": 0.869,
    "hyphen_join": 0,
    "headings_rec": 0,
@@ -884,11 +906,13 @@
    "mono": 0.98,
    "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "lo-docx-pdfa": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.98,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -896,7 +920,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.564,
+   "para_f1": 0.662,
    "para_long_whole": 0.715,
    "headings_rec": 0,
    "headings_level": 0,
@@ -915,18 +939,20 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
-   "direction": 0.935,
+   "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "lo-docx-tagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.98,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -934,7 +960,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.564,
+   "para_f1": 0.662,
    "para_long_whole": 0.715,
    "headings_rec": 0,
    "headings_level": 0,
@@ -953,18 +979,20 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
-   "direction": 0.935,
+   "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "lo-docx-untagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.98,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -972,7 +1000,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.564,
+   "para_f1": 0.662,
    "para_long_whole": 0.715,
    "headings_rec": 0,
    "headings_level": 0,
@@ -991,18 +1019,20 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
-   "direction": 0.935,
+   "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "lo-odt-tagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.98,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -1010,7 +1040,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.564,
+   "para_f1": 0.662,
    "para_long_whole": 0.715,
    "headings_rec": 0,
    "headings_level": 0,
@@ -1029,18 +1059,20 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
-   "direction": 0.935,
+   "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "lo-odt-untagged": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.98,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -1048,7 +1080,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.564,
+   "para_f1": 0.662,
    "para_long_whole": 0.715,
    "headings_rec": 0,
    "headings_level": 0,
@@ -1067,14 +1099,16 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
-   "direction": 0.935,
+   "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "pdflatex": {
    "text_lat_acc": 0.98,
@@ -1103,12 +1137,14 @@
    "emphasis_italic": 0.98,
    "mono": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "pdflib": {
-   "text_lat_acc": 0.938,
-   "text_lat_rec": 0.944,
-   "para_f1": 0.463,
+   "text_lat_acc": 0.964,
+   "text_lat_rec": 0.98,
+   "para_f1": 0.521,
    "para_long_whole": 0.094,
    "headings_rec": 0,
    "headings_level": 0,
@@ -1124,13 +1160,15 @@
    "caption": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.313,
+   "columns_order": 0.98,
    "columns_set": 0.98,
-   "emphasis_bold": 0.78,
+   "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "qpdf-encrypted": {
    "text_lat_acc": 0.979,
@@ -1139,7 +1177,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.494,
+   "para_f1": 0.598,
    "para_long_whole": 0.826,
    "headings_rec": 0,
    "headings_level": 0,
@@ -1163,11 +1201,13 @@
    "emphasis_italic": 0.98,
    "mono": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "qpdf-linearized": {
-   "text_lat_acc": 0.927,
-   "text_lat_rec": 0.962,
+   "text_lat_acc": 0.98,
+   "text_lat_rec": 0.98,
    "text_ar_acc": 0.98,
    "text_ar_rec": 0.98,
    "ar_digits": 0.98,
@@ -1175,7 +1215,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.564,
+   "para_f1": 0.662,
    "para_long_whole": 0.715,
    "headings_rec": 0,
    "headings_level": 0,
@@ -1194,14 +1234,16 @@
    "links": 0.48,
    "hf_pollution": 0.98,
    "hf_present": 0.98,
-   "columns_order": 0.832,
+   "columns_order": 0.98,
    "columns_set": 0.98,
    "emphasis_bold": 0.98,
    "emphasis_italic": 0.98,
    "mono": 0.98,
-   "direction": 0.935,
+   "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "qpdf-objstm": {
    "text_lat_acc": 0.98,
@@ -1213,7 +1255,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.671,
+   "para_f1": 0.775,
    "para_long_whole": 0.869,
    "hyphen_join": 0,
    "headings_rec": 0,
@@ -1240,7 +1282,9 @@
    "mono": 0.98,
    "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "reportlab": {
    "text_lat_acc": 0.979,
@@ -1249,7 +1293,7 @@
    "text_ja_rec": 0.98,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.494,
+   "para_f1": 0.598,
    "para_long_whole": 0.826,
    "headings_rec": 0,
    "headings_level": 0,
@@ -1273,7 +1317,9 @@
    "emphasis_italic": 0.98,
    "mono": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   },
   "scan-image": {
    "ocr_recovered": 0,
@@ -1289,7 +1335,7 @@
    "text_ja_rec": 0,
    "text_zh_acc": 0.98,
    "text_zh_rec": 0.98,
-   "para_f1": 0.205,
+   "para_f1": 0.217,
    "para_long_whole": 0.722,
    "headings_rec": 0,
    "headings_level": 0,
@@ -1341,7 +1387,8 @@
    "mono": 0.98,
    "direction": 0.702,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "pages": 0.48
   },
   "xelatex": {
    "text_lat_acc": 0.898,
@@ -1379,7 +1426,9 @@
    "mono": 0.98,
    "direction": 0.98,
    "lo_opens": 0.98,
-   "text_layer_recall": 0.98
+   "text_layer_recall": 0.98,
+   "space_adv": 0.98,
+   "pages": 0.98
   }
  }
 }

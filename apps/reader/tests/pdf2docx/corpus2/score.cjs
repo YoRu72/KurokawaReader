@@ -321,7 +321,8 @@ function scoreDocx(D, src, feat, meta) {
   }
   // ---- emphasis and monospace
   if (ok('emphasis')) {
-    const skip = [...E.blocks.filter((b) => ['title', 'h', 'caption'].includes(b.kind)).map((b) => fold(b.text)), ...(E.tableEn ? E.tableEn.rows.flat().map((c) => fold(c.text)) : []), 'notes'].filter(Boolean);
+    // (A table's cells are no body emphasis, whether in a table or set as a line of the row's cells.)
+    const skip = [...E.blocks.filter((b) => ['title', 'h', 'caption'].includes(b.kind)).map((b) => fold(b.text)), ...(E.tableEn ? E.tableEn.rows.flat().map((c) => fold(c.text)) : []), ...(E.tableEn ? E.tableEn.rows.map((r) => r.map((c) => fold(c.text)).join('')) : []), 'notes'].filter(Boolean);
     const gotB = [], gotI = []; for (const p of D.paras) { if (p.table || furn.includes(p) || footLike.includes(p)) continue; const f = fold(p.text); if (!f || p.heading) continue; if (skip.some((s) => s.includes(f) && f.length >= 4)) continue; if (lang.get(p) !== 'lat' && lang.get(p) !== undefined) continue; for (const r of p.runs) { if (r.b) gotB.push(...words(r.text)); if (r.i) gotI.push(...words(r.text)); } }
     const f1 = (exp, got) => { const r = recall(exp, got), pr = recall(got, exp); if (r === null) return null; if (!got.length) return 0; return r + pr ? 2 * r * pr / (r + pr) : 0; };
     const b1 = f1(E.bold, gotB), i1 = f1(E.italic, gotI); S.emphasis_bold = b1; S.emphasis_italic = i1;
@@ -377,7 +378,7 @@ async function pdfGeometry(file) {
   const base = path.join(__dirname, '../../../node_modules/pdfjs-dist/');
   const pdfjs = await import(url.pathToFileURL(path.join(base, 'legacy/build/pdf.mjs')).href); const { OPS } = pdfjs;
   const task = pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(file)), password: '', cMapUrl: url.pathToFileURL(path.join(base, 'cmaps/')).href, cMapPacked: true, standardFontDataUrl: url.pathToFileURL(path.join(base, 'standard_fonts/')).href, verbosity: 0, isEvalSupported: false }); const doc = await task.promise;
-  const G = { pages: doc.numPages, decor: 0, lines: [] };
+  const G = { pages: doc.numPages, decor: 0, lines: [], gaps: {} };
   // (The list items' places, from listgeo.json — see make/gen_listgeo.py — with each item's text from source.json.)
   { const id = path.basename(file, '.pdf'); const lg = path.join(__dirname, 'listgeo.json'); const src = JSON.parse(fs.readFileSync(path.join(__dirname, 'source.json'), 'utf8'));
     const texts = {}; const walk = (bs) => { for (const b of bs) { if (b.type === 'ul' || b.type === 'ol') texts[b.id] = b.items.map((x) => x.text); if (b.type === 'columns') walk(b.blocks); } }; walk(src.blocks);
@@ -387,6 +388,25 @@ async function pdfGeometry(file) {
     const page = await doc.getPage(n); const ol = await page.getOperatorList(); const tc = await page.getTextContent();
     const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({ str: it.str, x0: it.transform[4], x1: it.transform[4] + it.width, y: it.transform[5], h: it.height || Math.hypot(it.transform[2], it.transform[3]) || 10 }));
     G.lines.push(items);
+    // (Word gaps per font, in em, inside each shown string: a space the page draws with its word spacing, or a kern
+    // of 0.15-1.2 em between two glyphs — TeX draws no spaces. A gap of a drawn space counts from 0.05 em.)
+    { let font = null, size = 10, ws = 0, cs = 0;
+      for (let i = 0; i < ol.fnArray.length; i++) {
+        const fn = ol.fnArray[i], a = ol.argsArray[i];
+        if (fn === OPS.setFont) { size = Math.abs(a[1]) || 10; let fo = null; try { fo = page.commonObjs.get(a[0]); } catch { fo = null; } font = fo && fo.name ? { name: fo.name, fm: (fo.fontMatrix && fo.fontMatrix[0]) || 0.001 } : null; }
+        else if (fn === OPS.setWordSpacing) ws = +a[0] || 0; else if (fn === OPS.setCharSpacing) cs = +a[0] || 0;
+        else if (fn === OPS.showText && font && Array.isArray(a[0])) {
+          let gap = 0, drawn = false, any = false; const key = spaceKeyPdf(font.name);
+          for (const g of a[0]) {
+            if (typeof g === 'number') { gap += -g / 1000; continue; }
+            if (!g) continue;
+            if (g.isSpace || g.unicode === ' ') { gap += (g.width || 0) * font.fm + (ws + cs) / size; drawn = true; continue; }
+            if (any && ((drawn && gap > 0.05) || (!drawn && gap >= 0.15)) && gap <= 1.2) (G.gaps[key] = G.gaps[key] || []).push(gap);
+            gap = 0; drawn = false; any = true;
+          }
+        }
+      }
+    }
     let ctm = [1, 0, 0, 1, 0, 0], lw = 1; const st = []; const ss = []; const seen = new Set();
     for (let i = 0; i < ol.fnArray.length; i++) {
       const fn = ol.fnArray[i], a = ol.argsArray[i];
@@ -440,6 +460,56 @@ function scoreGeometry(D, G) {
   }
   return S;
 }
+// A font's key, to match the PDF's fonts to the ones the .docx carries: its family in lower-case letters and digits, then
+// b/i for bold/italic ("NCHPWW+LMRoman10-Bold" -> "lmroman10|b"; the .docx's "LM Roman10" embedBold -> the same).
+function spaceKeyPdf(name) {
+  const n = String(name).replace(/^[A-Z]{6}\+/, ''); const m = /^([^-,]+)[-,](.*)$/.exec(n); const fam = m ? m[1] : n, st = m ? m[2] : n;
+  const b = /bold|black|heavy|demi|semibold/i.test(st), it = /italic|oblique/i.test(st);
+  return fam.toLowerCase().replace(/[^a-z0-9]/g, '') + '|' + (b ? 'b' : '') + (it ? 'i' : '');
+}
+// The space advance (em) of each font the .docx carries (word/fonts/*.odttf, de-obfuscated with the table's key), by key.
+async function docxSpaces(D) {
+  const out = {}; const zip = D.zip; const ft = zip.file('word/fontTable.xml'); const rl = zip.file('word/_rels/fontTable.xml.rels'); if (!ft || !rl) return out;
+  const rels = {}; for (const r of descend(parseXml(await rl.async('string')))) if (r.tag === 'Relationship') rels[r.attrs.Id] = r.attrs.Target;
+  for (const f of descend(parseXml(await ft.async('string')))) {
+    if (f.tag !== 'w:font') continue; const fam = (f.attrs['w:name'] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const e of f.kids) {
+      const m = /^w:embed(Regular|Bold|Italic|BoldItalic)$/.exec(e.tag); if (!m) continue; const t = rels[e.attrs['r:id']]; const file = t && zip.file('word/' + t.replace(/^\.?\//, '')); if (!file) continue;
+      const buf = Buffer.from(await file.async('uint8array')); const hex = (e.attrs['w:fontKey'] || '').replace(/[{}-]/g, ''); const kb = (hex.match(/../g) || []).map((h) => parseInt(h, 16)).reverse();
+      if (kb.length === 16) for (let k = 0; k < 32 && k < buf.length; k++) buf[k] ^= kb[k % 16];
+      const adv = sfntSpace(buf); if (adv !== null) out[fam + '|' + (m[1] === 'Bold' ? 'b' : m[1] === 'Italic' ? 'i' : m[1] === 'BoldItalic' ? 'bi' : '')] = adv;
+    }
+  }
+  return out;
+}
+function sfntSpace(b) {
+  try {
+    const n = b.readUInt16BE(4); const T = {}; for (let i = 0; i < n; i++) { const o = 12 + i * 16; T[b.toString('latin1', o, o + 4)] = b.readUInt32BE(o + 8); }
+    const upem = b.readUInt16BE(T.head + 18); const nhm = b.readUInt16BE(T.hhea + 34); const cm = T.cmap; let gid = null;
+    for (let i = 0; i < b.readUInt16BE(cm + 2) && gid === null; i++) {
+      const st = cm + b.readUInt32BE(cm + 4 + i * 8 + 4); const fmt = b.readUInt16BE(st);
+      if (fmt === 4) { const sc = b.readUInt16BE(st + 6) / 2; const ends = st + 14, starts = ends + sc * 2 + 2, dl = starts + sc * 2, ro = dl + sc * 2;
+        for (let s = 0; s < sc; s++) { const e = b.readUInt16BE(ends + s * 2), a = b.readUInt16BE(starts + s * 2); if (32 > e || 32 < a) continue; const d = b.readInt16BE(dl + s * 2), r = b.readUInt16BE(ro + s * 2);
+          if (!r) gid = (32 + d) & 0xffff; else { const g = b.readUInt16BE(ro + s * 2 + r + (32 - a) * 2); gid = g ? (g + d) & 0xffff : 0; } break; } }
+      else if (fmt === 12) { const ng = b.readUInt32BE(st + 12); for (let s = 0; s < ng; s++) { const o = st + 16 + s * 12; if (32 >= b.readUInt32BE(o) && 32 <= b.readUInt32BE(o + 4)) { gid = b.readUInt32BE(o + 8) + 32 - b.readUInt32BE(o); break; } } }
+    }
+    if (!gid) return null; const adv = b.readUInt16BE(T.hmtx + Math.min(gid, nhm - 1) * 4); return adv / upem;
+  } catch { return null; }
+}
+// space_adv: for each font the .docx carries that the PDF shows at least 5 word gaps in, 1 when its space advance is within 12 %
+// of the font's natural gap, falling to 0 at 40 %; the mean over those fonts (both results; G from pdfGeometry). The natural gap:
+// the median of the gaps up to 1.2 x their lower quartile (the plain median took a wrapped TeX title's stretched first line,
+// 0.47 em, for its bold face's space, 0.375).
+async function scoreSpaces(D, G) {
+  const adv = await docxSpaces(D); const keys = Object.keys(adv); const sc = [];
+  for (const [k, gs] of Object.entries(G.gaps || {})) {
+    if (gs.length < 5) continue; const [fam, st] = k.split('|');
+    const dk = adv[k] !== undefined ? k : keys.find((x) => { const [f2, s2] = x.split('|'); return s2 === st && f2.length >= 4 && fam.startsWith(f2); }); if (!dk) continue;
+    const s0 = [...gs].sort((a, b) => a - b); const q = s0[Math.floor(s0.length / 4)]; const s = s0.filter((g) => g <= q * 1.2); const med = s[Math.floor(s.length / 2)]; const r = Math.abs(adv[dk] - med) / med;
+    sc.push({ k, adv: adv[dk], med, s: r <= 0.12 ? 1 : r >= 0.4 ? 0 : (0.4 - r) / 0.28 });
+  }
+  return { space_adv: sc.length ? sc.reduce((a, x) => a + x.s, 0) / sc.length : null, detail: sc };
+}
 // The long paragraph's line pitch (median step between its consecutive lines on one page) and the page count of a PDF —
 // the source, or the .docx as LibreOffice lays it out (soffice --convert-to pdf).
 async function pdfFlow(file, src) {
@@ -466,4 +536,4 @@ function scoreFlow(srcFlow, docFlow) {
   const d = Math.abs(docFlow.pages - srcFlow.pages); S.pages = d === 0 ? 1 : d === 1 ? 0.5 : 0;
   return S;
 }
-module.exports = { pdfFlow, scoreFlow, pdfGeometry, scoreGeometry, readDocx, scoreDocx, fold, sim, dist, expectations, parseXml, pdfTextWords, wordRecall };
+module.exports = { scoreSpaces, docxSpaces, pdfFlow, scoreFlow, pdfGeometry, scoreGeometry, readDocx, scoreDocx, fold, sim, dist, expectations, parseXml, pdfTextWords, wordRecall };

@@ -35,6 +35,8 @@ export type LanePage = {
   pageFonts: string[];
   seqs: { rtl?: boolean; uses: [string, GlyphUse][] }[];
   gaps: [string, number[]][];
+  /** Fonts whose space glyph this page draws (spaceEm). */
+  drawn?: string[];
   wordFound: string[]; stickyMiss: string[];
 };
 /** `step`: how far the lane has gone in opening the document — for the app's thread, which gives up on a lane that
@@ -111,7 +113,7 @@ async function pump(): Promise<void> {
         for (const [name, f] of fonts) f.wordFont = forced.has(idOf.get(name) ?? '') || undefined;
         restore = () => { for (const [name, f] of fonts) f.wordFont = (had.get(name) || forced.has(idOf.get(name) ?? '') || f.wordFont) || undefined; };
       }
-      const gapsBefore = new Map([...fonts].map(([k, f]) => [k, f.gaps?.length ?? 0]));
+      const gapsBefore = new Map([...fonts].map(([k, f]) => [k, f.gaps?.length ?? 0])); const drawnBefore = new Map([...fonts].map(([k, f]) => [k, f.drawnSp ?? 0]));
       const wordBefore = new Set([...fonts].filter(([, f]) => f.wordFont).map(([k]) => k));
       fresh = []; store.seqs = new GlyphRuns(); store.pageFonts = []; store.stickyMiss = new Set();
       let model: PageModel;
@@ -129,6 +131,7 @@ async function pump(): Promise<void> {
         pageFonts: store.pageFonts.map(id),
         seqs: Array.from({ length: store.seqs.length }, (_, si) => { const s = store.seqs.at(si); return { rtl: s.rtl, uses: s.map(([f, u]) => [id(f), u] as [string, GlyphUse]) }; }),
         gaps: [...fonts].flatMap(([k, f]) => { const was = gapsBefore.get(k) ?? 0; return (f.gaps?.length ?? 0) > was ? [[id(k), f.gaps!.slice(was)] as [string, number[]]] : []; }),
+        drawn: [...fonts].filter(([k, f]) => (f.drawnSp ?? 0) > (drawnBefore.get(k) ?? 0)).map(([k]) => id(k)),
         wordFound: [...fonts].filter(([k, f]) => f.wordFont && !wordBefore.has(k)).map(([k]) => id(k)),
         stickyMiss: [...store.stickyMiss].map(id),
       };
