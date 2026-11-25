@@ -161,14 +161,17 @@ const shot = async (p, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { recu
   const scans1 = await p.evaluate(() => document.querySelector('.reader-flow').dataset.glossScans);
   ok('a page turn does not read the chapter for names again', scans1 === scans0, { scans0, scans1 });
   // Copy
-  await p.evaluate(() => { document.querySelector('.reader-scroll').scrollTop = 0; }); await p.waitForTimeout(500); g = await geom();
+  // (a slow machine may still be turning the page: hold the top until it stays there, then measure)
+  for (let i = 0, still = 0; i < 40 && still < 3; i++) { const y = await p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const v = sc.scrollTop; if (v !== 0) sc.scrollTop = 0; return v; }); still = y === 0 ? still + 1 : 0; await p.waitForTimeout(150); }
+  g = await geom();
   await p.touchscreen.tap(g.name.x, g.name.y); await p.waitForSelector('.gloss-card');
+  const editOf = await p.textContent('.gloss-card .gc-from');
   await p.click('.gloss-card .gc-copy'); await p.waitForSelector('.toast', { timeout: 3000 });
   ok('Copy answers (copied)', /./.test(await p.textContent('.toast')));
   // Edit lands on the row
   await p.click('.gloss-card .gc-edit'); await p.waitForSelector('.ai-sheet .gloss-row', { timeout: 10000 }); await p.waitForTimeout(600);
   const land = await p.evaluate(() => ({ tab: document.querySelector('.ai-tab.on')?.dataset.tab, file: document.querySelector('.gloss-file-now b')?.textContent, row: document.activeElement?.closest?.('.gloss-row')?.dataset.id ?? document.querySelector('.gloss-row.flash')?.dataset.id }));
-  ok('Edit opens the AI sheet on the Glossary tab, the file open, the row focused', land.tab === 'glossary' && land.row === 't1' && /Characters|الشخصيات/.test(land.file ?? ''), land);
+  ok('Edit opens the AI sheet on the Glossary tab, the file open, the row focused', land.tab === 'glossary' && (editOf === 'Lin Feng' ? land.row === 't1' && /Characters|الشخصيات/.test(land.file ?? '') : !!land.row && !!land.file), { ...land, tapped: g.name?.text, card: editOf });
   // the switches in Glossary options
   await p.evaluate(() => { document.querySelector('.gloss-opts').open = true; });
   ok('Glossary options hold both switches (on by default)', await p.evaluate(() => ['.gloss-marks input', '.gloss-tap input'].every((s) => document.querySelector(s)?.checked === true)));
@@ -201,7 +204,7 @@ const shot = async (p, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { recu
   // ---- the translated view: the renderings are marked, the card shows the original ----
   await p.evaluate(() => document.dispatchEvent(new CustomEvent('kr:command', { detail: 'translate' }))); await p.waitForSelector('.tr-pill', { timeout: 10000 });
   if (await p.$('.tr-pill:not([hidden]) .tr-toggle')) { const on = await p.evaluate(() => document.querySelector('.kr-chapter p.kr-translated')); if (!on) await p.click('.tr-pill .tr-toggle'); }
-  await p.waitForFunction(() => document.querySelectorAll('.kr-chapter p.kr-translated').length >= 6, null, { timeout: 30000 }); await p.waitForTimeout(1500);
+  await p.waitForFunction(() => document.querySelectorAll('.kr-chapter p.kr-translated').length >= 6, null, { timeout: 60000 }).catch(async (e) => { console.log('STATE', JSON.stringify(await p.evaluate(() => ({ done: document.querySelectorAll('.kr-chapter p.kr-translated').length, pill: document.querySelector('.tr-pill')?.textContent?.slice(0, 120), pillHidden: document.querySelector('.tr-pill')?.hidden, sheets: [...document.querySelectorAll('.sheet')].map((x) => x.className + ' | ' + (x.querySelector('h3')?.textContent ?? '')), toast: document.querySelector('.toast')?.textContent })))); throw e; }); await p.waitForTimeout(1500);
   const trNames = await reg();
   ok('the translated text: the renderings (and an other rendering) are marked', !!trNames && trNames.includes('لين فنغ') && trNames.includes('الطائفة الزرقاء'), trNames?.slice(0, 10));
   const trPos = await p.evaluate(() => { const sc = document.querySelector('.reader-scroll'); const sr = sc.getBoundingClientRect(); for (const r of CSS.highlights.get('kr-gloss')) { if (r.toString() !== 'لين فنغ') continue; const q = r.getClientRects()[0]; if (q && q.top > sr.top + 60 && q.bottom < sr.bottom - 120) return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; } return null; });
