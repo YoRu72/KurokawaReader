@@ -42,7 +42,7 @@ export interface AiSheetOpts { tab?: AiTab; book?: { id: string; title: string }
 export function aiSheet(o: AiSheetOpts = {}): void {
   const book = o.book ?? (hooks ? { id: hooks.bookId, title: hooks.title() } : undefined);
   if (current && current.el.isConnected && current.bookId === book?.id && !o.extra) { current.show(o.tab ?? lastTab); if (o.addFrom) current.addFrom(o.addFrom); if (o.focusTerm) current.focusTerm(o.focusTerm); return; }
-  const sh = openSheet(t('aiTranslate'), t('close'), { onClose: () => { if (current?.el === sh.el) current = null; offSwipe(); } });
+  const sh = openSheet(t('aiTranslate'), t('close'), { onClose: () => { if (current?.el === sh.el) current = null; offSwipe(); ro?.disconnect(); } });
   sh.el.classList.add('ai-sheet', 'gloss-sheet');
   sh.body.style.fontFamily = 'var(--font-ui)';
   const rtl = () => document.documentElement.dir === 'rtl';
@@ -63,6 +63,20 @@ export function aiSheet(o: AiSheetOpts = {}): void {
     if (e.key === 'ArrowRight') j = rtl() ? i - 1 : i + 1; else if (e.key === 'ArrowLeft') j = rtl() ? i + 1 : i - 1; else if (e.key === 'Home') j = 0; else if (e.key === 'End') j = AI_TABS.length - 1;
     if (j < 0 && e.key !== 'Home') return; e.preventDefault(); const k = AI_TABS[(j + AI_TABS.length) % AI_TABS.length]; show(k); tabs.get(k)!.focus();
   });
+  // The chosen tab is brought whole into view (the row scrolls by itself, never the sheet), clear of the row's padding; a tab
+  // cut at an edge of the row fades out there.
+  const reveal = (b: HTMLElement) => {
+    const r = row.getBoundingClientRect(), x = b.getBoundingClientRect(), pad = 16; let d = 0;
+    if (x.left < r.left + pad) d = x.left - (r.left + pad); else if (x.right > r.right - pad) d = x.right - (r.right - pad);
+    if (Math.abs(d) > 0.5) row.scrollBy({ left: d, behavior: 'instant' as ScrollBehavior });
+  };
+  const fades = () => {
+    const r = row.getBoundingClientRect(); let lo = Infinity, hi = -Infinity;
+    for (const b of tabs.values()) { const x = b.getBoundingClientRect(); lo = Math.min(lo, x.left); hi = Math.max(hi, x.right); }
+    row.classList.toggle('cut-l', lo < r.left + 4); row.classList.toggle('cut-r', hi > r.right - 4);
+  };
+  row.addEventListener('scroll', fades, { passive: true });
+  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (cur && tabs.get(cur)) { reveal(tabs.get(cur)!); fades(); } }) : null; ro?.observe(row);
   // The tab row stays above the panels (it does not scroll with them); «Done» and the close button stay where they are.
   sh.el.insertBefore(row, sh.body);
   const tabActs = h('div', { class: 'ai-tab-acts' });
@@ -92,7 +106,7 @@ export function aiSheet(o: AiSheetOpts = {}): void {
     cur = k; lastTab = k; build(k);
     for (const [x, b] of tabs) { const on = x === k; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('on', on); panels.get(x)!.hidden = !on; }
     sh.body.scrollTop = scrolls.get(k) ?? 0;
-    tabs.get(k)!.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    reveal(tabs.get(k)!); fades();
     paintActs();
     if (k === 'glossary') glossary?.refresh();
   }

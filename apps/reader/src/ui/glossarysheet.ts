@@ -208,7 +208,7 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
       ...(wrong ? [h('p', { class: 'gloss-warn' }, icon('info'), t('glossWrongScript', { lang: langLabel(termLang(x)) }))] : []),
       // (Other renderings of the name — a repeat merged into this entry keeps its rendering here: one tapped is used, one removed.)
       ...(x.alts?.length ? [h('div', { class: 'gloss-alts' }, h('small', { class: 'hint' }, t('glossAlts')), ...x.alts.map((a) => h('span', { class: 'gloss-alt' },
-        h('button', { type: 'button', class: 'chip small gloss-alt-use', title: t('glossAltUse'), dir: 'auto', onclick: () => { x = { ...x, to: a, alts: [x.to, ...x.alts!.filter((y) => y !== a)], auto: undefined }; save(x); draw(); } }, a),
+        h('button', { type: 'button', class: 'chip small gloss-alt-use', title: t('glossAltUse'), dir: 'auto', onclick: () => { x = { ...x, to: a, alts: [x.to, ...x.alts!.filter((y) => y !== a)], auto: undefined }; save(x); draw(); } }, h('span', { class: 'chip-t' }, a)),
         iconButton('close', t('glossAltRemove'), () => { const l = x.alts!.filter((y) => y !== a); const { alts: _a, ...rest } = x; void _a; x = l.length ? { ...x, alts: l } : rest; save(x); draw(); }))))] : []),
       h('div', { class: 'gloss-meta' }, ...(fresh ? [] : [sel]), kind, lang, x.auto ? h('span', { class: 'gloss-badge' }, t('glossAutoBadge')) : null, moveTo,
         ...(fresh ? [] : [iconButton('rotate', t('glossRetrOne'), () => { const now = terms().find((y) => y.id === x.id); if (now) retranslate([now]); })]),
@@ -221,7 +221,7 @@ export function glossaryPanel(book0?: { id: string; title: string }, o: { scan?:
   const inWhere = (x: Term) => (where === 'all' ? !x.book && !x.folder : where === 'book' ? (!x.folder && x.book === book?.id) || (!!x.folder && linkedFolders(book?.id).includes(x.folder)) : x.folder === where);
   function drawPlaces(): void {
     const fs = folders();
-    places.replaceChildren(...[...(book ? [['book', titleOf(book.id, book.title)]] : []), ['all', t('glossEveryBook')], ...fs.map((f) => [f.id, `📁 ${f.name}`])].map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (where === k ? ' on' : ''), dir: 'auto', onclick: () => { where = k; file = null; draw(); } }, l)),
+    places.replaceChildren(...[...(book ? [['book', titleOf(book.id, book.title)]] : []), ['all', t('glossEveryBook')], ...fs.map((f) => [f.id, `📁 ${f.name}`])].map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (where === k ? ' on' : ''), dir: 'auto', onclick: () => { where = k; file = null; draw(); } }, h('span', { class: 'chip-t' }, l))),
       h('button', { type: 'button', class: 'chip small', onclick: async () => { const name = (await askText({ title: t('glossNewFolder'), label: t('glossFolderName'), ok: t('create'), cancel: t('cancel') }))?.trim(); if (!name) return; const f = addFolder(name); if (book) setLinked(book.id, [...linkedFolders(book.id), f.id]); where = f.id; file = null; draw(); toast(t('glossFolderMade', { name })); } }, icon('plus'), t('glossNewFolder')));
     // A folder shown: used by this book or not; renamed; removed. This book: its own names made a folder.
     const f = fs.find((x) => x.id === where);

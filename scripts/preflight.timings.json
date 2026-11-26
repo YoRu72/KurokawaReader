@@ -6,6 +6,8 @@
     "tools": 20
   },
   "reader": {
+    "aisheetfit.cjs ar": 60,
+    "aisheetfit.cjs en": 60,
     "aitabs.cjs ar": 5,
     "aitabs.cjs en": 15,
     "aitranslateflow.cjs ar": 92,

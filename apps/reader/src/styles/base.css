@@ -2525,9 +2525,12 @@ html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
 /* The AI sheet: one sheet, tabs on top — a row that scrolls sideways on a narrow phone and never scrolls away with
    the panels; «Done» and the close button where they always are. */
 .ai-sheet { max-height: 86vh; }
-.ai-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 4px 16px 8px; flex: none; border-bottom: 1px solid var(--md-outline-variant); overscroll-behavior-x: contain; }
+.ai-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 4px 16px 8px; scroll-padding-inline: 16px; flex: none; border-bottom: 1px solid var(--md-outline-variant); overscroll-behavior-x: contain; }
+/* (A tab cut at an edge of the row fades out there — on purpose; the chosen tab is always brought whole into view.) */
+.ai-tabs.cut-l, .ai-tabs.cut-r { --fl: 0px; --fr: 0px; -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fl), #000 calc(100% - var(--fr)), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 var(--fl), #000 calc(100% - var(--fr)), transparent 100%); }
+.ai-tabs.cut-l { --fl: 22px; } .ai-tabs.cut-r { --fr: 22px; }
 .ai-tabs::-webkit-scrollbar { display: none; }
-.ai-tab { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: var(--sh-full); border: 0; background: transparent; color: var(--md-on-surface-variant); font: 500 14px var(--font-ui); white-space: nowrap; cursor: pointer; }
+.ai-tab { flex: none; display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 9px; border-radius: var(--sh-full); border: 0; background: transparent; color: var(--md-on-surface-variant); font: 500 13px var(--font-ui); white-space: nowrap; cursor: pointer; }
 .ai-tab svg { width: 18px; height: 18px; flex: none; }
 .ai-tab:hover { background: var(--md-surface-container-high); }
 .ai-tab[aria-selected='true'] { background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-weight: 600; }
@@ -2540,7 +2543,8 @@ html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
 /* Three equal columns: a label and its icon must fit inside the button (less side padding; on a narrow phone the icon goes, the label stays whole). */
 .ai-sheet .sheet-actions .btn { padding-inline: 12px; }
 @media (max-width: 380px) { .ai-sheet .sheet-actions .btn svg { display: none; } }
-.ai-input-row { display: flex; gap: 8px; align-items: center; } .ai-input-row > input { flex: 1 1 auto; min-width: 0; width: auto; } .ai-input-row > .btn { flex: none; white-space: nowrap; }
+/* (A field and its button: the button keeps its own width, the field takes the rest — an ellipsis when still too long — and on a very narrow sheet the button goes under it.) */
+.ai-input-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; } .ai-input-row > input { flex: 1 1 150px; min-width: 0; width: auto; padding-inline: 16px; text-overflow: ellipsis; } .ai-input-row > .btn { flex: none; white-space: nowrap; }
 .ai-prompt-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .ai-prompt-tools > .icon-btn { margin-inline-start: auto; }
 .ai-empty { padding: 18px 4px; text-align: center; }
 .ai-saved { display: flex; align-items: center; gap: 10px; font: 500 15px var(--font-ui); } .ai-saved p { margin: 0; }
@@ -2588,6 +2592,21 @@ html[style*='--lib-cols'] .book-grid { column-gap: 10px; }
 .ai-panel .gloss-file-icon svg { width: 20px; height: 20px; }
 .gloss-file-name { flex: 1 1 auto; min-width: 0; }
 .ai-panel .row { column-gap: 8px; row-gap: 8px; }
+/* The AI sheet never scrolls sideways: every panel is at most the sheet's width, long names wrap (a title) or end in an
+   ellipsis on one line (a chip), a button with a long label wraps its label inside itself. */
+.ai-sheet .sheet-body { overflow-x: hidden; }
+.ai-panel, .ai-tr-panel, .gloss-panel, .names-panel { min-width: 0; max-width: 100%; }
+.ai-panel .grow, .ai-panel .gloss-head-row > div { min-width: 0; }
+.ai-panel .hint, .ai-panel .src, .ai-panel .label, .ai-panel .gloss-use > span:first-child, .ai-panel .gloss-shared .grow { min-width: 0; overflow-wrap: anywhere; }
+.ai-panel .chip { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.chip-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-panel .btn.text, .ai-panel .gloss-scan, .ai-panel .names-tools .btn, .ai-panel .ai-epub, .ai-panel .ai-clear { max-width: 100%; height: auto; min-height: 40px; padding-block: 6px; white-space: normal; text-align: center; line-height: 1.25; overflow-wrap: anywhere; }
+.ai-panel input[type=text], .ai-panel input[type=password], .ai-panel input[type=search] { text-overflow: ellipsis; }
+/* On a phone: one height for the tabs (the tallest the sheet may be; the panel scrolls inside), targets of 40 px. */
+html:not(.pc) .ai-sheet { height: 86vh; height: 86dvh; max-height: 86vh; max-height: 86dvh; }
+html:not(.pc) .ai-sheet .sheet-body { flex: 1 1 auto; min-height: 0; }
+html:not(.pc) .ai-panel .btn.small { min-height: 40px; height: auto; }
+html:not(.pc) .ai-panel .chip.small { height: 40px; }
 .gloss-places { display: flex; flex-wrap: wrap; gap: 6px; }
 .gloss-empty .row-btns { display: flex; flex-direction: column; align-items: stretch; gap: 8px; } .gloss-empty .row-btns .btn { justify-content: center; }
 .tr-ahead .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
