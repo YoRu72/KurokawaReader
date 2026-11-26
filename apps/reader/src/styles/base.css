@@ -2763,3 +2763,6 @@ input.yg-input { width: 112px; height: 44px; box-sizing: border-box; text-align:
 .hl-sheet .sheet-actions { padding-inline: 22px; }
 html.pc .hl-sheet .sheet-actions { padding-inline: 28px; }
 .hl-sheet .sheet-actions .btn { flex: 1 1 0; min-width: 0; min-height: 44px; justify-content: center; white-space: normal; text-align: center; }
+
+/* The finished line of a conversion: the document, its fonts, what was already there — one part a line. */
+.conv-said { white-space: pre-line; }

@@ -409,7 +409,7 @@ async function placeChecks(browser, pdf) {
       await page.click('.convert-result button:has-text("Save")'); await waitSrc(page, 'Saved in');
       const said = await srcText(page); const files = tree(docDir);
       ok(`PC: the document is a real file and its fonts a real folder beside it ${JSON.stringify(files)}`, JSON.stringify(files) === JSON.stringify(['times-made-up fonts/', 'times-made-up fonts/Times New Roman (PDF)-Regular.ttf', 'times-made-up.docx']));
-      ok(`PC: the card says what was made and where — «${said}»`, /^Saved in place-doc: times-made-up\.docx · .* · Fonts, count: 1, in place-doc\/times-made-up fonts$/.test(said));
+      ok(`PC: the card says what was made and where — «${said}»`, /^Saved in place-doc: times-made-up\.docx · .*\s+Fonts, count: 1, in place-doc\/times-made-up fonts$/.test(said));
       const Zd = await JSZip.loadAsync(fs.readFileSync(path.join(docDir, 'times-made-up.docx')));
       ok('PC: the saved document is a .docx with no font inside', !!Zd.file('word/document.xml') && !Object.keys(Zd.files).some((n) => /^word\/fonts\//.test(n)));
       const ttf = fs.readFileSync(path.join(docDir, 'times-made-up fonts', 'Times New Roman (PDF)-Regular.ttf')); ok('PC: the font file is a TrueType font', ttf.readUInt32BE(0) === 0x10000);

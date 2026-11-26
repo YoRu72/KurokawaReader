@@ -118,7 +118,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
   sh.body.style.fontFamily = 'var(--font-ui)';
   const opts = optionsRow(book.format === 'pdf');
   const targets = TARGETS.filter((x) => x.from(book.format) && !(x.id === 'epub' && book.format === 'epub'));
-  const status = h('p', { class: 'src' }, t('convertBody', { title: `\u2068${book.title}\u2069`, format: `\u2068${book.format.toUpperCase()}\u2069` }));
+  const status = h('p', { class: 'src conv-said' }, t('convertBody', { title: `\u2068${book.title}\u2069`, format: `\u2068${book.format.toUpperCase()}\u2069` }));
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
   const result = h('div', { class: 'convert-result', hidden: true });
   const nf = fileNameField(); nf.el.hidden = true;
@@ -148,7 +148,7 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       tell(); nf.input.oninput = tell;
       const iso = (x: string) => `⁨${x}⁩`;
       const said = (z: Sent) => (z.nothingNew ? t('convSavedNothing', { where: iso(z.docIn) }) : t('convSaved', { where: iso(z.docIn), name: iso(z.docName), size: iso(formatBytes(z.docSize)) }))
-        + (z.fontsCount ? ` · ${t('convSavedFonts', { n: z.fontsCount, where: iso(z.fontsIn) })}` : '') + (z.same && !z.nothingNew ? ` · ${t('convSavedSame', { n: z.same })}` : '');
+        + (z.fontsCount ? `\n${t('convSavedFonts', { n: z.fontsCount, where: iso(z.fontsIn) })}` : '') + (z.same && !z.nothingNew ? `\n${t('convSavedSame', { n: z.same })}` : '');
       const saveBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
         if (!toFolder()) { const f = await whole(); downloadBlob(f.blob, f.name); return; }
         saveBtn.disabled = true; result.querySelector('.conv-open')?.remove();
