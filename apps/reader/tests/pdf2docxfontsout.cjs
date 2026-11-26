@@ -602,7 +602,7 @@ async function placeChecks(browser, pdf) {
     {
       const { ctx, page } = await newPage(browser, 'en', { docxFonts: 'folder' });
       try {
-        const epub = path.join(__dirname, 'fixtures/alice-in-wonderland.epub'); await openConvert(page, epub);
+        const epub = path.join(__dirname, '../public/samples/alice-in-wonderland.epub'); await openConvert(page, epub);
         const shown = await page.evaluate(() => { const o = document.querySelector('.conv-docx-opts'); return !!o && !o.hidden; });
         ok('the «Fonts» row is not shown for a book that is not a PDF (Word only for a PDF)', !shown);
       } finally { await ctx.close(); }

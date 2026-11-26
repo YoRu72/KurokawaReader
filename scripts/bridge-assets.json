@@ -1,24 +1,56 @@
 {
   "_about": "The frozen Electron «bridge» builds' files that every release carries forward, so an OLD installed Electron copy of either app still finds, under the names it looks for, a file to update to — the bridge build, which hands the library over and installs the Rust build. scripts/bridge-assets.mjs reads this file; the release workflows download the files from `tag`, refuse any whose SHA-256 is not the one listed here, and publish them with the new release. The Electron program is no longer built.",
-  "_todo": "THE SHA-256 VALUES BELOW ARE NOT FILLED YET. Until they are, `node scripts/bridge-assets.mjs <app> --verify <dir>` refuses and so does the release workflow (nothing is released). Fill them from a real download of the two bridge releases: `gh release download <tag> -D <dir>` (for the names listed) then `node scripts/bridge-assets.mjs <app> --fill <dir>`; check the names against the release page first and delete a line the release does not have. The value «TODO» is the marker the script looks for.",
+  "_todo": "Filled on 26 Nov 2026 from the digests GitHub records for the two bridge releases' files (release API, `digest`).",
   "reader": {
     "tag": "v0.67.0",
     "version": "0.67.0",
     "assets": [
-      { "name": "KurokawaReader-0.67.0-win-x64.exe", "role": "win-installer", "sha256": "TODO" },
-      { "name": "KurokawaReader-0.67.0-win-x64.exe.blockmap", "role": "win-blockmap", "sha256": "TODO" },
-      { "name": "KurokawaReader-0.67.0-win-x64-portable.exe", "role": "win-portable", "sha256": "TODO" },
-      { "name": "KurokawaReader-0.67.0-mac-universal.dmg", "role": "mac-dmg", "sha256": "TODO" },
-      { "name": "KurokawaReader-0.67.0-linux-x86_64.AppImage", "role": "linux-appimage", "sha256": "TODO" }
+      {
+        "name": "KurokawaReader-0.67.0-win-x64.exe",
+        "role": "win-installer",
+        "sha256": "379a4a8b0549c1249daef12223e746678737c55f122f49edaa4117c937759787"
+      },
+      {
+        "name": "KurokawaReader-0.67.0-win-x64.exe.blockmap",
+        "role": "win-blockmap",
+        "sha256": "5c79de887e915c5f348c8d11838f39a324e6091a51be8d1835286f5208f56b3f"
+      },
+      {
+        "name": "KurokawaReader-0.67.0-win-x64-portable.exe",
+        "role": "win-portable",
+        "sha256": "e71d5e6714a04835319ce62577bccb4eb26ca78343d8b1b8eb00d165a930c720"
+      },
+      {
+        "name": "KurokawaReader-0.67.0-mac-universal.dmg",
+        "role": "mac-dmg",
+        "sha256": "5296513cf1e4ca41d3ecbabf6a1bdc3dd33418c4818d0c21dfb338adab703df7"
+      },
+      {
+        "name": "KurokawaReader-0.67.0-linux-x86_64.AppImage",
+        "role": "linux-appimage",
+        "sha256": "ae479391df3f1477a8d2744388b0298dc7ab61394b65cfed73a1a58d4f819a5b"
+      }
     ]
   },
   "tools": {
     "tag": "tools-v0.23.0",
     "version": "0.23.0",
     "assets": [
-      { "name": "KurokawaTools-0.23.0-win-x64.exe", "role": "win-installer", "sha256": "TODO" },
-      { "name": "KurokawaTools-0.23.0-mac-universal.dmg", "role": "mac-dmg", "sha256": "TODO" },
-      { "name": "KurokawaTools-0.23.0-linux-x86_64.AppImage", "role": "linux-appimage", "sha256": "TODO" }
+      {
+        "name": "KurokawaTools-0.23.0-win-x64.exe",
+        "role": "win-installer",
+        "sha256": "ead24cc257f6805ee594b81810d0df87b413def5049682035627a11fad58176e"
+      },
+      {
+        "name": "KurokawaTools-0.23.0-mac-universal.dmg",
+        "role": "mac-dmg",
+        "sha256": "f744c54a8462c7bb1f69c0a7ad7908ba9b2a81b4aa4e4eb812a408d013f7b3d3"
+      },
+      {
+        "name": "KurokawaTools-0.23.0-linux-x86_64.AppImage",
+        "role": "linux-appimage",
+        "sha256": "c8c061c2686d9612653f1cb8f1af077aa6ed7fe9b20067f1fabfcc2bf5d77c60"
+      }
     ]
   }
 }
