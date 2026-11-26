@@ -1,0 +1,73 @@
+{
+ "meta": {
+  "kind": "slides",
+  "title": "Harbour Lights Project",
+  "header": "",
+  "footer": "",
+  "dir": "ltr",
+  "landscape": true
+ },
+ "footnotes": {},
+ "blocks": [
+  {
+   "type": "slide",
+   "n": 1,
+   "boxes": [
+    {
+     "role": "title",
+     "text": "Harbour Lights Project"
+    },
+    {
+     "role": "text",
+     "text": "Quarterly review, spring 2026"
+    }
+   ]
+  },
+  {
+   "type": "slide",
+   "n": 2,
+   "picture": true,
+   "boxes": [
+    {
+     "role": "title",
+     "text": "What we changed"
+    },
+    {
+     "role": "bullets",
+     "items": [
+      "New lamps on the north pier",
+      "Timers set by the tide tables",
+      "Two spare units kept in the store"
+     ]
+    },
+    {
+     "role": "text",
+     "text": "Source: harbour log, March"
+    }
+   ]
+  },
+  {
+   "type": "slide",
+   "n": 3,
+   "background": true,
+   "boxes": [
+    {
+     "role": "title",
+     "text": "Next steps"
+    },
+    {
+     "role": "text",
+     "text": "Order the new lenses before May"
+    },
+    {
+     "role": "text",
+     "text": "Train the night crew on the timers"
+    },
+    {
+     "role": "text",
+     "text": "Budget: 4200 for the year"
+    }
+   ]
+  }
+ ]
+}

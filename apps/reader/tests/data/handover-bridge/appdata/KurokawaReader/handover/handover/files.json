@@ -1,0 +1,1 @@
+[{"key":"font:myfont","rel":"fonts/0","size":8,"type":"font/ttf","name":"my.ttf"},{"key":"big:other","rel":"files/0","size":9,"type":"application/octet-stream"},{"key":"book:b1","rel":"books/0/file","size":34,"type":"text/plain","book":"b1"}]

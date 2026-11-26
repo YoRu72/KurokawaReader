@@ -1053,8 +1053,10 @@ public class KurokawaPlugin extends Plugin {
         try {
             Uri uri;
             if (target == null) {
+                // (`parent`: a folder of the tree made by treePlan, where the file goes instead of the tree's own top.)
+                String parentStr = call.getString("parent", null);
                 Uri tree = Uri.parse(call.getString("tree", ""));
-                Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+                Uri parent = parentStr != null ? Uri.parse(parentStr) : DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
                 uri = DocumentsContract.createDocument(getContext().getContentResolver(), parent, call.getString("mime", "application/octet-stream"), call.getString("name", "file"));
                 if (uri == null) { call.reject("cannot create"); return; }
             } else uri = Uri.parse(target);
@@ -1067,6 +1069,137 @@ public class KurokawaPlugin extends Plugin {
             ret.put("uri", uri.toString());
             call.resolve(ret);
         } catch (Exception e) { call.reject("write failed: " + e.getMessage(), e); }
+    }
+
+    /* ---------- PDF → Word «In a folder»: a document and its fonts written into folders the reader picked ---------- */
+
+    /** A file name every file system takes: one path component, no separators or reserved characters. */
+    private static boolean saveNameOk(String n) {
+        if (n == null || n.isEmpty() || n.equals(".") || n.equals("..") || n.length() > 200) return false;
+        if (n.endsWith(".") || n.endsWith(" ") || n.startsWith(" ")) return false;
+        for (int i = 0; i < n.length(); i++) { char c = n.charAt(i); if (c < 0x20 || c == 0x7f || "\\/:*?\"<>|".indexOf(c) >= 0) return false; }
+        return true;
+    }
+
+    /** «name.ext» → «name (n).ext». */
+    private static String saveNumbered(String name, int n) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) + " (" + n + ")" + name.substring(dot) : name + " (" + n + ")";
+    }
+
+    /** The children of a folder of a tree: lower-case name → { document id, mime, size }. */
+    private java.util.Map<String, String[]> saveKids(Uri tree, String docId) {
+        java.util.Map<String, String[]> kids = new java.util.HashMap<>();
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
+        try (Cursor c = getContext().getContentResolver().query(children, new String[]{ DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE }, null, null, null)) {
+            if (c != null) while (c.moveToNext()) { String nm = c.getString(1); if (nm != null) kids.put(nm.toLowerCase(), new String[]{ c.getString(0), c.getString(2), c.isNull(3) ? "-1" : String.valueOf(c.getLong(3)) }); }
+        } catch (Exception ignored) { }
+        return kids;
+    }
+
+    /** The SHA-256 of a document, lower-case hex ("" when it cannot be read). */
+    private String saveSha(Uri uri) {
+        try (InputStream in = getContext().getContentResolver().openInputStream(uri)) {
+            if (in == null) return "";
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[64 * 1024]; int n;
+            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            StringBuilder sb = new StringBuilder(); for (byte b : md.digest()) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) { return ""; }
+    }
+
+    /**
+     * Which name each file will have in the folder the reader picked (a tree uri): its own, « (2)» where another file is
+     * there, and nothing to write where a file of that name already holds these bytes (size and SHA-256). A folder under
+     * the tree («Report fonts») is made here where it is missing. items: [{ rel, size, sha }] with rel «name» or
+     * «folder/name» → { items: [{ rel, action: "write" | "same", parent, name }], newDirs: [uri] }. Nothing is written over.
+     */
+    @PluginMethod
+    public void treePlan(PluginCall call) {
+        final String treeStr = call.getString("tree");
+        final JSArray items = call.getArray("items");
+        if (treeStr == null || items == null) { call.reject("tree and items required"); return; }
+        archiveBg.execute(() -> {
+            List<Uri> made = new ArrayList<>();
+            android.content.ContentResolver cr = getContext().getContentResolver();
+            try {
+                Uri tree = Uri.parse(treeStr);
+                String rootId = DocumentsContract.getTreeDocumentId(tree);
+                java.util.Map<String, Uri> dirs = new java.util.HashMap<>();
+                java.util.Map<String, java.util.Map<String, String[]>> listed = new java.util.HashMap<>();
+                dirs.put("", DocumentsContract.buildDocumentUriUsingTree(tree, rootId));
+                listed.put("", saveKids(tree, rootId));
+                JSArray out = new JSArray(); JSArray newDirs = new JSArray();
+                java.util.Set<String> taken = new java.util.HashSet<>();
+                for (int i = 0; i < items.length(); i++) {
+                    org.json.JSONObject it = items.getJSONObject(i);
+                    String rel = it.getString("rel"); long size = it.optLong("size", -1); String sha = it.optString("sha", "");
+                    String[] parts = rel.split("/", -1);
+                    if (parts.length < 1 || parts.length > 2) throw new Exception("not a file name: " + rel);
+                    for (String part : parts) if (!saveNameOk(part)) throw new Exception("not a file name: " + rel);
+                    String sub = parts.length == 2 ? parts[0] : "";
+                    String name = parts[parts.length - 1];
+                    if (!dirs.containsKey(sub)) {
+                        String[] have = listed.get("").get(sub.toLowerCase());
+                        Uri dir;
+                        if (have != null) {
+                            if (!DocumentsContract.Document.MIME_TYPE_DIR.equals(have[1])) throw new Exception("not a folder: " + sub);
+                            dir = DocumentsContract.buildDocumentUriUsingTree(tree, have[0]);
+                        } else {
+                            dir = DocumentsContract.createDocument(cr, dirs.get(""), DocumentsContract.Document.MIME_TYPE_DIR, sub);
+                            if (dir == null) throw new Exception("cannot create the folder");
+                            made.add(dir); newDirs.put(dir.toString());
+                        }
+                        dirs.put(sub, dir);
+                        listed.put(sub, have != null ? saveKids(tree, DocumentsContract.getDocumentId(dir)) : new java.util.HashMap<String, String[]>());
+                    }
+                    java.util.Map<String, String[]> kids = listed.get(sub);
+                    for (int n = 1; n < 1000; n++) {
+                        String cand = n == 1 ? name : saveNumbered(name, n);
+                        String key = (sub + "/" + cand).toLowerCase();
+                        if (taken.contains(key)) continue;
+                        String[] k = kids.get(cand.toLowerCase());
+                        String action = null;
+                        if (k == null) action = "write";
+                        else if (!DocumentsContract.Document.MIME_TYPE_DIR.equals(k[1]) && size >= 0 && Long.parseLong(k[2]) == size && !sha.isEmpty()
+                                && sha.equalsIgnoreCase(saveSha(DocumentsContract.buildDocumentUriUsingTree(tree, k[0])))) action = "same";
+                        if (action == null) continue;
+                        taken.add(key);
+                        JSObject r = new JSObject();
+                        r.put("rel", sub.isEmpty() ? cand : sub + "/" + cand); r.put("action", action);
+                        r.put("parent", dirs.get(sub).toString()); r.put("name", cand);
+                        out.put(r);
+                        break;
+                    }
+                }
+                JSObject ret = new JSObject(); ret.put("items", out); ret.put("newDirs", newDirs);
+                call.resolve(ret);
+            } catch (Exception e) {
+                for (Uri d : made) { try { DocumentsContract.deleteDocument(cr, d); } catch (Exception ignored) { } }
+                call.reject(e.getMessage() == null ? e.toString() : e.getMessage(), e);
+            }
+        });
+    }
+
+    /** What a save made, taken away: the documents at `uris`, then each folder of `dirs` if it is empty. tree: the picked tree. */
+    @PluginMethod
+    public void treeUndo(PluginCall call) {
+        final String treeStr = call.getString("tree");
+        final JSArray uris = call.getArray("uris"); final JSArray dirs = call.getArray("dirs");
+        if (treeStr == null) { call.reject("tree required"); return; }
+        archiveBg.execute(() -> {
+            android.content.ContentResolver cr = getContext().getContentResolver();
+            int gone = 0;
+            try {
+                Uri tree = Uri.parse(treeStr);
+                if (uris != null) for (int i = 0; i < uris.length(); i++) { try { if (DocumentsContract.deleteDocument(cr, Uri.parse(uris.getString(i)))) gone++; } catch (Exception ignored) { } }
+                if (dirs != null) for (int i = 0; i < dirs.length(); i++) {
+                    try { Uri d = Uri.parse(dirs.getString(i)); if (saveKids(tree, DocumentsContract.getDocumentId(d)).isEmpty()) DocumentsContract.deleteDocument(cr, d); } catch (Exception ignored) { }
+                }
+            } catch (Exception ignored) { }
+            JSObject ret = new JSObject(); ret.put("gone", gone); call.resolve(ret);
+        });
     }
 
     /** Which launcher alias (and so which app name) is shown: "auto" follows the system language, or en/ar/ja/zh/ko. */

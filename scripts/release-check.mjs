@@ -49,4 +49,12 @@ if (problems.length) {
   process.exit(1);
 }
 console.log(`release-check ${app}: version ${version}, tag ${tag}, notes apps/${app}/docs/notes/v${version}.md (${fs.statSync(notes).size} bytes) — ok`);
+// (The old Electron copies' way to the new app: every release carries the frozen bridge build's files forward, each checked
+// against a SHA-256 in scripts/bridge-assets.json — the release workflow refuses, later, while one is «TODO». Said here so it
+// is seen early; not a failure of this check, which runs on work branches too.)
+try {
+  const br = readJson(path.join(ROOT, 'scripts', 'bridge-assets.json'))[app];
+  const todo = (br.assets || []).filter((a) => a.sha256 === 'TODO').length;
+  console.log(todo ? `release-check ${app}: NOTE bridge build ${br.tag}: ${todo} of ${br.assets.length} SHA-256 values in scripts/bridge-assets.json are still «TODO» — the release workflow will refuse until they are filled (node scripts/bridge-assets.mjs ${app} --fill <dir>)` : `release-check ${app}: bridge build ${br.tag}: ${br.assets.length} files listed with their SHA-256`);
+} catch { console.log(`release-check ${app}: NOTE scripts/bridge-assets.json is missing or has no «${app}» entry — the release workflow cannot carry the bridge build forward`); }
 if (outFile) fs.appendFileSync(outFile, `v=${version}\ntag=${tag}\n`);

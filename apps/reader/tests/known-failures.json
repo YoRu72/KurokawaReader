@@ -24,13 +24,6 @@
       "reason": "Failed once in a full run (72 s, machine loaded by other test runs) and passed alone and in the first full run; cause not looked at beyond that.",
       "how": "node tests/pdfzoom.cjs",
       "date": "2026-11-15"
-    },
-    {
-      "name": "handover-electron.cjs",
-      "mode": "skip",
-      "reason": "Not a test to run bare: needs arguments (<expected.json> [work folder]), the real Electron (desktop/node_modules) and a display; it is the first half of tauri-check-reader.yml's hand-over step.",
-      "how": "see tauri-check-reader.yml, Hand-over",
-      "date": "2026-11-15"
     }
   ]
 }

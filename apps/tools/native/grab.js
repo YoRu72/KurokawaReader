@@ -1,6 +1,6 @@
 (function () {
-  // What a page offers, read in the app's browser once its scripts ran (embedded as GRAB_JS in desktop/main.cjs and
-  // KtBrowserActivity.java; tests/grabjs.cjs keeps the copies the same): its links, the media it shows — <video>,
+  // What a page offers, read in the app's browser once its scripts ran (embedded as GRAB_JS in
+  // KtBrowserActivity.java and carried by the Rust shell as src/grab.js; tests/grabjs.cjs and tests/tauribridge.cjs keep the copies the same): its links, the media it shows — <video>,
   // <audio> and their sources —, the video its sharing tags name (og:video, twitter:player:stream), its structured
   // data's contentUrl, the media addresses written in its scripts (escaped or not), and the media it loaded.
   var o = [], s = {};

@@ -30,7 +30,9 @@ command here and by the **Preflight** workflow on the work branch.
 The **Preflight** workflow is cheap on an ordinary push and complete on request:
 
 - **Every push** to a `work-*` branch that changes `apps/**`, `shared/**` or `repo/**`: the **quick** preflight on Linux
-  (build, type check, string parity, version and notes, budgets, the tests your diff touches and a smoke set), and the
+  (build, type check, string parity, version and notes, budgets, the tests that **this push** touches and a smoke set; a
+  new branch or a forced push, whose old head is not in the history, falls back to the branch's diff against `main`;
+  the summary says which of the two chose the tests, and why), and the
   Android compile check of the app when the branch changes `native/android/**`, `capacitor.config.*` or `package.json`
   of that app (Tools also `tests/native/**`). That is the intended rule for the «skipped» Android jobs you see on a
   push that touched no Android paths. When a push itself already starts the Android check by its own trigger, the
@@ -39,6 +41,65 @@ The **Preflight** workflow is cheap on an ordinary push and complete on request:
   contains **`[full]`**. It runs the full preflight (every test the release workflow runs) and also the Tauri checks
   (Windows, Linux, macOS, with the runtime self-test) and, for Tools, the Rust core for Android, when the branch changes
   that Rust code (always, when started by hand). Do this before the final push.
+
+## One result: shards and the verdict
+
+The tests of an app are split over parallel machines (**shards**), because they cannot share one: they use fixed ports and
+shared temp folders, but separate machines do not. `node scripts/preflight.mjs <app> --shard i/n` runs the i-th of n
+slices. The split is by measured seconds (`scripts/preflight.timings.json`: test name and arguments → seconds), greedy,
+longest test first, so every shard takes about as long; the same inputs always give the same split. A full run uses
+4 shards per app, a quick run 1, or 2 when its planned tests take more than 12 minutes. Build, tsc and the static checks run
+in shard 1 only (its planned time includes them); every shard builds what its tests need. A test the config splits into parts
+(`parts` in `scripts/preflight.config.json`; Reader's `uihunt.cjs` runs as `uihunt.cjs en` and `uihunt.cjs ar`) is timed and
+placed part by part.
+
+- `node scripts/preflight.mjs reader --list --shard 2/4` prints that shard's planned tests and seconds as JSON and runs
+  nothing; without `--shard` it prints the whole plan.
+- The job **Preflight verdict** waits for every shard, merges their results into ONE table in the run's summary (every FAIL,
+  KNOWN, FIXED, FLAKY and WARN row with its app and shard, and how the tests were chosen), and fails when any row is a FAIL or
+  a shard left no result (a cancelled shard is a failure, not a silence). That job is the single result to read, and the one to
+  require. Its name carries what the run covered: `Preflight verdict [full: reader,tools]`, or `[full: none]` for a quick run.
+- **Whole logs.** For every FAIL and FLAKY test the complete output is kept as `preflight-logs/<test>.log`; each shard uploads
+  that folder, the tests' pictures and the run's text as the artifact `logs-<app>-<shard>` (7 days), and its result as
+  `pf-json-<app>-<shard>`. The table keeps only a test's last lines; the artifact has the rest.
+- **Keeping the timings true.** After a full run, download the `pf-json-*` artifacts into one folder and run
+  `node scripts/preflight.mjs --write-timings <folder>` (by hand; it merges the measured seconds into the timings file;
+  commit it). `scripts/preflight-timings-from-log.mjs` seeds the file from run logs (it did the first time). A test without a
+  figure counts 20 seconds.
+- **A new fixed wait.** A `waitForTimeout(` added to a test file (compared with the base) is a WARN row naming file:line, with
+  the number of existing ones per app. Tests wait on conditions with deadlines; the existing ones are not touched.
+
+## What the release repeats, and what it does not
+
+Before its long test chain, `release.yml` and `release-tools.yml` ask GitHub (the job's own token, `scripts/find-green-preflight.mjs`)
+for a **green full Preflight of the same files**: a run whose `Preflight verdict [full: …]` job succeeded and names this app,
+on a commit whose git trees are identical to the released commit's for `apps/<app>`, `shared`, `repo`, `.github/actions` and
+the release workflow of that app (the merge commit's second parent, the work branch's head, is the usual match; the
+checkout keeps two commits so it can be compared).
+
+- **Found:** only the short chain runs after the build (the updater tests, the start-up budget and the smoke tests), and the
+  run's summary names the Preflight run that stood in. About 90 minutes less.
+- **Not found** (no full run, a quick run, a failed verdict, other files, a changed chain, or any trouble reaching GitHub): the
+  full chain runs, exactly as before. It is never weaker than that.
+
+A release whose job GitHub cancelled before any step ran (no machine; on 25 Nov the Reader's macOS and iOS jobs) is re-run once
+by itself: `rerun-unstarted.yml` starts when a release run has completed without success, and `scripts/rerun-unstarted.mjs`
+asks for «re-run failed jobs» if a job concluded `cancelled` with no step and waited 10 minutes or more. It acts on the first
+attempt only, so it cannot loop.
+
+## «As GitHub» on your own computer
+
+Two opt-in modes for a local test run, in `apps/<app>/tests/helpers/asci.cjs` (the same file in both apps). A test takes
+them with one line, `require('./helpers/asci.cjs');`; without the variables the line does nothing. No existing test has the line yet
+(tests make their pages straight from Playwright; there is no shared helper to hook into, so the file patches the launched
+browser instead).
+
+| Variable | What it does | The kind of failure it shows |
+|---|---|---|
+| `KR_SLOW=4` | The page's CPU runs 4 times slower (`Emulation.setCPUThrottlingRate`). | A timeout that holds on a fast computer and not on a busy two-core runner: `glossarytap.cjs` timed out at its line 207 on GitHub on 25 Nov (both languages, 82 s) and passed here. |
+| `KR_WIDE=3` | A style at page start, `* { letter-spacing: .03em !important }` (3 hundredths of an em). | A label that only just fits: text cut off or wrapped once the letters are a little wider (see the «labels fit again» commits, e.g. 7099be1c and ea3cdf22). |
+
+Use them one test at a time: `KR_SLOW=4 node tests/<name>.cjs`, `KR_WIDE=3 node tests/<name>.cjs`.
 
 ## What the preflight checks
 
@@ -62,7 +123,7 @@ untouched baseline and is listed with its reason), `FIXED` (a known failure that
 | test … | Each test, with the arguments the workflow gives it, one after another, each with a time limit. |
 | budget | The start-JS budget with its headroom, read from `perfstart.cjs` (Tools) and `perfbudget.cjs` (Reader). A warning when less than 5 % is left. |
 
-Tests run one after another on purpose: several use the same fixed ports (for example 5483 in Tools, 5196, 5197 and
+On one machine tests run one after another on purpose: several use the same fixed ports (for example 5483 in Tools, 5196, 5197 and
 5199 in Reader) and the same temp folders, so running them side by side would make false failures.
 
 **When a test fails:** run it alone, `node scripts/preflight.mjs <app> --only <name> --verbose`. If it also fails on
@@ -90,6 +151,20 @@ What to do:
    never tried again): it is probably a real fault in `src-tauri/src/screentr.rs` or `screencap.rs`. Do not release;
    send the row's text to the orchestrator.
 3. Never edit a row to hide it. The retry is for timing only, and it is always visible.
+
+## The bridge build: how an old Electron copy still reaches the new app
+
+The Electron program is no longer built. Copies of it still run on people's computers, and each finds its update by file name in the
+newest release: Tools — the first file named `…-win-x64.exe` (not the portable), the first `.dmg`, the first `.AppImage`; the Reader — the
+same, the portable `…-win-x64-portable.exe` for a portable copy, and, on Windows (installed) and Linux (AppImage), `electron-updater`'s
+`latest.yml` / `latest-linux.yml`. The last Electron build, the **bridge build** (Reader `v0.67.0`, Tools `tools-v0.23.0`), makes the hand-over of the
+library and installs the Rust build. So every release repeats its files, byte for byte, under those names.
+
+- `scripts/bridge-assets.json` lists them with the SHA-256 each must have; `scripts/bridge-assets.mjs` reads it (`--list`, `--verify <dir>`, `--fill <dir>`, `--yml <dir> --version <v>`).
+- The release job, after the Rust build and before the checksums, downloads those files from the bridge release with its own token (`gh release download`), **refuses to go on** if a hash is `TODO`, a file is missing or differs, and, for the Reader, writes `latest.yml` and `latest-linux.yml` afresh: the **new** version over the bridge's own installer / AppImage (so `electron-updater` of an old copy sees a newer version, downloads the bridge build and checks the very file it gets). The macOS Electron updater does not exist (a Mac copy opens the `.dmg`), so there is no `latest-mac.yml`.
+- **Before the first release without Electron:** fill the hashes once from the real bridge releases — `gh release download v0.67.0 -D /tmp/rb -p 'KurokawaReader-0.67.0-*'`, `node scripts/bridge-assets.mjs reader --fill /tmp/rb`, the same for `tools-v0.23.0` and `tools` — and commit the result. `node scripts/release-check.mjs <app>` says while any is still `TODO`.
+- The notes' file table lists only the Rust files; the carried files are named in one line as «not downloads to choose», and the releases page hides them from any release that has the Rust files.
+- Nothing of the bridge is ever rebuilt: if its files have to change, that is a new bridge release and a deliberate edit of the list.
 
 ## How a push releases, and the second workflow
 
@@ -120,6 +195,11 @@ there, because the release workflows are not changed by the preflight work.)
 
 ## Files
 
-- `scripts/preflight.mjs`: the preflight; `scripts/preflight.config.json`: time limits, smoke sets, budget patterns, size limit.
+- `scripts/preflight.mjs`: the preflight; `scripts/preflight.config.json`: time limits, smoke sets, budget patterns, size limit, test parts;
+  `scripts/preflight.timings.json`: seconds per test for the shard split; `scripts/preflight-verdict.mjs`: the merged table.
+- `scripts/find-green-preflight.mjs`, `scripts/rerun-unstarted.mjs` (with their `.test.mjs`): what the release workflows ask GitHub.
+- `scripts/release-prep.mjs`: a `##` heading directly followed by `###` sub-headings is not an empty section (`--finish` kept
+  removing it); it prints the headings it keeps before writing, and refuses, exit 1, to drop a heading that has text or a
+  sub-heading under it (`scripts/release-prep-headings.test.mjs`).
 - `apps/<app>/tests/known-failures.json`, `not-in-ci.json`, `i18n-baseline.json`: what the preflight accepts.
 - `.github/workflows/preflight.yml`: the workflow that runs the preflight and the compile checks on a work branch.

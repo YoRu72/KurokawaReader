@@ -6,7 +6,8 @@ import { h, icon, openSheet, toast } from './ui/dom';
 import { t, formatBytes, localDigits } from './i18n';
 import { getSettings, updateSettings } from './settings';
 
-export type JobOut = { blob: Blob; name: string };
+/** `folder`: a PDF made into Word — saved into the folders the reader chose, where they chose them (see savefolder.ts). */
+export type JobOut = { blob: Blob; name: string; fonts?: import('./fontfolder').FolderFont[]; folder?: boolean };
 type Job = { id: number; title: string; pct: number; text?: string; state: 'running' | 'done' | 'failed'; out?: JobOut; error?: string; watched: () => boolean; seen?: boolean; quiet?: boolean; cancel?: () => void; doneText?: () => string };
 
 const jobs: Job[] = [];
@@ -132,15 +133,30 @@ export function jobsSheet(): void {
   const s = openSheet(t('jobsTitle'), t('close'));
   s.body.style.fontFamily = 'var(--font-ui)';
   const list = h('div', { class: 'job-list' });
+  // (Where a folder is chosen for a Word result, Save writes the document and its fonts there; else its ZIP — and the name
+  // shown is the one of what Save makes.)
+  let places = false;
+  void import('./savefolder').then((m) => { places = !!m.folderWhere() && !!m.readPlaces().doc; if (s.el.isConnected) draw(); });
+  const toFolder = (o: JobOut) => places && !!o.folder;
+  const shownName = (o: JobOut) => (o.fonts?.length && !toFolder(o) ? o.name.replace(/\.docx$/i, '') + '.zip' : o.name);
+  const saveJob = async (o: JobOut) => {
+    const [{ downloadBlob }, f, sv] = await Promise.all([import('./ui/share'), import('./fontfolder'), import('./savefolder')]);
+    if (toFolder(o)) {
+      try { const z = await sv.sendResult(o); toast(t('convSaved', { where: `\u2068${z.docIn}\u2069`, name: `\u2068${z.docName}\u2069`, size: `\u2068${formatBytes(z.docSize)}\u2069` }), 'info', 5000); }
+      catch (e) { console.warn('[kurokawa] save to the folder failed', e); toast(t('convFolderFailed'), 'error', 5000); }
+      return;
+    }
+    const r = await f.resultFile(o); downloadBlob(r.blob, r.name);
+  };
   const draw = () => {
     if (!s.el.isConnected) { off(); return; }
     list.replaceChildren(...(jobs.length ? jobs.map((j) => h('div', { class: 'job-row' },
-      h('div', { class: 'job-head' }, h('b', { dir: 'auto' }, j.title), h('span', { class: 'src' }, j.state === 'running' ? (j.text || `${localDigits(Math.round(j.pct))}%`) : j.state === 'done' ? h('span', null, h('bdi', null, j.out!.name), ' · ', h('bdi', null, formatBytes(j.out!.blob.size))) : t('convertFailed'))),
+      h('div', { class: 'job-head' }, h('b', { dir: 'auto' }, j.title), h('span', { class: 'src' }, j.state === 'running' ? (j.text || `${localDigits(Math.round(j.pct))}%`) : j.state === 'done' ? h('span', null, h('bdi', null, shownName(j.out!)), ' · ', h('bdi', null, formatBytes(j.out!.blob.size + (j.out!.fonts ?? []).reduce((a, f) => a + f.data.length, 0))), j.out!.fonts?.length ? h('span', null, ' · ', h('bdi', null, t('docxWithFonts', { n: j.out!.fonts.length }))) : null) : t('convertFailed'))),
       j.state === 'running' ? h('div', { class: 'progress-bar' }, h('span', { style: { width: `${j.pct}%` } })) : null,
       j.state === 'running' && j.cancel ? h('div', { class: 'sheet-actions', style: { padding: '6px 0 0' } }, h('button', { class: 'btn small', type: 'button', onclick: () => j.cancel!() }, icon('close'), t('cancel'))) : null,
       j.state === 'done' && !j.quiet ? h('div', { class: 'sheet-actions', style: { padding: '6px 0 0' } },
-        h('button', { class: 'btn small primary', type: 'button', onclick: () => void import('./ui/share').then((m) => m.shareFile(j.out!.blob, j.out!.name, j.out!.name)) }, icon('external'), t('shareFile')),
-        h('button', { class: 'btn small', type: 'button', onclick: () => void import('./ui/share').then((m) => m.downloadBlob(j.out!.blob, j.out!.name)) }, icon('download'), t('saveFile')),
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => void Promise.all([import('./ui/share'), import('./fontfolder').then((m) => m.resultFile(j.out!))]).then(([m, f]) => m.shareFile(f.blob, f.name, j.out!.name)) }, icon('external'), t('shareFile')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => void saveJob(j.out!) }, icon('download'), t('saveFile')),
         h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const { importFiles } = await import('./library'); await importFiles([new File([j.out!.blob], j.out!.name, { type: j.out!.blob.type })]); toast(t('addedToLibrary')); } }, icon('import'), t('addToLibrary'))) : null,
       j.state === 'failed' && j.error ? h('p', { class: 'hint' }, j.error) : null)) : [h('p', { class: 'src' }, t('jobsNone'))]));
   };

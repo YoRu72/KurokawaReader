@@ -1,0 +1,210 @@
+{
+ "meta": {
+  "kind": "book",
+  "title": "The Lamp Keeper's Year",
+  "header": "The Lamp Keeper's Year",
+  "headerOdd": "chapter",
+  "footer": "",
+  "pageNumbers": true,
+  "romanFront": true,
+  "dir": "ltr"
+ },
+ "footnotes": {},
+ "blocks": [
+  {
+   "type": "title",
+   "text": "The Lamp Keeper's Year"
+  },
+  {
+   "type": "p",
+   "id": "byline",
+   "role": "byline",
+   "runs": [
+    {
+     "t": "A made-up story for a test corpus"
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "Contents",
+   "front": true
+  },
+  {
+   "type": "toc",
+   "id": "toc",
+   "entries": [
+    {
+     "text": "1 The Lamp Keeper",
+     "page": "1"
+    },
+    {
+     "text": "2 Low Water",
+     "page": "3"
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "1 The Lamp Keeper",
+   "chapter": "The Lamp Keeper"
+  },
+  {
+   "type": "p",
+   "id": "c1p1",
+   "dropcap": true,
+   "smallcapsWords": 6,
+   "runs": [
+    {
+     "t": "The lamp on the north pier was lit at dusk every evening of the year, and for eleven of those years it was lit by Orla Penhale. She came down the harbour steps with the brass key in one hand and the oil can in the other, and she never once forgot which came first."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c1p2",
+   "runs": [
+    {
+     "t": "Her father had kept the lamp before her, and his mother before him. The keeping passed down the family like a coat that was let out and taken in, never quite fitting anyone, never quite thrown away."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c1p3",
+   "runs": [
+    {
+     "t": "In the first winter she kept a notebook of every ship that passed. By spring the notebook had grown into three, and the harbour master asked to borrow them, which pleased her more than she would admit."
+    }
+   ]
+  },
+  {
+   "type": "quote",
+   "id": "quote",
+   "text": "A light that is kept is a promise kept. Nobody thanks the lamp, but every boat that comes home is its answer."
+  },
+  {
+   "type": "p",
+   "id": "c1p4",
+   "runs": [
+    {
+     "t": "There were nights when the wind came straight off the sea and the flame bent low behind the glass. On those nights she sat in the lamp room with her back to the wall and listened to the pier groan under the weight of the water, counting the waves between the gusts."
+    }
+   ]
+  },
+  {
+   "type": "ornament",
+   "id": "orn",
+   "text": "* * *"
+  },
+  {
+   "type": "p",
+   "id": "c1p5",
+   "runs": [
+    {
+     "t": "Most of the work was waiting. She trimmed the wick, wiped the soot from the glass, filled the reservoir and wrote the time in the book. Then she waited for morning, and when morning came she put the light out and walked home along the harbour wall."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c1p6",
+   "runs": [
+    {
+     "t": "In the summer the work was lighter but the nights were shorter, and she found that she slept badly in the long evenings before dusk. She took to mending nets for the families on Quay Street, which earned her a little money and a great deal of conversation, most of it about the weather and the price of coal."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c1p7",
+   "runs": [
+    {
+     "t": "The harbour master came to the lamp room once a month to sign the book. He was a careful man who counted the pages before he signed them, and he always asked whether the glass had cracked again. It had cracked twice in eleven years, both times in a frost, and both times she had mended it herself with a strip of lead and a borrowed iron."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c1p8",
+   "runs": [
+    {
+     "t": "Visitors sometimes climbed the steps to watch her work. Children asked whether the light ever went out by itself, and she told them the truth, that it had gone out once in a gale and that she had relit it in the dark with her hands shaking so much that the third match broke."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c1p9",
+   "runs": [
+    {
+     "t": "After that night she kept a second box of matches in a tin by the door, and a third in her coat. The harbour board heard of the gale and sent a letter of thanks, which she pinned above the oil shelf, and which slowly turned brown in the heat of the lamp over the following winters."
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "2 Low Water",
+   "chapter": "Low Water"
+  },
+  {
+   "type": "p",
+   "id": "c2p1",
+   "dropcap": true,
+   "smallcapsWords": 4,
+   "runs": [
+    {
+     "t": "Low water came twice a day, and twice a day the harbour showed what it had been hiding. Old ropes, a cart wheel, a bottle with no message in it, and once a small boat that nobody claimed."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c2p2",
+   "runs": [
+    {
+     "t": "Orla walked the mud at low water with a long pole, testing the ground before each step. She learned which channels stayed soft and which had turned to sand, and she drew them on the back page of her notebook."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c2p3",
+   "runs": [
+    {
+     "t": "The fishermen laughed at the drawings at first. Then one of them ran aground on a bank that was not on any chart but was on hers, and after that they came to the lamp room on Sundays to copy the back page."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c2p4",
+   "runs": [
+    {
+     "t": "By the end of the year the drawings had become a proper map, with depths written in small figures and the softest mud shaded in pencil. The harbour board printed it at last, though they never put her name on it."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c2p5",
+   "runs": [
+    {
+     "t": "She did not mind as much as people expected. The map was meant for the boats, not for her, and the boats used it. On calm evenings she could see from the lamp room how the skippers turned early at the bend below the chapel, exactly where her pencil line turned."
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "c2p6",
+   "runs": [
+    {
+     "t": "In the autumn a surveyor came from the city with brass instruments and a boy to carry them. He measured the harbour for three weeks and found that the printed map was right in every place but one, where a winter storm had moved the sand since she had drawn it."
+    }
+   ]
+  }
+ ]
+}

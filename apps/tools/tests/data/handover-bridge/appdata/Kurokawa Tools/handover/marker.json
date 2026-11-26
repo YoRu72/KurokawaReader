@@ -1,0 +1,83 @@
+{
+ "app": "KurokawaTools",
+ "kind": "handover",
+ "format": 1,
+ "id": "mwxql0me-aac0f31edfc9",
+ "createdAt": 1795708679270,
+ "from": {
+  "shell": "electron",
+  "platform": "win32",
+  "version": "0.23.0",
+  "portable": false
+ },
+ "counts": {
+  "local": 2,
+  "records": 1,
+  "files": 1,
+  "history": 0,
+  "addons": 1
+ },
+ "bytes": 433,
+ "files": [
+  {
+   "rel": "engine/aria2-config.json",
+   "size": 31,
+   "sha256": "03a42a8e6267d55d723e9bda5c78b902df8db7a032b3c0af9c67834352c8b893"
+  },
+  {
+   "rel": "engine/aria2.session",
+   "size": 51,
+   "sha256": "1fe544fa6005bee5958abdf4bdd7f4c167c877326af5cfd56b94a27e7b92f033"
+  },
+  {
+   "rel": "engine/dht.dat",
+   "size": 9,
+   "sha256": "c0edba0024061d9be14ae8226d1c919a44b8c7417530b1de0f3643c4bb75f0b3"
+  },
+  {
+   "rel": "engine/moving.json",
+   "size": 20,
+   "sha256": "59e377a0c5572b34b54e3c38e218e09401fff5c6f50bca6c4feff67d35f7a49d"
+  },
+  {
+   "rel": "engine/tasks.json",
+   "size": 65,
+   "sha256": "1397a09820f29a03e37f5e708f17483e0dde994ca6d1b286b828a0a0697f4477"
+  },
+  {
+   "rel": "engine/video-jobs.json",
+   "size": 2,
+   "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+   "rel": "files/0",
+   "size": 9,
+   "sha256": "d16fe4f389eb01ddeee74defed42284d8d4ab6630152bdc67dd073a74bf56d44"
+  },
+  {
+   "rel": "handover/files.json",
+   "size": 90,
+   "sha256": "4914bcd9314135900b8654f0c11b242ff6a426794c4fa439f9053c4459044d79"
+  },
+  {
+   "rel": "handover/local.json",
+   "size": 34,
+   "sha256": "8da75956c6aedd6356ba3a3af6bd9c8ffa26e654ff8ec70c3b41853d2ae1156e"
+  },
+  {
+   "rel": "handover/meta.jsonl",
+   "size": 68,
+   "sha256": "fdbcd30d2c84a30e4a7a0b813e1dce1c06af005085e9b5e06ca6298c792468c0"
+  },
+  {
+   "rel": "shell/custom-icon.png",
+   "size": 9,
+   "sha256": "3fd37197e91e0b2cc29edce5ba07ec90a98144f34c1ac9b33efbc765ccbbd7fe"
+  },
+  {
+   "rel": "shell/window-state.json",
+   "size": 45,
+   "sha256": "9c32bbf4a6bacb5fb3d36e08ad52cb257a6124942023513769ce96d6274ff9b3"
+  }
+ ]
+}

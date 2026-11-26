@@ -107,7 +107,9 @@ function readPara(D, p, ctx) {
   let heading = null; // {level}  (Title -> level 0)
   if (outline !== undefined && outline < 9) heading = { level: outline + 1 };
   for (const s of chain) { const m = /^heading (\d)/.exec(s.name); if (m && !heading) heading = { level: +m[1] }; if (s.name === 'title' && !heading) heading = { level: 0, title: true }; }
-  const P = { text: '', runs: [], style: sid, styleName: chain[0]?.name || '', heading, num, numKind: D.kindOf(num), bidi: !!bidi, jc, table: ctx.table, box: ctx.box, pics: 0, rtlRuns: 0, frame: !!kid(pr, 'w:framePr'), ind: indOf(kid(pr, 'w:ind')) };
+  const P = { text: '', runs: [], style: sid, styleName: chain[0]?.name || '', heading, num, numKind: D.kindOf(num), bidi: !!bidi, jc, table: ctx.table, box: ctx.box, pics: 0, rtlRuns: 0, frame: !!kid(pr, 'w:framePr'), ind: indOf(kid(pr, 'w:ind')),
+    // (corpus3: a drop cap's frame, tab stops with a leader, a bottom rule, drawings that are no picture — shapes, check boxes.)
+    dropCap: attr(kid(pr, 'w:framePr'), 'w:dropCap') || '', leaderTabs: kidsOf(kid(pr, 'w:tabs'), 'w:tab').filter((t) => ['dot', 'hyphen', 'underscore', 'middleDot'].includes(t.attrs['w:leader'])).length, ruleBelow: !!kid(kid(pr, 'w:pBdr'), 'w:bottom') && attr(kid(kid(pr, 'w:pBdr'), 'w:bottom'), 'w:val') !== 'nil', shapes: 0 };
   // (Its section: the next w:sectPr in the body — this paragraph's own, or a later one.)
   (D.unsect ??= []).push(P); const sp = kid(pr, 'w:sectPr'); if (sp) { const sec = sectOf(sp); for (const q of D.unsect) q.sect = sec; D.unsect = []; }
   D.paras.push(P); const boxes = [];
@@ -119,10 +121,12 @@ function readPara(D, p, ctx) {
     const R = { text: '', b: rp && kid(rp, 'w:b') ? on(kid(rp, 'w:b')) : false, i: rp && kid(rp, 'w:i') ? on(kid(rp, 'w:i')) : false, font: (rf && (rf.attrs['w:ascii'] || rf.attrs['w:hAnsi'] || rf.attrs['w:cs'] || rf.attrs['w:eastAsia'])) || '', link };
     if (rp && kid(rp, 'w:rtl') && on(kid(rp, 'w:rtl'))) P.rtlRuns++;
     // (For runs_plain: the run's look as written, its size, and whether it holds only text.)
+    // (corpus3: raised / lowered, underlined, small capitals, colour.)
+    R.va = attr(kid(rp, 'w:vertAlign'), 'w:val') || (rp && kid(rp, 'w:position') && +attr(kid(rp, 'w:position'), 'w:val') > 0 ? 'superscript' : rp && kid(rp, 'w:position') && +attr(kid(rp, 'w:position'), 'w:val') < 0 ? 'subscript' : ''); R.u = !!(rp && kid(rp, 'w:u') && attr(kid(rp, 'w:u'), 'w:val') !== 'none'); R.caps = !!(rp && kid(rp, 'w:smallCaps') && on(kid(rp, 'w:smallCaps'))); R.color = (attr(kid(rp, 'w:color'), 'w:val') || '').toUpperCase();
     R.sig = rp ? JSON.stringify(rp) : ''; R.sz = rp && kid(rp, 'w:sz') ? +attr(kid(rp, 'w:sz'), 'w:val') : null; R.plain = r.kids.every((c) => c.tag === 'w:rPr' || c.tag === 'w:t'); R.field = fieldStack.length > 0;
     for (const c of r.kids) {
       if (c.tag === 'w:t') R.text += textOf(c);
-      else if (c.tag === 'w:tab' || c.tag === 'w:br' || c.tag === 'w:noBreakHyphen') R.text += c.tag === 'w:noBreakHyphen' ? '-' : ' ';
+      else if (c.tag === 'w:tab' || c.tag === 'w:br' || c.tag === 'w:noBreakHyphen') { R.text += c.tag === 'w:noBreakHyphen' ? '-' : ' '; if (c.tag === 'w:tab') R.tab = true; if (c.tag === 'w:br' && !c.attrs['w:type']) R.br = true; }
       else if (c.tag === 'w:footnoteReference' || c.tag === 'w:endnoteReference') { D.footRefs++; R.text += String(D.footRefs); R.foot = true; }
       else if (c.tag === 'w:instrText') { const f = fieldStack[fieldStack.length - 1]; if (f) f.instr += textOf(c); }
       else if (c.tag === 'w:fldChar') {
@@ -131,6 +135,7 @@ function readPara(D, p, ctx) {
         else if (t === 'separate') { const f = fieldStack[fieldStack.length - 1]; if (f) { const m = /HYPERLINK\s+"([^"]+)"/.exec(f.instr); if (m) { f.link = { target: m[1] }; D.links.push(f.link); } if (/\bPAGE\b/.test(f.instr)) D.fieldsPage++; } }
       } else if (c.tag === 'w:drawing' || c.tag === 'w:pict' || c.tag === 'w:object') {
         let hasText = false; for (const d of descend(c)) if (d.tag === 'w:txbxContent') { hasText = true; boxes.push(d); }
+        if (!hasText) P.shapes++;
         if (!hasText) { const bp = bigPics({ kids: [c] }); P.pics += bp.big; D.drawings += bp.big; D.smallDrawings += bp.small; }
       } else if (c.tag === 'mc:AlternateContent') { const ch = kid(c, 'mc:Choice'); if (ch) for (const x of ch.kids) if (x.tag === 'w:drawing' || x.tag === 'w:pict') { let hasText = false; for (const d of descend(x)) if (d.tag === 'w:txbxContent') { hasText = true; boxes.push(d); } if (!hasText) { const bp = bigPics({ kids: [x] }); P.pics += bp.big; D.drawings += bp.big; D.smallDrawings += bp.small; } } }
     }

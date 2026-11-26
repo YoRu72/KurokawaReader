@@ -151,7 +151,7 @@ setTimeout(() => { try { if (localStorage.getItem('kr.al.pending')) void import(
 (location.search.includes('code=') ? (fn: () => void) => fn() : idle)(() => void import('./sync').then((m) => m.initSync(() => void import('./ui/syncsheet').then((u) => u.askSyncSheet()))).catch(() => undefined));
 idle(() => void import('./samples').then((m) => m.refreshSampleCovers()).catch(() => undefined), 5000);
 // (Stage R6a, the computer's apps only — the shells that give window.kurokawaHandover: both give the tests and the
-// update their way in — src/handover.ts; the Electron bridge build's switch (desktop/handover.cjs prepare) runs
+// update their way in — src/handover.ts; the Electron bridge build's switch (tests/support/bridge-handover.cjs (frozen) prepare) runs
 // beforeInstall() and installs the Rust build only on true. The Rust build's offer at the start: above, startScreens.)
 if ((window as unknown as { kurokawaHandover?: { find?: unknown } }).kurokawaHandover) {
   const ho = () => import('./handover'); const hs = () => import('./ui/handoversheet');

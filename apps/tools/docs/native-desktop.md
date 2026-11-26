@@ -1,7 +1,18 @@
-# Kurokawa Tools — desktop (Electron)
+# Kurokawa Tools — desktop engine modules
 
-- **main.cjs** — the window (app:// origin), magnets / .torrent files / `kurokawatools://` links from the system (handed to the page as `kt:open`), the engine's IPC (`kt:*`), the updater (the repository's `tools-v*` releases, read with the GitHub API; Windows and Linux install in place, macOS opens the DMG).
-- **aria2.cjs** — the engine: spawns `aria2c` (bundled under `resources/aria2/<plat>-<arch>/`, else one on the PATH) with RPC on a free port and a random secret, `--save-session` in the app's data folder (downloads survive restarts), DHT/LPD on, `--bt-save-metadata`; maps aria2's status to the page's Task shape; `tasks.json` keeps the names and meta aria2 does not. True sequential download is not available in aria2 (`bt-prioritize-piece=head,tail` is used instead), so streaming while downloading is not offered on the desktop yet.
-- **aria2rpc.cjs** — JSON-RPC over WebSocket (Node's), with HTTP POST as the fallback.
-- **fetch-aria2.mjs** — run before electron-builder: downloads aria2c for the build's platform (Windows: aria2's own release zip; Linux x64/arm64: abcfy2's static musl builds). macOS has no static build: the app looks for Homebrew's `aria2c`; without it, torrents need a remote aria2.
-- **preload.cjs** — `window.kurokawaTools` (see `src/engine/desktop.ts`).
+The computer app is the Rust (Tauri) one, in `../desktop-tauri/`; there is no Electron program any more (`docs/RUST-PORT.md`, status).
+This folder, `../desktop/`, holds what the Rust build and the tests still read:
+
+- **package.json** — the version the release gate reads (`scripts/release-check.mjs`), and the packages the release workflow uses:
+  `7zip-bin` (the Rust bundle's 7za), `ffmpeg-static` (the computer ffmpeg pack: `ffmpeg-pack.cjs`), `webtorrent` (`tests/webstream.cjs`).
+- **icon.png, icon.ico** — the app's icon (`tauri icon`, and compiled into the Rust shell).
+- **fetch-aria2.mjs** — run by the release workflow before the Rust build: downloads aria2c for the build's platform (Windows: aria2's own
+  release zip; Linux x64/arm64: abcfy2's static musl builds). macOS has no static build: the app looks for Homebrew's `aria2c`; without
+  it, torrents need a remote aria2. **ffmpeg-pack.cjs** makes the computer ffmpeg pack the app downloads.
+- **archsafe.cjs, namesafe.json, inplace.cjs** — shared with the web build (`src/archives/safety.ts`, `src/views/*`) and the shared test vectors.
+- **aria2.cjs, aria2rpc.cjs, archive.cjs, dohchain.cjs, extcmd.cjs, extplayer.cjs, ffmpeg.cjs, gh.cjs, ownerlock.cjs, packs.cjs, paths.cjs,
+  relay.cjs, screentr.cjs, sniff.cjs, streamproxy.cjs, torrentstream.cjs, transcode.cjs, webstream.cjs, ytdlp.cjs** — the engines as they were
+  in the Electron program. Nothing ships them; they stay as the reference the Rust ports (`../core/`, `../desktop-tauri/src-tauri/`) are
+  tested against (`tests/aria2.cjs`, `tests/transcode.cjs`, `tests/ytjobs.cjs`, the shared vectors…) and go with those tests when the ports
+  carry their own.
+- What an old Electron copy of Tools does on the way to the new app (the frozen bridge build, `scripts/bridge-assets.json`): see `docs/RELEASING.md`.

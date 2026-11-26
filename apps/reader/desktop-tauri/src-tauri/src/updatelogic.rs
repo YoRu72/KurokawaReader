@@ -1,7 +1,7 @@
 // The updater's decisions (stage R6b), std only, so they are checked alone: `rustc --edition 2021 --test
 // updatelogic.rs` (the workflow's «Std-only unit tests»). What kind of copy this is (installed by the NSIS installer,
 // the portable zip, an AppImage, a .deb, a Mac's .app, a bare program), which release and which of its files is the
-// update for it, the release's names for those files (also desktop/rustswitch.cjs's and src/updateCore.ts's —
+// update for it, the release's names for those files (also tests/support/bridge-rustswitch.cjs (frozen)'s and src/updateCore.ts's —
 // tests/updatenames.cjs keeps the three equal), the checksum it must have (GitHub's digest or the release's
 // SHA256SUMS file), resuming a download that broke off (Range / Content-Range), and how the installer is run. The
 // network, the files and the processes are update.rs's.
@@ -166,7 +166,7 @@ fn arch_word(arch: &str) -> &str {
 /// none (a bare program). (The disk image ends «.DMG» and the AppImage «.appimage»: every Electron copy's page takes
 /// «the first file matching /\.dmg$/» on a Mac and «/\.AppImage$/» on Linux — case-sensitive, frozen in the copies
 /// out there —, so none can take this build's file and skip the hand-over, whatever order a release lists its files
-/// in; macOS and Linux go by the extension whatever its case. The same names in desktop/rustswitch.cjs and
+/// in; macOS and Linux go by the extension whatever its case. The same names in tests/support/bridge-rustswitch.cjs (frozen) and
 /// src/updateCore.ts: tests/updatenames.cjs.)
 pub fn asset_name(version: &str, os: &str, arch: &str, kind: Kind) -> Option<String> {
     let a = arch_word(arch);

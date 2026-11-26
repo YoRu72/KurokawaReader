@@ -386,4 +386,50 @@ mod tests {
         }
         assert!(!font_name_ok(&"x".repeat(201)));
     }
+
+    /// A hand-over folder as the last Electron («bridge») build left it — the committed fixture under tests/data/handover-bridge/,
+    /// written by that build's own Writer — read the way this build reads one: found by the pointer in its data folder and by
+    /// Electron's appData (the same folder, named once), the folder picked by hand, deletable, every file the marker lists
+    /// safe to read, there, of the size it says, and the marker's total the folder's. Runs only with KR_HANDOVER_FIXTURE=<the
+    /// fixture's folder, its pointer's word @FIXTURE@ put right> (tests/handover-fixture.cjs sets it); otherwise it does nothing.
+    #[test]
+    fn a_folder_from_the_last_electron_build() {
+        let Ok(fx) = std::env::var("KR_HANDOVER_FIXTURE") else { return };
+        let fx = PathBuf::from(fx);
+        let ptr = std::fs::read_to_string(fx.join("tauri-data").join(POINTER)).unwrap();
+        let after = |text: &str, key: &str| -> String {
+            let i = text.find(key).unwrap_or_else(|| panic!("no {} in {}", key, text)) + key.len();
+            text[i..].trim_start_matches(|c: char| c == ' ' || c == '\n').chars().take_while(|c| *c != '"' && *c != ',' && *c != '\n').collect::<String>()
+        };
+        let pointed = PathBuf::from(after(&ptr, "\"dir\":\"").replace("\\\\", "\\"));
+        let app_data = fx.join("appdata");
+        let c = candidates(None, vec![pointed.clone()], Some(app_data.clone()));
+        let found: Vec<&PathBuf> = c.iter().filter(|d| d.join(MARKER).is_file()).collect();
+        assert_eq!(found.len(), 1, "the pointer's folder and Electron's appData folder are one, named once: {:?}", c);
+        let dir = found[0].clone();
+        assert_eq!(dir, pointed);
+        assert_eq!(resolve_given(&app_data.join(ELECTRON_NAMES[0])), dir, "Electron's data folder picked by hand");
+        assert_eq!(resolve_given(&dir), dir);
+        assert!(deletable(&dir));
+        let marker = std::fs::read_to_string(dir.join(MARKER)).unwrap();
+        assert!(marker.contains("\"kind\": \"handover\"") && marker.contains("\"app\": \"KurokawaTools\""), "{}", marker);
+        let format: u64 = after(&marker, "\"format\": ").parse().unwrap();
+        assert!(format >= 1 && format <= FORMAT, "format {}", format);
+        // Every file: «"rel": "…", "size": N»
+        let mut total = 0u64;
+        let mut n = 0;
+        let mut rest = marker.as_str();
+        while let Some(i) = rest.find("\"rel\": \"") {
+            rest = &rest[i + 8..];
+            let rel: String = rest.chars().take_while(|c| *c != '"').collect();
+            let size: u64 = after(rest, "\"size\": ").parse().unwrap();
+            assert!(safe_rel(&rel), "{}", rel);
+            let p = join_rel(&dir, &rel).unwrap();
+            assert_eq!(std::fs::metadata(&p).unwrap_or_else(|e| panic!("{}: {}", rel, e)).len(), size, "{}", rel);
+            total += size;
+            n += 1;
+        }
+        assert!(n >= 8, "the marker lists {} files", n);
+        assert_eq!(folder_size(&dir), total + std::fs::metadata(dir.join(MARKER)).unwrap().len(), "nothing unlisted in the folder");
+    }
 }

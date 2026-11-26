@@ -1,4 +1,4 @@
-// window.kurokawaTools for the Tauri shell: the same names, arguments and results as desktop/preload.cjs (the
+// window.kurokawaTools for the Tauri shell: the same names, arguments and results as tests/support/electron-preload.cjs (frozen) (the
 // Electron shell's bridge; the typed shape is src/engine/desktop.ts), each channel kt:xyz a Tauri command kt_xyz.
 // Run by src-tauri/src/main.rs as the window's initialization script — before the page's own scripts, on every
 // load —, after a line that sets window.__KT_BOOT__ = { os, arch }.

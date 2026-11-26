@@ -19,7 +19,7 @@ Open `KurokawaReader-<version>-macos-universal.DMG` and drag KurokawaReader to A
 The app updates itself from *Settings → App updates*: it downloads the new version, checks it against the release's SHA-256, and installs it in place (Windows, AppImage) or opens it for you (macOS disk image, .deb). The portable zip is updated by hand.
 
 ### The previous build (old engine)
-For two versions the release also carries the previous build (`…-win-x64.exe`, `…-mac-universal.dmg`, `…-linux-x86_64.AppImage`), for anyone who needs to go back. Its library stays in its own data folder.
+Each release also repeats the last copy of the previous program (`…-win-x64.exe`, `…-mac-universal.dmg`, `…-linux-x86_64.AppImage`, `latest*.yml`) — not as a download to choose, only so that a copy of it still on someone's computer can update itself to this app, which brings its library over. Its own data folder is left as it is.
 
 ### iOS
 Apple only lets an app run if it is signed, so there are three routes; pick the one that fits your device. The app itself helps with all of them (*Settings → App updates*).

@@ -1,5 +1,5 @@
 {
-  "_": "Settings of scripts/preflight.mjs. timeoutSec: seconds one test may run (per file name, else default). smoke: tests --quick always runs (they must be in the release workflow's chain). budgets: the tests that carry a start-JS budget — output is a regex over the test's output whose first group is the size in KB, limit a regex over the test's source whose first group is the limit.",
+  "_": "Settings of scripts/preflight.mjs. timeoutSec: seconds one test may run (per file name, else default). smoke: tests --quick always runs (they must be in the release workflow's chain). budgets: the tests that carry a start-JS budget — output is a regex over the test's output whose first group is the size in KB, limit a regex over the test's source whose first group is the limit. parts: a test that runs as separate entries (own shard parts) with these arguments instead of once without; each part is timed and placed on its own (the test file is unchanged: uihunt.cjs en / ar select one language). Timings of the split live in scripts/preflight.timings.json.",
   "maxAddedFileKB": 1024,
   "allowBig": [
     "apps/*/public/samples/**",
@@ -60,6 +60,16 @@
         "output": "the scripts loaded before the library shows are under \\d+ KB\\s+\"(\\d+) KB in",
         "limit": "startJsKB: ([\\d.]+)"
       }
+    },
+    "parts": {
+      "uihunt.cjs": [
+        [
+          "en"
+        ],
+        [
+          "ar"
+        ]
+      ]
     }
   }
 }

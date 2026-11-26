@@ -105,7 +105,9 @@ const VIEWS = [
     await pdfCard.dispatchEvent('contextmenu'); await p.waitForSelector('.sel-actions, .sheet');
     const conv = '.sel-actions button:has-text("Convert"), .sel-actions button:has-text("تحويل")';
     if (!(await p.$(conv))) { if (await p.$('.sel-actions')) { await p.click('.sel-actions button:has-text("More"), .sel-actions button:has-text("المزيد")'); await p.waitForSelector('.sheet'); } await p.waitForTimeout(400); await p.evaluate(() => { const b = [...document.querySelectorAll('.sheet button')].find((x) => /^(Convert|تحويل)$/.test(x.textContent.trim())); if (!b) throw new Error('no Convert'); b.click(); }); } else await p.click(conv);
-    await p.waitForSelector('.conv-docx-opts:not([hidden]) .segmented button', { timeout: 10000 }); await p.waitForTimeout(300); }],
+    await p.waitForSelector('.conv-docx-opts:not([hidden]) .segmented button', { timeout: 10000 });
+    // (Word's «Fonts» row too, with «In a folder» chosen: its line shown.)
+    await p.click('.conv-fonts button:nth-child(2)'); await p.waitForSelector('.conv-fonts-hint:not([hidden])', { timeout: 5000 }); await p.waitForTimeout(300); }],
   ['book', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-view, .book-page, .view', { timeout: 10000 }); }],
   // The book's «Edit title and author» sheet (src/ui/booknames.ts): with another title to show the rows and the keep switch.
   ['book-edit-names', async (p) => { const id = await idOf(p, /nihongo/); await p.evaluate((id) => { location.hash = '#/book/' + id; }, id); await p.waitForSelector('.book-hero h1', { timeout: 10000 }); await p.waitForTimeout(300); await p.evaluate(() => [...document.querySelectorAll('.book-tile')].find((x) => x.querySelector('svg') && /^(Edit|تعديل)/.test(x.textContent.trim())).click()); await p.waitForSelector('.names-shown'); await p.fill('.names-add', 'Another title'); await p.keyboard.press('Enter'); await p.fill('.names-shown', 'A new shown title'); await p.waitForTimeout(250); }],

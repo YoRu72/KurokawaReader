@@ -1,0 +1,79 @@
+[
+ {
+  "ext": "epub",
+  "name": "EPUB book",
+  "mimeType": "application/epub+zip",
+  "role": "Viewer"
+ },
+ {
+  "ext": "pdf",
+  "name": "PDF document",
+  "mimeType": "application/pdf",
+  "role": "Viewer"
+ },
+ {
+  "ext": "docx",
+  "name": "Word document",
+  "role": "Viewer"
+ },
+ {
+  "ext": "xlsx",
+  "name": "Excel workbook",
+  "role": "Viewer"
+ },
+ {
+  "ext": "pptx",
+  "name": "PowerPoint presentation",
+  "role": "Viewer"
+ },
+ {
+  "ext": "txt",
+  "name": "Text",
+  "role": "Viewer"
+ },
+ {
+  "ext": "md",
+  "name": "Markdown",
+  "role": "Viewer"
+ },
+ {
+  "ext": "fb2",
+  "name": "FictionBook",
+  "role": "Viewer"
+ },
+ {
+  "ext": "cbz",
+  "name": "Comic archive",
+  "role": "Viewer"
+ },
+ {
+  "ext": "cbr",
+  "name": "Comic archive (RAR)",
+  "role": "Viewer"
+ },
+ {
+  "ext": "cb7",
+  "name": "Comic archive (7z)",
+  "role": "Viewer"
+ },
+ {
+  "ext": "cbt",
+  "name": "Comic archive (tar)",
+  "role": "Viewer"
+ },
+ {
+  "ext": "otf",
+  "name": "OpenType font",
+  "role": "Viewer"
+ },
+ {
+  "ext": "ttf",
+  "name": "TrueType font",
+  "role": "Viewer"
+ },
+ {
+  "ext": "odt",
+  "name": "OpenDocument text",
+  "role": "Viewer"
+ }
+]

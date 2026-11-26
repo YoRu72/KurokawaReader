@@ -1,0 +1,280 @@
+{
+ "meta": {
+  "kind": "paper",
+  "title": "A Simple Model of Mixing in Shallow Estuaries",
+  "header": "Notes on Tidal Mixing - Draft",
+  "footer": "",
+  "pageNumbers": true,
+  "dir": "ltr"
+ },
+ "footnotes": {
+  "1": "The six stations are the ones used by the harbour survey of the same year.",
+  "2": "Readings taken in storms were left out of the fit."
+ },
+ "blocks": [
+  {
+   "type": "title",
+   "text": "A Simple Model of Mixing in Shallow Estuaries"
+  },
+  {
+   "type": "p",
+   "id": "authors",
+   "role": "authors",
+   "runs": [
+    {
+     "t": "Ada Rowntree"
+    },
+    {
+     "t": "1",
+     "sup": true
+    },
+    {
+     "t": ", Tomas Elling"
+    },
+    {
+     "t": "2",
+     "sup": true
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "affil",
+   "role": "authors",
+   "runs": [
+    {
+     "t": "1",
+     "sup": true
+    },
+    {
+     "t": "Coastal Laboratory, Port Amble. "
+    },
+    {
+     "t": "2",
+     "sup": true
+    },
+    {
+     "t": "School of Water Studies, Hollin Vale."
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 2,
+   "text": "Abstract",
+   "abstract": true
+  },
+  {
+   "type": "p",
+   "id": "abstract",
+   "role": "abstract",
+   "runs": [
+    {
+     "t": "We describe a two-box model of salt and fresh water in a shallow estuary. The model needs only the river flow, the tidal range and one mixing constant, and it reproduces the salinity measured at six stations within a few units. We fit the constant from one season of readings and test it on the next."
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "1 Introduction"
+  },
+  {
+   "type": "p",
+   "id": "intro",
+   "runs": [
+    {
+     "t": "A shallow estuary mixes river water with sea water twice a day. Its salinity at a place depends on the river flow, on the tide and on how fast the two waters stir. Many models describe this with care; ours keeps only what a harbour office can measure. We call the salinity of box "
+    },
+    {
+     "t": "i",
+     "i": true
+    },
+    {
+     "t": " the value "
+    },
+    {
+     "t": "s",
+     "i": true
+    },
+    {
+     "t": "i",
+     "i": true,
+     "sub": true
+    },
+    {
+     "t": " and the river flow "
+    },
+    {
+     "t": "Q",
+     "i": true
+    },
+    {
+     "t": ", and we take the mixing to grow with the square of the tidal range, "
+    },
+    {
+     "t": "r",
+     "i": true
+    },
+    {
+     "t": "2",
+     "sup": true
+    },
+    {
+     "t": "."
+    },
+    {
+     "fn": 1
+    },
+    {
+     "t": " The rest of this note sets out the model, fits it and tests it."
+    }
+   ]
+  },
+  {
+   "type": "eq",
+   "id": "eq1",
+   "text": "ds/dt = k (s0 - s)",
+   "num": "(1)"
+  },
+  {
+   "type": "p",
+   "id": "intro2",
+   "runs": [
+    {
+     "t": "Equation 1 says that each box relaxes toward the sea value at a rate set by the constant k. The constant is the only number we fit, and the next section shows how."
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "2 Method"
+  },
+  {
+   "type": "p",
+   "id": "method",
+   "runs": [
+    {
+     "t": "We read the salinity at six stations at high and low water for one season. For each station we took the mean of the two readings of a day and the river flow of the same day from the gauge above the town. The flux between two boxes is then written as a sum of the river term and the mixing term."
+    }
+   ]
+  },
+  {
+   "type": "eq",
+   "id": "eq2",
+   "text": "F = Q s + k A r2",
+   "num": "(2)"
+  },
+  {
+   "type": "p",
+   "id": "method2",
+   "runs": [
+    {
+     "t": "Here A is the cross-section of the channel at the boundary. We fitted k by least squares over all days of the first season and kept the second season apart for the test."
+    }
+   ]
+  },
+  {
+   "type": "figure",
+   "id": "fig1",
+   "wide": true,
+   "caption": "Figure 1: Salinity along the channel at high water."
+  },
+  {
+   "type": "table",
+   "id": "consts",
+   "wide": true,
+   "caption": "Table 1: Fitted constants for the two seasons.",
+   "rows": [
+    [
+     {
+      "text": "Season",
+      "header": true
+     },
+     {
+      "text": "k (per day)",
+      "header": true
+     },
+     {
+      "text": "Error",
+      "header": true
+     }
+    ],
+    [
+     {
+      "text": "Spring"
+     },
+     {
+      "text": "0.42"
+     },
+     {
+      "text": "1.8"
+     }
+    ],
+    [
+     {
+      "text": "Autumn"
+     },
+     {
+      "text": "0.39"
+     },
+     {
+      "text": "2.1"
+     }
+    ],
+    [
+     {
+      "text": "Both"
+     },
+     {
+      "text": "0.41"
+     },
+     {
+      "text": "1.9"
+     }
+    ]
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "3 Results"
+  },
+  {
+   "type": "p",
+   "id": "results",
+   "runs": [
+    {
+     "t": "The fitted constant changed little between the seasons, as Table 1 shows. The model followed the measured salinity at five of the six stations; at the sixth, close to the weir, it ran high on every spring tide."
+    },
+    {
+     "fn": 2
+    },
+    {
+     "t": " We think the weir holds back fresh water that the model lets through."
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "References"
+  },
+  {
+   "type": "ref",
+   "id": "ref1",
+   "text": "[1] Calloway, P. and Dene, M. Tides of small harbours. Coastal Notes 4, 2019, pages 11 to 29."
+  },
+  {
+   "type": "ref",
+   "id": "ref2",
+   "text": "[2] Rowntree, A. Salinity readings at Port Amble, a working record kept for the harbour office over three seasons. Port Amble, 2024."
+  },
+  {
+   "type": "ref",
+   "id": "ref3",
+   "text": "[3] Elling, T. Box models for teaching. Hollin Vale Press, 2021."
+  }
+ ]
+}

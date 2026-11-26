@@ -1,5 +1,5 @@
 // The Rust (Tauri) build's release files (stage P8), as kt-core's updatelogic.rs names them, against the Electron Tools
-// build's own picking — src/installer.ts suitableAsset and desktop/main.cjs kt:checkUpdate, frozen in every Electron
+// build's own picking — src/installer.ts suitableAsset and the old Electron build's kt:checkUpdate, frozen in every Electron
 // copy out there: Windows /win-x64\.exe$/ (not «portable»), a Mac the first /\.dmg$/, Linux the first /\.AppImage$/
 // (case-sensitive) —: no Electron copy can ever take a Tauri file, in whatever order a release lists its files, and
 // the Tauri build's names are the ones written down in desktop-tauri/PORTING.md. The patterns are read from the two
@@ -12,7 +12,6 @@ const assert = require('node:assert/strict');
 const ROOT = path.join(__dirname, '..');
 const logic = fs.readFileSync(path.join(ROOT, 'core', 'kt-core', 'src', 'updatelogic.rs'), 'utf8');
 const installer = fs.readFileSync(path.join(ROOT, 'src', 'installer.ts'), 'utf8');
-const main = fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
 const porting = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'PORTING.md'), 'utf8');
 
 // The names: Rust's format strings and product name.
@@ -27,8 +26,6 @@ for (const t of ['windows-x64-setup.exe', 'windows-x64-portable.zip', 'macos-uni
 
 // The Electron build's patterns, read from its files.
 for (const re of ['/\\.dmg$/', '/\\.AppImage$/', '/win-x64\\.exe$/']) assert.ok(installer.includes(re), `installer.ts still picks by ${re}`);
-assert.ok(main.includes("/win-x64\\.exe$/ : process.platform === 'darwin' ? /\\.dmg$/ : /\\.AppImage$/"), 'main.cjs kt:checkUpdate still picks so');
-assert.ok(main.includes("!/portable/.test(a.name)"), 'main.cjs leaves the portable out');
 const page = (names, os) => { const a = names.map((name) => ({ name })); return os === 'darwin' ? a.find((x) => /\.dmg$/.test(x.name)) : os === 'linux' ? a.find((x) => /\.AppImage$/.test(x.name)) : a.find((x) => /win-x64\.exe$/.test(x.name)); };
 const shell = (names, os) => { const want = os === 'win32' ? /win-x64\.exe$/ : os === 'darwin' ? /\.dmg$/ : /\.AppImage$/; return names.map((name) => ({ name })).find((a) => want.test(a.name) && !/portable/.test(a.name)); };
 for (const n of rust) for (const re of [/win-x64\.exe$/, /\.dmg$/, /\.AppImage$/]) assert.ok(!re.test(n), `${n} ~ ${re}`);
@@ -42,9 +39,9 @@ for (const pick of [page, shell]) {
 }
 // (The Rust build's own name pattern for each system — what its updater looks for — never matches an Electron file.)
 for (const e of electron) assert.ok(!tails.some((t) => e.endsWith(t)), e);
-// (Stage P9: the Electron bridge build's switch picks the same names — desktop/rustswitch.cjs —, from Tools' own tags
+// (Stage P9: the Electron bridge build's switch picks the same names — tests/support/bridge-rustswitch.cjs (frozen) —, from Tools' own tags
 // only, GitHub's pre-release mark (on every Tools release) not read; never a Reader release, never an Electron file.)
-const RS = require(path.join(ROOT, 'desktop', 'rustswitch.cjs'));
+const RS = require(path.join(ROOT, 'tests', 'support', 'bridge-rustswitch.cjs'));
 assert.equal(RS.rustAssetName(v, 'win32', 'x64'), `KurokawaTools-${v}-windows-x64-setup.exe`);
 assert.equal(RS.rustAssetName(v, 'darwin', 'arm64'), `KurokawaTools-${v}-macos-universal.DMG`);
 assert.equal(RS.rustAssetName(v, 'linux', 'x64'), `KurokawaTools-${v}-linux-x64.appimage`);
@@ -57,4 +54,24 @@ assert.equal(RS.pickRust(rels, '0.16.32', 'win32', 'x64').sums.name, `KurokawaTo
 assert.equal(RS.pickRust(rels, '0.16.32', 'win32', 'x64', { beta: true }).version, '0.18.0-beta.1', 'beta: a version with «-»');
 assert.equal(RS.pickRust(rels, '0.17.1', 'linux', 'x64'), null, 'nothing older than the copy');
 assert.equal(RS.pickRust([relOf(`tools-v${v}`, electron)], '0.16.32', 'win32', 'x64'), null, 'a release without the Tauri build: no switch');
+// The carry-forward (scripts/bridge-assets.json, the release workflow): each release repeats the bridge build's files under the
+// names an old copy picks by — and an old copy takes the bridge's own file whatever order the release lists its files in.
+{
+  const br = JSON.parse(fs.readFileSync(path.join(ROOT, '..', '..', 'scripts', 'bridge-assets.json'), 'utf8')).tools;
+  const bnames = br.assets.map((x) => x.name);
+  for (const pick of [page, shell]) for (const os of ['win32', 'darwin', 'linux']) for (const order of [[...bnames, ...rust], [...rust, ...bnames], [...bnames].reverse()]) {
+    const got = pick(order, os); assert.ok(got && bnames.includes(got.name), `${os}: an old copy takes the bridge's own file (${got && got.name})`);
+  }
+  assert.ok(bnames.includes(`KurokawaTools-${br.version}-win-x64.exe`) && bnames.includes(`KurokawaTools-${br.version}-mac-universal.dmg`) && bnames.includes(`KurokawaTools-${br.version}-linux-x86_64.AppImage`));
+  assert.ok(br.tag === `tools-v${br.version}`);
+  // …and the bridge itself still finds the Rust build in a release made today that also carries its own files.
+  const today = [relOf('tools-v0.30.0', [...bnames, ...rust.map((n) => n.replace(v, '0.30.0'))])];
+  assert.equal(RS.pickRust(today, br.version, 'win32', 'x64').asset.name, 'KurokawaTools-0.30.0-windows-x64-setup.exe');
+  assert.equal(RS.pickRust(today, br.version, 'linux', 'x64').asset.name, 'KurokawaTools-0.30.0-linux-x64.appimage');
+  const wf = fs.readFileSync(path.join(ROOT, '..', '..', '.github', 'workflows', 'release-tools.yml'), 'utf8');
+  assert.ok(!/electron-builder|fetch-aria2\.mjs\n\s+npx electron/.test(wf), 'release-tools.yml builds no Electron');
+  assert.ok(/bridge-assets\.mjs tools --verify artifacts\/bridge/.test(wf), 'release-tools.yml carries the bridge build forward, verified');
+  assert.ok(wf.indexOf('--verify artifacts/bridge') < wf.indexOf('name: Checksums') && wf.indexOf('name: Checksums') < wf.indexOf('softprops/action-gh-release'), 'verified before the checksums and the publishing');
+  assert.ok(/artifacts\/bridge\/\*/.test(wf) && /ffmpeg-pack\.cjs/.test(wf), 'published, and the computer packs are still made');
+}
 console.log(`updatenames: ok (${rust.length} Tauri names, none taken by the Electron build's ${2} pickers)`);

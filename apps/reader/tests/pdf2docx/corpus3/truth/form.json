@@ -1,0 +1,106 @@
+{
+ "meta": {
+  "kind": "form",
+  "title": "Membership Application",
+  "header": "",
+  "footer": "",
+  "dir": "ltr"
+ },
+ "footnotes": {},
+ "blocks": [
+  {
+   "type": "h",
+   "level": 1,
+   "text": "Membership Application"
+  },
+  {
+   "type": "p",
+   "id": "club",
+   "runs": [
+    {
+     "t": "Port Amble Rowing Club"
+    }
+   ]
+  },
+  {
+   "type": "field",
+   "id": "f-name",
+   "label": "Full name:"
+  },
+  {
+   "type": "field",
+   "id": "f-addr",
+   "label": "Address:"
+  },
+  {
+   "type": "field",
+   "id": "f-dob",
+   "label": "Date of birth:"
+  },
+  {
+   "type": "check",
+   "id": "c-type",
+   "label": "Membership type:",
+   "options": [
+    "Adult",
+    "Junior",
+    "Family"
+   ]
+  },
+  {
+   "type": "grid",
+   "id": "g-num",
+   "label": "Membership number:",
+   "n": 8
+  },
+  {
+   "type": "leader",
+   "id": "l-fee",
+   "text": "Annual fee",
+   "value": "120.00"
+  },
+  {
+   "type": "leader",
+   "id": "l-boat",
+   "text": "Boat storage",
+   "value": "45.00"
+  },
+  {
+   "type": "leader",
+   "id": "l-key",
+   "text": "Boathouse key deposit",
+   "value": "10.00"
+  },
+  {
+   "type": "layout",
+   "id": "lay",
+   "cols": [
+    [
+     "Emergency contact",
+     "Name:",
+     "Phone:"
+    ],
+    [
+     "Club use only",
+     "Received by:",
+     "Date:"
+    ]
+   ]
+  },
+  {
+   "type": "field",
+   "id": "f-sign",
+   "label": "Signature:"
+  },
+  {
+   "type": "p",
+   "id": "fine",
+   "role": "fine",
+   "runs": [
+    {
+     "t": "By signing you agree to the club rules. Your details are kept for the length of your membership and one year after it, and are never passed on."
+    }
+   ]
+  }
+ ]
+}

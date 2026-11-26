@@ -1,0 +1,2 @@
+# The hand-over fixtures are byte-exact: their sizes and SHA-256 are in a marker that every checkout must read back unchanged.
+apps/*/tests/data/handover-bridge/** -text

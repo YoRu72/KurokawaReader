@@ -13,7 +13,7 @@ Read from the base branch, never from the change under review. Each rule comes f
 
 | When the diff… | Check |
 |---|---|
-| adds a file under `apps/*/desktop/*.cjs` | it is in that app's packaging list (`build.files`); `desktop-files.cjs` passes |
+| adds a file under `apps/*/desktop/` | nothing packages that folder any more (the Electron build is gone): it is only the Rust bundle's inputs (7zip-bin, ffmpeg-static, icons) and the reference engines tests run; say what needs it. Tools: `desktop-files.cjs` passes |
 | adds a Java file under `native/android` | it is in the overlay list, in every `tests/native/*.sh` source list that compiles its callers, and the other app still compiles if it borrows the caller |
 | changes a file one app builds from the other's source (archive engine, name table, shared crate) | both apps' Android and desktop compiles are green on GitHub |
 | adds a test that reads source files or splits text on `\n` | it passes on a checkout with Windows line endings |

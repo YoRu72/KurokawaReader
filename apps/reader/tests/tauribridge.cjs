@@ -1,4 +1,4 @@
-// The Reader's Tauri shell, its bridge (desktop-tauri/bridge.js) against the Electron one (desktop/preload.cjs):
+// The Reader's Tauri shell, its bridge (desktop-tauri/bridge.js) against the Electron one (tests/support/electron-preload.cjs, frozen):
 //  1. in plain node: the bridge has exactly the preload's names; each ported function sends the preload's arguments
 //     under the command named after its channel (kr:a-b → kr_a_b); bytes come back as an ArrayBuffer, errors as
 //     Errors, a page's text in its own charset; each stub answers as bridge.js documents and never reaches the IPC;
@@ -35,7 +35,7 @@ function loadPreload() {
   };
   const orig = Module._load;
   Module._load = function (req, ...rest) { return req === 'electron' ? fake : orig.call(this, req, ...rest); };
-  try { delete require.cache[require.resolve(path.join(ROOT, 'desktop', 'preload.cjs'))]; require(path.join(ROOT, 'desktop', 'preload.cjs')); } finally { Module._load = orig; }
+  try { delete require.cache[require.resolve(path.join(ROOT, 'tests', 'support', 'electron-preload.cjs'))]; require(path.join(ROOT, 'tests', 'support', 'electron-preload.cjs')); } finally { Module._load = orig; }
   return exposed;
 }
 
@@ -60,10 +60,10 @@ async function nodePart() {
   assert.ok(leftOut && typeof leftOut === 'object', 'bridge lists no left-out names');
 
   // Names: the preload's, less those left out until their stage (the page then takes its own way: see bridge.js),
-  // and this shell's extras (EXTRA: scanFolder, cancelDownload, menuText; printFile on a Mac and Linux), which
+  // and this shell's extras (EXTRA: scanFolder, cancelDownload, menuText, saveFiles; printFile on a Mac and Linux), which
   // Electron's has not.
-  assert.deepEqual([...extra], ['scanFolder', 'cancelDownload', 'menuText', 'printFile'], 'the bridge\'s extras');
-  assert.deepEqual([...loadBridge({ os: 'win32' }).__KR_BRIDGE_EXTRA__], ['scanFolder', 'cancelDownload', 'menuText'], 'no printFile on Windows (WebView2 prints a PDF in a frame)');
+  assert.deepEqual([...extra], ['scanFolder', 'cancelDownload', 'menuText', 'saveFiles', 'printFile'], 'the bridge\'s extras');
+  assert.deepEqual([...loadBridge({ os: 'win32' }).__KR_BRIDGE_EXTRA__], ['scanFolder', 'cancelDownload', 'menuText', 'saveFiles'], 'no printFile on Windows (WebView2 prints a PDF in a frame)');
   for (const k of extra) assert.ok(!(k in pre), `extra ${k} is a preload name`);
   const want = Object.keys(pre).filter((k) => !(k in leftOut));
   assert.deepEqual(Object.keys(kd).sort(), [...want, ...extra].sort(), 'bridge names ≠ preload names less the left-out ones, and the extras');
@@ -260,6 +260,10 @@ async function nodePart() {
   tCalls = []; await kd.menuText({ file: 'File' }); await kd.printFile('JVBERi0=', 'a.pdf');
   assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_menu', args: { labels: { file: 'File' } } }, { cmd: 'kr_print_file', args: { b64: 'JVBERi0=', name: 'a.pdf' } }]);
   sent.kr_menu = ['labels']; sent.kr_print_file = ['b64', 'name'];
+  // saveFiles (EXTRA): PDF → Word «In a folder» — kr_save_files { o } (the step and its arguments in o).
+  tCalls = []; reply = () => ({ items: [], newDirs: [] }); await kd.saveFiles({ op: 'plan', dir: '/d', items: [{ rel: 'a.docx', size: 1, sha: 'x' }] });
+  assert.deepEqual(JSON.parse(JSON.stringify(tCalls)), [{ cmd: 'kr_save_files', args: { o: { op: 'plan', dir: '/d', items: [{ rel: 'a.docx', size: 1, sha: 'x' }] } } }]); reply = () => null;
+  sent.kr_save_files = ['o'];
 
   // scanFolder (EXTRA): the scan's walk in one folder → kr_scan_folder { p, exts }.
   tCalls = []; reply = () => ({ root: '/r', files: [], truncated: false });
@@ -349,9 +353,9 @@ async function nodePart() {
   // Rust: every command the bridge and the self-test call is registered, with the argument names they send.
   const src = path.join(TAURI, 'src-tauri', 'src');
   const main = fs.readFileSync(path.join(src, 'main.rs'), 'utf8');
-  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile|browser|archives|appicon|winbits|menu|update|boot)::(kr_\w+)/g)].map((m) => m[1]);
+  const registered = [...main.matchAll(/(?:commands|selftest|enginetest|titlebar|openfile|browser|archives|appicon|winbits|menu|update|boot|savefiles)::(kr_\w+)/g)].map((m) => m[1]);
   const params = {};
-  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs', 'browser.rs', 'archives.rs', 'appicon.rs', 'winbits.rs', 'menu.rs', 'update.rs', 'boot.rs']) {
+  for (const file of ['commands.rs', 'selftest.rs', 'enginetest.rs', 'titlebar.rs', 'openfile.rs', 'browser.rs', 'archives.rs', 'appicon.rs', 'winbits.rs', 'menu.rs', 'update.rs', 'boot.rs', 'savefiles.rs']) {
     const rs = fs.readFileSync(path.join(src, file), 'utf8');
     for (const m of rs.matchAll(/#\[tauri::command\]\s*pub async fn (kr_\w+)\(([^)]*)\)/g)) params[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).filter((x) => !/:\s*(AppHandle|tauri::Window)$/.test(x)).map((x) => x.split(':')[0].trim());
   }
@@ -376,16 +380,16 @@ async function nodePart() {
   assert.match(main, /openfile::at_start\(&handle\)/); assert.match(main, /RunEvent::Opened \{ urls \}/);
   const cargo = fs.readFileSync(path.join(TAURI, 'src-tauri', 'Cargo.toml'), 'utf8');
   assert.match(cargo, /^tauri-plugin-single-instance = "2"$/m); assert.match(cargo, /^name = "KurokawaReader"$/m);
-  // (The kinds of file the system opens with the app: Electron's list, desktop/package.json's build.fileAssociations.)
+  // (The kinds of file the system opens with the app: the Electron build's list — frozen in tests/support/electron-file-associations.json.)
   const conf = JSON.parse(fs.readFileSync(path.join(TAURI, 'src-tauri', 'tauri.conf.json'), 'utf8'));
-  const eAssoc = JSON.parse(fs.readFileSync(path.join(ROOT, 'desktop', 'package.json'), 'utf8')).build.fileAssociations;
+  const eAssoc = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'support', 'electron-file-associations.json'), 'utf8'));
   assert.deepEqual(conf.bundle.fileAssociations.map((a) => [a.ext.join(','), a.name, a.role, a.mimeType || null]), eAssoc.map((a) => [a.ext, a.name, a.role, a.mimeType || null]), 'file associations ≠ Electron\'s');
   assert.deepEqual(conf.plugins['deep-link'].desktop.schemes, ['kurokawareader']);
-  // (openargs.rs's DOC_EXT is main.cjs's.)
-  const docExt = /const DOC_EXT = \/\\\.\(([^)]*)\)\$\/i/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'))[1];
+  // (openargs.rs's DOC_EXT is the Electron build's, frozen here: the kinds of file a launch argument may be.)
+  const docExt = 'epub|pdf|docx|xlsx|pptx|txt|md|markdown|html?|fb2|odt|cbz|cbr|cb7|cbt|csv|tsv|jpe?g|png|gif|webp|ttf|otf|woff2?|zip|rar|7z|tar';
   const expand = (alt) => alt.split('|').flatMap((x) => (x === 'jpe?g' ? ['jpg', 'jpeg'] : x === 'html?' ? ['html', 'htm'] : x === 'woff2?' ? ['woff', 'woff2'] : [x]));
   const rsExt = [...fs.readFileSync(path.join(src, 'openargs.rs'), 'utf8').match(/pub const DOC_EXT: \[&str; \d+\] = \[([\s\S]*?)\];/)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
-  assert.deepEqual([...rsExt].sort(), expand(docExt).sort(), 'openargs.rs DOC_EXT ≠ main.cjs DOC_EXT');
+  assert.deepEqual([...rsExt].sort(), expand(docExt).sort(), 'openargs.rs DOC_EXT ≠ the Electron build\'s frozen list');
   assert.equal(Number(/DOC_EXT: \[&str; (\d+)\]/.exec(fs.readFileSync(path.join(src, 'openargs.rs'), 'utf8'))[1]), rsExt.length);
   for (const [cmd, ks] of Object.entries(sent)) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);
@@ -646,7 +650,7 @@ async function pagePart(ported) {
         kr_archive_cancel: () => null, kr_archive_create: (a) => ({ files: 1, path: a.o.out, size: 9 }), kr_archive_test: () => ({ ok: true, files: 1, bad: [] }), kr_archive_restore: () => ({ left: 0 }),
         kr_archive_free: () => ({ free: 1e9 }), kr_archive_existing: () => ({ existing: [] }),
         kr_app_icon: (a) => ('set' in (a.o || {}) ? true : window.__icon || null), kr_fullscreen: (a) => a.v === 'toggle', kr_immersive: () => true, kr_set_zoom: () => true, kr_progress: () => true, kr_copy_image: () => true,
-        kr_menu: () => false, kr_print_file: () => true,
+        kr_menu: () => false, kr_print_file: () => true, kr_save_files: () => ({ items: [], newDirs: [] }),
         // (Stage R6b: the updater, the start's marks.)
         kr_install_update: () => 'installing', kr_update_download: () => 'none', kr_update_install: () => false, kr_boot_mark: () => ({}),
       };
@@ -664,7 +668,7 @@ async function pagePart(ported) {
     await p.waitForSelector('.library-view');
     await p.waitForSelector('.nav-rail .rail-item');
     const shape = await p.evaluate(() => ({ leftOut: Object.keys(window.__KR_BRIDGE_LEFT_OUT__).length, fns: Object.keys(window.kurokawaDesktop).filter((k) => typeof window.kurokawaDesktop[k] === 'function').length, platform: window.kurokawaDesktop.platform, frameless: document.documentElement.classList.contains('frameless'), bar: !!document.querySelector('.win-titlebar') }));
-    assert.equal(shape.fns, 48 - shape.leftOut + 4, 'functions in the page (and the extras scanFolder, cancelDownload, menuText, printFile)'); assert.equal(shape.leftOut, 1, 'left out'); assert.equal(shape.platform, 'linux');
+    assert.equal(shape.fns, 48 - shape.leftOut + 5, 'functions in the page (and the extras scanFolder, cancelDownload, menuText, saveFiles, printFile)'); assert.equal(shape.leftOut, 1, 'left out'); assert.equal(shape.platform, 'linux');
     // (Stage R5: the library's Archives button — there now that the archives are.)
     assert.ok(await p.evaluate(() => { const b = [...document.querySelectorAll('.library-tools button, .library-view button')].find((x) => /Archives/.test(x.getAttribute('aria-label') || x.title || x.textContent)); return !!b && !b.hidden; }), 'the Archives button');
     const own = await p.evaluate(() => ({ winbar: document.documentElement.classList.contains('winbar'), bar: !!document.querySelector('.kr-winbar'), buttons: document.querySelectorAll('.kr-winbar .wb-btn').length }));

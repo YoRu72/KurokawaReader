@@ -261,7 +261,7 @@ async function page() {
       if (!localStorage.getItem('kt.settings')) localStorage.setItem('kt.settings', JSON.stringify({ addons: ['player', 'anime'], settingsLayout: 'tabs' }));
       window.__calls = []; window.__status = {}; window.__relayReads = 0; window.__quietAfter = 1; window.__lastRead = () => Date.now() - 3600e3;
       const rec = (k) => async (o) => { window.__calls.push([k, o]); return undefined; };
-      // (Each fake takes what the real bridge method takes — desktop/preload.cjs and desktop-tauri/bridge.js; checked below.)
+      // (Each fake takes what the real bridge method takes — tests/support/electron-preload.cjs (frozen) and desktop-tauri/bridge.js; checked below.)
       const api = {
         platform: 'desktop', available: true, os: 'linux', list: async () => tasks, onTasks: (fn) => { setTimeout(() => fn(tasks), 50); return () => {}; }, freeSpace: async () => 5e11,
         fileUrl: async (pth) => `http://127.0.0.1:${port}/media/${pth.split('/').pop()}?t=RUNTOKEN`, streamUrl: async (o) => { window.__calls.push(['streamUrl', o]); return { url: `http://127.0.0.1:${port}/media/clip.webm?t=RUNTOKEN` }; }, streamDone: rec('streamDone'),
@@ -281,10 +281,10 @@ async function page() {
     // The fakes take what the real bridges take (a fake with another shape once hid a wrong call).
     {
       const shape = (file, re) => { const out = {}; const src = fs.readFileSync(path.join(ROOT, file), 'utf8'); let m; while ((m = re.exec(src))) out[m[1]] = m[2].split(',').map((x) => x.trim()).filter(Boolean).length; return out; };
-      const pre = shape('desktop/preload.cjs', /(\w+): \(([^)]*)\) => call\(/g); const tau = shape('desktop-tauri/bridge.js', /(\w+): function \(([^)]*)\) \{ return call\(/g);
+      const pre = shape('tests/support/electron-preload.cjs', /(\w+): \(([^)]*)\) => call\(/g); const tau = shape('desktop-tauri/bridge.js', /(\w+): function \(([^)]*)\) \{ return call\(/g);
       const fakes = await p.evaluate(() => Object.fromEntries(Object.entries(window.__api).filter(([, v]) => typeof v === 'function').map(([k, v]) => [k, v.length])));
       const bad = Object.entries(fakes).filter(([k, n]) => (k in pre && pre[k] !== n) || (k in tau && tau[k] !== n));
-      ok('every fake bridge method takes as many arguments as desktop/preload.cjs and desktop-tauri/bridge.js give it', !bad.length && 'writeTemp' in pre && pre.writeTemp === 2, { bad, writeTemp: [pre.writeTemp, tau.writeTemp] });
+      ok('every fake bridge method takes as many arguments as the frozen electron-preload.cjs and desktop-tauri/bridge.js give it', !bad.length && 'writeTemp' in pre && pre.writeTemp === 2, { bad, writeTemp: [pre.writeTemp, tau.writeTemp] });
     }
     await p.evaluate(() => { window.addEventListener('kt-anime-watched', (e) => { (window.__watched ??= []).push(e.detail); }); });
     const playBtn = async () => { await p.click(`.task-card:has-text("Show - 03") button[aria-label="${playLabel}"]`); };

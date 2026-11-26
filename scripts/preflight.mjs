@@ -22,6 +22,16 @@
 //           --write-i18n-baseline  store today's missing-string counts as the accepted baseline
 //           --verbose              print more of a failing test's output, and every missing key
 //           --json <file>          also write the results as JSON
+//           --shard i/n            run only the i-th of n slices of the planned tests (split by measured duration, greedy
+//                                  longest-first, from scripts/preflight.timings.json). Build, tsc and the static checks run
+//                                  in slice 1 only; every slice builds what its tests need.
+//           --list                 print the planned tests (of the slice, with --shard) as JSON and run nothing
+//           --diff-from <ref>      with --quick: the tests are chosen by the files changed since <ref> (the last push),
+//                                  not since the merge base; --diff-note <text> says why (shown in the summary)
+//           --write-timings <json> merge a run's --json results (a file, a comma list, or a folder of them) into
+//                                  scripts/preflight.timings.json, and exit (by hand, after a full run)
+//           --logs-dir <dir>       where the whole output of every FAIL and FLAKY test is written (default
+//                                  $RUNNER_TEMP/preflight-logs, else <tmp>/preflight-logs)
 //
 // Tests run one after another on purpose: they use fixed ports (e.g. 5483 is taken by both filesjobs and hunt in
 // Tools, 5196/5197/5199 by several pdf2docx tests in Reader) and shared temp folders, so running them in parallel
@@ -44,11 +54,29 @@ const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
 const opt = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
 const target = argv.find((a) => ['tools', 'reader', 'all'].includes(a));
-if (!target) { console.error('usage: node scripts/preflight.mjs tools|reader|all [--quick] [--only name] [--retry] [--no-tests] [--base ref] [--write-i18n-baseline] [--verbose] [--json file]'); process.exit(2); }
-const QUICK = flag('--quick'), RETRY = flag('--retry'), VERBOSE = flag('--verbose'), NO_TESTS = flag('--no-tests');
+if (!target && !opt('--write-timings')) { console.error('usage: node scripts/preflight.mjs tools|reader|all [--quick] [--only name] [--retry] [--no-tests] [--base ref] [--shard i/n] [--list] [--write-i18n-baseline] [--verbose] [--json file]  |  --write-timings <json>'); process.exit(2); }
+const QUICK = flag('--quick'), RETRY = flag('--retry'), VERBOSE = flag('--verbose'), NO_TESTS = flag('--no-tests'), LIST = flag('--list');
 const ONLY = opt('--only');
+const DIFF_FROM = opt('--diff-from'), DIFF_NOTE = opt('--diff-note') || '';
+const LOGS_DIR = opt('--logs-dir') || path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'preflight-logs');
+const SHARD = (() => { const v = opt('--shard'); if (v === undefined) return null; const m = String(v).match(/^(\d+)\/(\d+)$/); if (!m || +m[1] < 1 || +m[1] > +m[2]) { console.error(`--shard wants i/n with 1 <= i <= n (got «${v}»)`); process.exit(2); } return { i: +m[1], n: +m[2] }; })();
+const say = (...a) => { if (!LIST) console.log(...a); }; // (--list prints JSON and nothing else)
 const TIMEOUT_SCALE = Number(opt('--timeout-scale') || process.env.PREFLIGHT_TIMEOUT_SCALE || 1) || 1;
 const readJson = (p, d) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return d; } };
+const TIMINGS_FILE = path.join(ROOT, 'scripts/preflight.timings.json');
+// ---------- --write-timings: merge a run's measured seconds into the timings file (no app needed) ----------
+if (opt('--write-timings')) {
+  const files = []; const walk = (p) => { let st; try { st = fs.statSync(p); } catch { return; } if (st.isDirectory()) for (const f of fs.readdirSync(p).sort()) walk(path.join(p, f)); else if (p.endsWith('.json')) files.push(p); };
+  for (const p of String(opt('--write-timings')).split(',').filter(Boolean)) walk(p);
+  const doc = readJson(TIMINGS_FILE, { defaultSec: 20, staticSec: {} }); let upd = 0, add_ = 0;
+  for (const f of files) for (const r of readJson(f, {}).results || []) for (const row of r.rows || []) {
+    if (!row.label || !(row.sec >= 0) || !['PASS', 'FLAKY', 'WARN', 'FIXED'].includes(row.status)) continue;
+    const t = (doc[r.app] = doc[r.app] || {}); const v = Math.max(1, Math.round(row.sec)); if (t[row.label] === undefined) add_++; else if (t[row.label] !== v) upd++; t[row.label] = v;
+  }
+  for (const a of ['tools', 'reader']) if (doc[a]) doc[a] = Object.fromEntries(Object.entries(doc[a]).sort(([x], [y]) => x.localeCompare(y)));
+  fs.writeFileSync(TIMINGS_FILE, JSON.stringify(doc, null, 2) + '\n');
+  console.log(`timings: ${files.length} result file(s) read, ${add_} test(s) added, ${upd} changed -> ${path.relative(ROOT, TIMINGS_FILE)}`); process.exit(0);
+}
 const CONFIG = readJson(path.join(ROOT, 'scripts/preflight.config.json'), {});
 const git = (args, cwd = ROOT) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 256 << 20 }); return r.status === 0 ? r.stdout : null; };
 
@@ -118,18 +146,31 @@ function takeLock(app) {
   fs.writeFileSync(f, String(process.pid)); process.on('exit', () => { try { if (+fs.readFileSync(f, 'utf8') === process.pid) fs.unlinkSync(f); } catch {} }); return { ok: true };
 }
 
+// The whole output of a failing or flaky test, kept as <logs-dir>/<test>.log (the workflow uploads the folder). Never throws.
+function writeLog(name, text) {
+  try { fs.mkdirSync(LOGS_DIR, { recursive: true }); const f = path.join(LOGS_DIR, name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') + '.log'); fs.writeFileSync(f, text); return f; } catch { return null; }
+}
+// Greedy, longest first: items [{p, idx, sec}] into n bins, each bin starting at its own load (bin 1 carries the static
+// steps). Stable: the same items give the same bins (ties go to the lower index / the lower bin); inside a bin the plan order is kept.
+function planShards(items, n, firstLoad = 0) {
+  const bins = Array.from({ length: n }, (_, k) => ({ items: [], sec: k === 0 ? firstLoad : 0 }));
+  for (const it of [...items].sort((a, b) => b.sec - a.sec || a.idx - b.idx)) { let best = bins[0]; for (const b of bins) if (b.sec < best.sec) best = b; best.items.push(it); best.sec += it.sec; }
+  for (const b of bins) b.items.sort((a, b2) => a.idx - b2.idx);
+  return bins;
+}
+
 // ---------- the per-app run ----------
 async function preflight(app) {
   const APP = path.join(ROOT, 'apps', app);
   const TESTS = path.join(APP, 'tests');
   const rows = []; // { step, status, detail }
-  const add = (step, status, detail = '') => { rows.push({ step, status, detail }); console.log(`  ${status.padEnd(5)} ${step}${detail ? '  — ' + detail.split('\n')[0].slice(0, 200) : ''}`); };
+  const add = (step, status, detail = '') => { rows.push({ step, status, detail }); if (!LIST) console.log(`  ${status.padEnd(5)} ${step}${detail ? '  — ' + detail.split('\n')[0].slice(0, 200) : ''}`); };
   const guard = guardFor(add);
   const cfg = { ...(CONFIG.defaults || {}), ...(CONFIG[app] || {}) };
   const pkg = readJson(path.join(APP, 'package.json'), {});
   const version = pkg.version;
-  if (!NO_TESTS && !flag('--list-ports')) { const l = takeLock(app); if (!l.ok) { add('run lock', 'FAIL', `another preflight of ${app} is running (pid ${l.pid}); two runs at once fight over the fixed test ports`); return { app, version, rows }; } }
-  console.log(`\n=== ${app} ${version}${QUICK ? ' (quick)' : ''} — base ${BASE_REF || '(none)'} ===`);
+  if (!NO_TESTS && !LIST && !flag('--list-ports')) { const l = takeLock(app); if (!l.ok) { add('run lock', 'FAIL', `another preflight of ${app} is running (pid ${l.pid}); two runs at once fight over the fixed test ports`); return { app, version, rows }; } }
+  say(`\n=== ${app} ${version}${QUICK ? ' (quick)' : ''}${SHARD ? ` (shard ${SHARD.i}/${SHARD.n})` : ''} — base ${BASE_REF || '(none)'} ===`);
 
   // changed files since the merge base (working tree included, untracked included)
   const changed = new Map(); // path -> A | M | D
@@ -147,6 +188,60 @@ async function preflight(app) {
     return out;
   };
 
+
+  // ---------- the tests of this run, planned first (--list and --shard need the plan before anything runs) ----------
+  // The workflow's chain with its arguments (a test named twice, e.g. in a short and a long chain, counts once); then the
+  // tests not in the chain, run bare unless not-in-ci.json says otherwise.
+  const wf = app === 'tools' ? 'release-tools.yml' : 'release.yml';
+  const wfText = fs.readFileSync(path.join(ROOT, '.github/workflows', wf), 'utf8');
+  const chain = []; // {file, args:[]}
+  { const seenC = new Set(); for (const line of wfText.split('\n')) { if (/^\s*#/.test(line)) continue; for (const m of line.matchAll(/node tests\/([\w./-]+\.cjs)((?: [\w.-]+)*)(?= *(?:&&|\)|$|;))/g)) { const key = m[1] + ' ' + m[2].trim(); if (seenC.has(key)) continue; seenC.add(key); chain.push({ file: m[1], args: m[2].trim() ? m[2].trim().split(/\s+/) : [] }); } } }
+  const otherWf = fs.readdirSync(path.join(ROOT, '.github/workflows')).filter((f) => f.endsWith('.yml') && f !== wf).map((f) => fs.readFileSync(path.join(ROOT, '.github/workflows', f), 'utf8')).join('\n');
+  const allTests = fs.readdirSync(TESTS).filter((f) => f.endsWith('.cjs')).sort();
+  const known = readJson(path.join(TESTS, 'known-failures.json'), { failures: [] }).failures;
+  const notInCi = readJson(path.join(TESTS, 'not-in-ci.json'), { tests: [] }).tests;
+  const inChain = new Set(chain.map((c) => c.file));
+  let plan = chain.map((c) => ({ ...c, from: 'ci' }));
+  for (const t of allTests) { if (inChain.has(t)) continue; const n = notInCi.find((x) => x.name === t); if (n && n.run === false) { plan.push({ file: t, args: [], from: 'skip', reason: n.reason }); continue; } plan.push({ file: t, args: (n?.args || []).map((a) => (a === '$TMP' ? (LIST ? '$TMP' : tmpDir()) : a)), env: n?.env, fixtures: !!n?.needsFixtures, from: n ? 'not-in-ci' : 'extra' }); }
+  // «own shard part»: a test the config splits into parts that run (and are timed and placed) separately, e.g. uihunt.cjs en / uihunt.cjs ar.
+  plan = plan.flatMap((p) => { const parts = !p.args.length && cfg.parts && cfg.parts[p.file]; return parts ? parts.map((a) => ({ ...p, args: a })) : [p]; });
+  const labelOf = (p) => [p.file, ...p.args].join(' ');
+  // which files count as «changed» for choosing the quick tests: this push's, else the branch's
+  let changedSel = changed, selMode = 'full: every test of ' + wf + ' and the tests outside it';
+  let sel = plan;
+  if (ONLY) { sel = plan.filter((p) => ONLY.split(',').some((o) => p.file === o + '.cjs' || p.file === o)); selMode = `--only ${ONLY}`; }
+  else if (QUICK) {
+    let why = `quick: the tests the changed files touch, plus the smoke set; changed files = the branch's diff against ${BASE_REF || '(no base)'}${DIFF_NOTE ? ' (' + DIFF_NOTE + ')' : ''}`;
+    if (DIFF_FROM && git(['rev-parse', '--verify', '--quiet', DIFF_FROM + '^{commit}']) !== null) {
+      changedSel = new Map();
+      for (const l of (git(['diff', '--name-status', '--no-renames', DIFF_FROM, '--', `apps/${app}`, 'shared', 'scripts', '.github']) || '').split('\n')) { const m = l.match(/^([AMD])\t(.+)$/); if (m) changedSel.set(m[2], m[1]); }
+      for (const f of (git(['ls-files', '--others', '--exclude-standard', '--', `apps/${app}`, 'shared', 'scripts', '.github']) || '').split('\n').filter(Boolean)) changedSel.set(f, 'A');
+      why = `quick: the tests the files of THIS push touch (${DIFF_FROM.slice(0, 9)}..HEAD, ${changedSel.size} file(s)), plus the smoke set${DIFF_NOTE ? ' (' + DIFF_NOTE + ')' : ''}`;
+    } else if (DIFF_FROM) why += ` — the push's start ${DIFF_FROM.slice(0, 9)} is not in this checkout`;
+    const smoke = new Set((cfg.smoke || []).map((s) => s.split(' ')[0]));
+    const touched = new Set(); const srcChanged = [...changedSel.keys()].filter((f) => f.startsWith(`apps/${app}/src/`) || f.startsWith('shared/'));
+    for (const f of changedSel.keys()) { const m = f.match(new RegExp(`^apps/${app}/tests/([^/]+\\.cjs)$`)); if (m) touched.add(m[1]); }
+    const needles = srcChanged.map((f) => f.replace(/^apps\/\w+\//, '')).concat(srcChanged.map((f) => path.basename(f)));
+    for (const t of allTests) { let txt = ''; try { txt = fs.readFileSync(path.join(TESTS, t), 'utf8'); } catch {} if (needles.some((n) => txt.includes(n))) touched.add(t); }
+    for (const bt of Object.keys(cfg.budgets || {})) smoke.add(bt);
+    sel = plan.filter((p) => touched.has(p.file) || smoke.has(p.file));
+    selMode = `${why} — ${sel.length} of ${plan.length} test runs (${touched.size} test file(s) touched, ${smoke.size} smoke/budget)`;
+  }
+  if (NO_TESTS) sel = [];
+  // the split: greedy, longest first, into n bins by the measured seconds; the static steps count in bin 1
+  const TIM = readJson(TIMINGS_FILE, {}); const defSec = typeof TIM.defaultSec === 'number' ? TIM.defaultSec : 20; const staticSec = (TIM.staticSec || {})[app] ?? 15;
+  const isSkipped = (p) => p.from === 'skip' || known.some((k) => k.name === p.file && k.mode === 'skip' && (!k.args || k.args === p.args.join(' ')));
+  const secOf = (p) => (isSkipped(p) ? 0 : typeof (TIM[app] || {})[labelOf(p)] === 'number' ? TIM[app][labelOf(p)] : defSec);
+  const N = SHARD ? SHARD.n : 1, I = SHARD ? SHARD.i : 1;
+  const bins = planShards(sel.map((p, idx) => ({ p, idx, sec: secOf(p) })), N, staticSec);
+  const mine = bins[I - 1].items.map((x) => x.p);
+  const S1 = I === 1; // build/tsc/static checks run in shard 1 only; every shard builds when it has tests
+  if (LIST) {
+    const secs = bins.map((b) => Math.round(b.sec));
+    return { app, version, rows: [], list: { app, mode: selMode, shards: N, shard: SHARD ? I : null, total: sel.length, plannedSecTotal: secs.reduce((a, b) => a + b, 0), plannedSecByShard: secs, staticSec: S1 ? staticSec : 0, plannedSec: secs[I - 1], tests: (SHARD ? bins[I - 1].items : bins.flatMap((b) => b.items).sort((a, b) => a.idx - b.idx)).map((x) => ({ label: labelOf(x.p), sec: x.sec })) } };
+  }
+  add('tests chosen by', 'INFO', `${selMode}${SHARD ? `; shard ${I}/${N}: ${mine.length} of ${sel.length}, planned ${(bins[I - 1].sec / 60).toFixed(1)} min` : ''}`);
+
   // 0. the tools the steps need (versions; a missing one is named once here and again, plainly, by the step that needs it)
   {
     const py = spawnSync('python3', ['--version'], { encoding: 'utf8' });
@@ -156,16 +251,20 @@ async function preflight(app) {
   }
 
   // 1. build
-  const b = await run('node', ['scripts/build.mjs'], { cwd: APP, env: { KR_META: '1', NODE_PATH }, timeoutMs: 300000 });
-  add('build', b.code === 0 ? 'PASS' : 'FAIL', b.code === 0 ? sec(b.ms) : tail(b.out, 8));
+  if (S1 || mine.length) {
+    const b = await run('node', ['scripts/build.mjs'], { cwd: APP, env: { KR_META: '1', NODE_PATH }, timeoutMs: 300000 });
+    if (b.code !== 0) writeLog('build', b.out);
+    add('build', b.code === 0 ? 'PASS' : 'FAIL', b.code === 0 ? sec(b.ms) : tail(b.out, 8));
+  }
 
   // 2. tsc
   const tscDir = findPkg(APP, 'typescript');
-  if (!tscDir) add('tsc --noEmit', 'FAIL', `typescript is not installed: run npm install in apps/${app}`);
-  else { const t = await run('node', [path.join(tscDir, 'bin', 'tsc'), '--noEmit', '-p', '.'], { cwd: APP, timeoutMs: 600000 }); add('tsc --noEmit', t.code === 0 ? 'PASS' : 'FAIL', t.code === 0 ? sec(t.ms) : tail(t.out, 10)); }
+  if (!S1) { /* shard 1 only */ }
+  else if (!tscDir) add('tsc --noEmit', 'FAIL', `typescript is not installed: run npm install in apps/${app}`);
+  else { const t = await run('node', [path.join(tscDir, 'bin', 'tsc'), '--noEmit', '-p', '.'], { cwd: APP, timeoutMs: 600000 }); if (t.code !== 0) writeLog('tsc', t.out); add('tsc --noEmit', t.code === 0 ? 'PASS' : 'FAIL', t.code === 0 ? sec(t.ms) : tail(t.out, 10)); }
 
   // 3. version parity + notes
-  await guard('version and notes', async () => {
+  if (S1) await guard('version and notes', async () => {
     const desk = readJson(path.join(APP, 'desktop/package.json'), {});
     const baseVer = BASE ? (() => { try { return JSON.parse(git(['show', `${BASE}:apps/${app}/package.json`])).version; } catch { return null; } })() : null;
     if (desk.version !== version) add('version parity', 'FAIL', `package.json ${version} ≠ desktop/package.json ${desk.version}`);
@@ -177,7 +276,7 @@ async function preflight(app) {
   });
 
   // 4. i18n parity
-  await guard('i18n parity', async () => {
+  if (S1) await guard('i18n parity', async () => {
     const ts = await loadTs(APP);
     const keysOf = (file) => {
       const src = fs.readFileSync(file, 'utf8'); const sf = ts.createSourceFile(file, src, (ts.ScriptTarget ? ts.ScriptTarget.ES2022 : 9), true);
@@ -212,17 +311,8 @@ async function preflight(app) {
     }
   });
 
-  // 5. which tests the release workflow runs, and which it does not
-  const wf = app === 'tools' ? 'release-tools.yml' : 'release.yml';
-  const wfText = fs.readFileSync(path.join(ROOT, '.github/workflows', wf), 'utf8');
-  const chain = []; // {file, args:[]}
-  for (const line of wfText.split('\n')) { if (/^\s*#/.test(line)) continue; for (const m of line.matchAll(/node tests\/([\w./-]+\.cjs)((?: [\w.-]+)*)(?= *(?:&&|\)|$|;))/g)) chain.push({ file: m[1], args: m[2].trim() ? m[2].trim().split(/\s+/) : [] }); }
-  const otherWf = fs.readdirSync(path.join(ROOT, '.github/workflows')).filter((f) => f.endsWith('.yml') && f !== wf).map((f) => fs.readFileSync(path.join(ROOT, '.github/workflows', f), 'utf8')).join('\n');
-  const allTests = fs.readdirSync(TESTS).filter((f) => f.endsWith('.cjs')).sort();
-  const known = readJson(path.join(TESTS, 'known-failures.json'), { failures: [] }).failures;
-  const notInCi = readJson(path.join(TESTS, 'not-in-ci.json'), { tests: [] }).tests;
-  const inChain = new Set(chain.map((c) => c.file));
-  {
+  // 5. which tests the release workflow runs, and which it does not (the chain, the not-in-ci list and the plan are read at the top of this function)
+  if (S1) {
     const bad = [], elsewhere = [];
     for (const t of allTests) { if (inChain.has(t) || notInCi.some((n) => n.name === t)) continue; if (new RegExp(`tests/${t.replace('.', '\\.')}\\b`).test(otherWf)) elsewhere.push(t); else bad.push(t); }
     const stale = notInCi.filter((n) => inChain.has(n.name) || !allTests.includes(n.name)).map((n) => n.name);
@@ -233,7 +323,7 @@ async function preflight(app) {
   }
 
   // 6. leftovers, big files, yellow
-  await guard('leftovers, big files, colours', async () => {
+  if (S1) await guard('leftovers, big files, colours', async () => {
     const hits = [], mark = /^(<<<<<<<|>>>>>>>) |\b(describe|it|test)\.only\s*\(|\bdebugger\s*;|console\.log\(\s*['"`](DEBUG|XXX|TMPDEBUG)/;
     for (const [f, st] of changed) { if (st === 'D' || !/\.(ts|tsx|js|mjs|cjs|css|html|rs|java|kt|yml)$/.test(f) || /(^|\/)(node_modules|dist)\//.test(f) || f === 'scripts/preflight.mjs') continue; for (const l of addedLines(f)) if (mark.test(l.text)) hits.push(`${f}:${l.n}`); }
     add('no leftovers added (.only, debugger, merge markers)', hits.length ? 'FAIL' : 'PASS', hits.slice(0, 8).join(', '));
@@ -247,40 +337,32 @@ async function preflight(app) {
     for (const [f, st] of changed) { if (st === 'D' || !/\.css$/.test(f)) continue; for (const l of addedLines(f)) if (isYellow(l.text)) y.push(`${f}:${l.n} ${l.text.trim().slice(0, 70)}`); }
     add('no yellow/amber colours added (house rule, report only)', y.length ? 'WARN' : 'PASS', y.length ? `${y.length} line(s): ${y.slice(0, 3).join(' | ')}` : '');
     if (y.length) for (const l of y.slice(0, 20)) console.log('        ' + l);
+    // a NEW fixed wait in a test is a WARN naming file:line (not a failure): tests wait on conditions with deadlines
+    const wt = [];
+    for (const [f, st] of changed) { if (st === 'D' || !new RegExp(`^apps/${app}/tests/.+\\.(cjs|mjs|js)$`).test(f)) continue; for (const l of addedLines(f)) if (/\bwaitForTimeout\s*\(/.test(l.text)) wt.push(`${f.replace(`apps/${app}/tests/`, '')}:${l.n}`); }
+    let existing = 0; for (const f of fs.readdirSync(TESTS)) { if (!/\.(cjs|mjs|js)$/.test(f)) continue; try { existing += (fs.readFileSync(path.join(TESTS, f), 'utf8').match(/\bwaitForTimeout\s*\(/g) || []).length; } catch {} }
+    add('no new waitForTimeout( in tests (report only)', wt.length ? 'WARN' : 'PASS', wt.length ? `${wt.length} new: ${wt.slice(0, 6).join(', ')}${wt.length > 6 ? ', …' : ''}; ${existing} existing in apps/${app}/tests` : `${existing} existing in apps/${app}/tests, none added`);
   });
 
   // 6b. the repository's checksums (static: a forgotten hash cannot be merged) — the add-on index and the scene catalogue
-  if (app === 'tools') await guard('repository checksums', async () => {
+  if (S1 && app === 'tools') await guard('repository checksums', async () => {
     for (const [script, label] of [['scripts/addons-index.mjs', 'add-on index checksums (addons-index.mjs --check)'], ['scripts/scenes.mjs', 'scene catalogue up to date (scenes.mjs --check)']]) {
       if (!fs.existsSync(path.join(APP, script))) continue;
       const r = await run('node', [script, '--check'], { cwd: APP }); add(label, r.code === 0 ? 'PASS' : 'FAIL', r.code === 0 ? '' : tail(r.out, 6));
     }
   });
 
-  // 7. tests
+  // 7. tests (this shard's part of the plan made at the top of this function)
   if (!NO_TESTS) {
-    if (fs.existsSync(path.join(APP, 'scripts/themes.mjs')) && app === 'tools') { const th = await run('node', ['scripts/themes.mjs', '--check'], { cwd: APP }); add('themes up to date (themes.mjs --check)', th.code === 0 ? 'PASS' : 'FAIL', th.code === 0 ? '' : tail(th.out, 6)); }
-    // what to run: the workflow's chain with its arguments; then tests not in the chain, run bare unless not-in-ci.json says otherwise
-    const plan = chain.map((c) => ({ ...c, from: 'ci' }));
-    for (const t of allTests) { if (inChain.has(t)) continue; const n = notInCi.find((x) => x.name === t); if (n && n.run === false) { plan.push({ file: t, args: [], from: 'skip', reason: n.reason }); continue; } plan.push({ file: t, args: (n?.args || []).map((a) => (a === '$TMP' ? tmpDir() : a)), env: n?.env, fixtures: !!n?.needsFixtures, from: n ? 'not-in-ci' : 'extra' }); }
-    let sel = plan;
-    if (ONLY) sel = plan.filter((p) => ONLY.split(',').some((o) => p.file === o + '.cjs' || p.file === o));
-    else if (QUICK) {
-      const smoke = new Set((cfg.smoke || []).map((s) => s.split(' ')[0]));
-      const touched = new Set(); const srcChanged = [...changed.keys()].filter((f) => f.startsWith(`apps/${app}/src/`) || f.startsWith('shared/'));
-      for (const f of changed.keys()) { const m = f.match(new RegExp(`^apps/${app}/tests/([^/]+\\.cjs)$`)); if (m) touched.add(m[1]); }
-      const needles = srcChanged.map((f) => f.replace(/^apps\/\w+\//, '')).concat(srcChanged.map((f) => path.basename(f)));
-      for (const t of allTests) { let txt = ''; try { txt = fs.readFileSync(path.join(TESTS, t), 'utf8'); } catch {} if (needles.some((n) => txt.includes(n))) touched.add(t); }
-      for (const bt of Object.keys(cfg.budgets || {})) smoke.add(bt);
-      sel = plan.filter((p) => touched.has(p.file) || smoke.has(p.file));
-      console.log(`  quick: ${sel.length} of ${plan.length} test runs (${touched.size} touched by the diff, ${smoke.size} smoke/budget)`);
-    }
+    if (S1 && fs.existsSync(path.join(APP, 'scripts/themes.mjs')) && app === 'tools') { const th = await run('node', ['scripts/themes.mjs', '--check'], { cwd: APP }); add('themes up to date (themes.mjs --check)', th.code === 0 ? 'PASS' : 'FAIL', th.code === 0 ? '' : tail(th.out, 6)); }
+    // (the workflow's chain, the plan, --only / --quick and the shard split were worked out at the top)
+    const sel = mine;
     const timeouts = cfg.timeoutSec || {};
     // (Tests that read tests/fixtures, which scripts/make-fixtures.py makes — Python with PIL, docx, openpyxl, pptx, reportlab — and git ignores.)
     if (sel.some((x) => x.fixtures) && !fs.existsSync(path.join(TESTS, 'fixtures'))) { const f = await run('python3', ['scripts/make-fixtures.py'], { cwd: APP, timeoutMs: 120000 }); add('fixtures (scripts/make-fixtures.py)', f.code === 0 ? 'PASS' : 'FAIL', f.code === 0 ? 'made' : tail(f.out, 4)); }
     let i = 0;
     for (const p of sel) {
-      i++; const label = [p.file, ...p.args].join(' '); const name = `test ${label}`;
+      i++; const label = labelOf(p); const name = `test ${label}`;
       const kn = known.find((k) => k.name === p.file && (!k.args || k.args === p.args.join(' ')));
       if (p.from === 'skip') { add(name, 'SKIP', p.reason); continue; }
       if (kn && kn.mode === 'skip') { add(name, 'SKIP', `known: ${kn.reason}`); continue; }
@@ -289,21 +371,25 @@ async function preflight(app) {
       if (ports.length) { const busy = await waitPorts(ports); if (busy !== null) { add(`${name}  (${i}/${sel.length})`, 'FAIL', `another test run is using port ${busy}; wait for it or stop it (tests/${p.file} listens on ${ports.join(', ')})`); continue; } }
       const env = { NODE_PATH }; for (const [k, v] of Object.entries(p.env || {})) env[k] = v === '$TMPZIP' ? tmpZip() : v;
       const exec = () => run('node', [path.join('tests', p.file), ...p.args], { cwd: APP, env, timeoutMs: tmo });
-      let r = await exec();
+      let r = await exec(); const firstOut = r.out; let retried = false;
       let status = r.code === 0 ? 'PASS' : 'FAIL', detail = sec(r.ms);
-      if (status === 'FAIL' && RETRY && !kn) { const r2 = await exec(); if (r2.code === 0) { status = 'FLAKY'; detail = `passed on retry (first run: ${tail(r.out, 2).replace(/\n/g, ' | ').slice(0, 160)})`; r = r2; } }
+      if (status === 'FAIL' && RETRY && !kn) { const r2 = await exec(); retried = true; if (r2.code === 0) { status = 'FLAKY'; detail = `passed on retry (first run: ${tail(r.out, 2).replace(/\n/g, ' | ').slice(0, 160)})`; r = r2; } }
       if (status === 'PASS' && /^FAIL /m.test(r.out)) { status = 'WARN'; detail = 'exit 0 but the output has FAIL lines'; }
       let shown = '';
       if (status === 'FAIL') { detail = r.timedOut ? `timed out after ${sec(tmo)}` : `exit ${r.code} after ${sec(r.ms)}`; const fl = r.out.split('\n').filter((l) => /^FAIL |\bFAILED\b|Error/.test(l)).slice(0, 6); shown = [...new Set([...fl, ...tail(r.out, VERBOSE ? 60 : 4).split('\n')])].join('\n'); }
       if (kn) { if (status === 'FAIL') { status = 'KNOWN'; detail = kn.reason; shown = ''; } else if (status === 'PASS' && !kn.flaky) { status = 'FIXED'; detail = 'now passes, remove it from known-failures.json'; } }
-      add(`${name}  (${i}/${sel.length})`, status, detail);
+      // the whole output of every FAIL and FLAKY test, for the artifact (the table keeps only the last lines)
+      let logFile = null;
+      if (status === 'FAIL') logFile = writeLog(label, `${name}: ${detail}\n\n${retried ? '=== first run ===\n' + firstOut + '\n=== retry (failed too) ===\n' : ''}${r.out}`);
+      else if (status === 'FLAKY') logFile = writeLog(label, `${name}: ${detail}\n\n=== first run (failed) ===\n${firstOut}\n=== retry (passed) ===\n${r.out}`);
+      add(`${name}  (${i}/${sel.length})`, status, detail + (logFile ? `  [log: ${path.basename(logFile)}]` : ''));
       for (const l of shown.split('\n').filter(Boolean)) console.log('        ' + l.slice(0, 220));
-      rows[rows.length - 1].tests = true;
+      Object.assign(rows[rows.length - 1], { tests: true, label, sec: Math.round(r.ms / 100) / 10, shard: SHARD ? `${SHARD.i}/${SHARD.n}` : null });
       const bi = r.code === 0 && cfg.budgets && cfg.budgets[p.file];
       if (bi) { const info = budgetInfo(APP, p.file, r.out, bi); add(`budget: ${info.name}`, info.status, info.detail); }
     }
     const unmatched = known.filter((k) => !allTests.includes(k.name)).map((k) => k.name);
-    if (unmatched.length) add('known-failures.json', 'WARN', `lists tests that no longer exist: ${unmatched.join(', ')}`);
+    if (unmatched.length && S1) add('known-failures.json', 'WARN', `lists tests that no longer exist: ${unmatched.join(', ')}`);
   }
   return { app, version, rows };
 }
@@ -360,7 +446,8 @@ if (flag('--list-ports')) { // every test that listens on a fixed port, and the 
 const apps = target === 'all' ? ['tools', 'reader'] : [target];
 const results = []; const t0 = Date.now();
 for (const a of apps) { try { results.push(await preflight(a)); } catch (e) { results.push({ app: a, version: '?', rows: [{ step: 'preflight', status: 'FAIL', detail: 'crashed: ' + ((e && e.stack) || e) }] }); } }
-console.log('\n================ PREFLIGHT ' + (QUICK ? '(quick) ' : '') + '================');
+if (LIST) { const lists = results.map((r) => r.list || { app: r.app, error: r.rows.map((x) => x.detail).join('; ') }); console.log(JSON.stringify(lists.length === 1 ? lists[0] : lists, null, 2)); process.exit(results.some((r) => !r.list) ? 1 : 0); }
+console.log('\n================ PREFLIGHT ' + (QUICK ? '(quick) ' : '') + (SHARD ? `(shard ${SHARD.i}/${SHARD.n}) ` : '') + '================');
 let fail = 0;
 for (const r of results) {
   console.log(`\n${r.app} ${r.version}`);
@@ -371,10 +458,11 @@ for (const r of results) {
   if (pass.length) console.log('  ' + 'PASS'.padEnd(7) + `${pass.length} tests passed`);
   const count = (s) => r.rows.filter((x) => x.status === s).length;
   const f = count('FAIL'); fail += f;
+  for (const x of r.rows.filter((x) => x.status === 'INFO')) console.log(`  INFO: ${x.step}: ${x.detail}`);
   console.log(`  -- ${f} FAIL, ${count('KNOWN')} KNOWN, ${count('FIXED')} FIXED, ${count('FLAKY')} FLAKY, ${count('WARN')} WARN, ${count('SKIP')} SKIP, ${count('PASS')} PASS`);
   for (const x of r.rows.filter((x) => x.status === 'FIXED')) console.log(`  trim known-failures.json: ${x.step}`);
   for (const x of r.rows.filter((x) => x.status === 'FLAKY')) console.log(`  FLAKY: ${x.step}: ${x.detail}`);
 }
 console.log(`\n${fail ? 'PREFLIGHT FAILED' : 'PREFLIGHT OK'} in ${sec(Date.now() - t0)}${fail ? ` (${fail} new failure(s))` : ''}`);
-const jf = opt('--json'); if (jf) fs.writeFileSync(jf, JSON.stringify({ ok: !fail, base: BASE_REF, results }, null, 2));
+const jf = opt('--json'); if (jf) fs.writeFileSync(jf, JSON.stringify({ ok: !fail, base: BASE_REF, quick: QUICK, shard: SHARD, results }, null, 2));
 process.exit(fail ? 1 : 0);

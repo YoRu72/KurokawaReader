@@ -1,5 +1,5 @@
 // The hand-over's reading half (Tools' stage P9; ../../PORTING.md «P9 — the hand-over»): the folder the last Electron
-// build wrote (desktop/handover.cjs) found — through the pointer it left in this build's data folder, beside a
+// build wrote (tests/support/bridge-handover.cjs (frozen)) found — through the pointer it left in this build's data folder, beside a
 // portable .exe, or in Electron's own data folder —, checked (each file's size, then its SHA-256 against the marker),
 // read file by file for the page (src/handover.ts brings the settings, lists and database into this web view's
 // profile), what became of it kept (restored, declined: never offered twice), and deleted only when the person asks

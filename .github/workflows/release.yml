@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['apps/reader/**', 'shared/**', 'repo/**', '.github/workflows/release.yml']
+    paths: ['apps/reader/**', 'shared/**', 'repo/**', 'scripts/bridge-assets.*', '.github/workflows/release.yml']
   workflow_dispatch:
 
 env:
@@ -54,16 +54,40 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 90   # (47 minutes in the 0.64.0 run)
+    permissions: { contents: read, actions: read }   # (actions: the lookup of the green Preflight)
     defaults: { run: { working-directory: apps/reader } }
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }   # (the merge commit and both its parents: the Preflight ran on the second)
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm install
       - run: npm run typecheck
       - run: npm run build
-      - name: Tests (the updater, the AI translator)
-        run: npm install --no-save playwright@1.64.1 kuromoji@0.1.2 && (npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium) && node tests/updater.cjs && node tests/backpdf.cjs && node tests/comicreader.cjs en && node tests/comicreader.cjs ar && node tests/comicarchives.cjs en && node tests/comicarchives.cjs ar && node tests/ranobesession.cjs && node tests/pdffling.cjs && node tests/pdfzoom.cjs && node tests/pdfzoomperf.cjs && node tests/pdfcrop.cjs && node tests/pdftextpic.cjs && node tests/pdf2docxrules.cjs && node tests/pendingmark.cjs && node tests/sourcesupdates.cjs en && node tests/sourcesupdates.cjs ar && node tests/extsearch.cjs en && node tests/extsearch.cjs ar && node tests/translator/run.cjs && node tests/aitabs.cjs en && node tests/aitabs.cjs ar && node tests/aitranslateflow.cjs en && node tests/aitranslateflow.cjs ar && node tests/translatedepub.cjs en && node tests/translatedepub.cjs ar && node tests/customapi.cjs && node tests/pdfsearch.cjs && node tests/copybuttons.cjs && node tests/backupsafe.cjs && node tests/dbatomic.cjs && node tests/libselect.cjs && node tests/libraryhelpers.cjs en && node tests/libraryhelpers.cjs ar && node tests/syncmerge.cjs && node tests/highlightplace.cjs && node tests/readpos.cjs && node tests/staysinbook.cjs && node tests/epubcrash.cjs && node tests/epubglue.cjs && node tests/chaptertitles.cjs && node tests/readgestures.cjs && node tests/perfbudget.cjs && node tests/diag.cjs && node tests/backkeys.cjs && node tests/readbar.cjs && node tests/readbuttons.cjs && node tests/lazychapters.cjs && node tests/pdfroom.cjs && node tests/statsshape.cjs && node tests/platformsettings.cjs && node tests/coverbadges.cjs && node tests/booksearch.cjs && node tests/speakstop.cjs && node tests/exportpins.cjs && node tests/textmeta.cjs && node tests/docxlists.cjs && node tests/epubanchors.cjs && node tests/pdfpassword.cjs && node tests/booksettings.cjs && node tests/chaptermap.cjs && node tests/chapterhealth.cjs && node tests/textrules.cjs && node tests/pdf2docxrunstate.cjs && node tests/pdf2docxchars.cjs && node tests/pdf2docxspaces.cjs && node tests/pdf2docxlines.cjs && node tests/pdf2docxpagenum.cjs && node tests/pdf2docxfonts.cjs && node tests/pdf2docxmem.cjs && node tests/pdf2docxcorpus.cjs && node tests/pdf2docxedit.cjs && node tests/anilistlink.cjs && node tests/alreview.cjs en && node tests/alreview.cjs ar && node tests/glossary.cjs && node tests/glossarytidy.cjs && node tests/glossarytap.cjs en && node tests/glossarytap.cjs ar && node tests/glossarylang.cjs && node tests/pcui.cjs && node tests/pcmenu.cjs && node tests/pcread.cjs && node tests/titlebar.cjs reader && node tests/appicon.cjs && node tests/resettle.cjs && node tests/resettle.cjs late && node tests/scrollsites.cjs && node tests/convbudget.cjs && node tests/firstrun.cjs && node tests/handover.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/setupui.cjs && node tests/tauribridge.cjs && node tests/pins.cjs && node tests/deletebooks.cjs && node tests/undo.cjs && node tests/undopill.cjs && node tests/uihunt.cjs && node tests/startup.cjs && node tests/glass.cjs && node tests/styleeditor.cjs && node tests/stylepair.cjs && node tests/apptheme.cjs && node tests/readingdict.cjs && node tests/readingdictreal.cjs && node tests/readingdictkuro.cjs && node tests/shared-copies.cjs
+      # (Before the long chain: is there a green FULL Preflight of exactly these files — the same trees of apps/reader, shared, repo,
+      # .github/actions and of this workflow? Then the chain below was run on them an hour ago, and only the short chain runs
+      # here. No such run — or any trouble finding it — and the full chain runs, as it always did. scripts/find-green-preflight.mjs.)
+      - name: Is there a green Preflight of these files
+        id: green
+        continue-on-error: true   # (any trouble here means «not found»: the full chain runs)
+        working-directory: ${{ github.workspace }}
+        env: { GITHUB_TOKEN: '${{ github.token }}' }
+        run: node scripts/find-green-preflight.mjs reader --github-output "$GITHUB_OUTPUT"
+      - name: Test tools (Playwright, kuromoji)
+        run: npm install --no-save playwright@1.64.1 kuromoji@0.1.2 && (npx playwright@1.64.1 install --with-deps chromium || (sleep 30; npx playwright@1.64.1 install --with-deps chromium) || npx playwright@1.64.1 install chromium)
+      - name: Tests (the full chain)
+        if: steps.green.outputs.found != 'true'
+        run: |
+          { echo '### Release tests: the full chain'; echo "No green full Preflight of these files: $REASON"; } >> "$GITHUB_STEP_SUMMARY"
+          node tests/updater.cjs && node tests/backpdf.cjs && node tests/comicreader.cjs en && node tests/comicreader.cjs ar && node tests/comicarchives.cjs en && node tests/comicarchives.cjs ar && node tests/ranobesession.cjs && node tests/pdffling.cjs && node tests/pdfzoom.cjs && node tests/pdfzoomperf.cjs && node tests/pdfcrop.cjs && node tests/pdftextpic.cjs && node tests/pdf2docxrules.cjs && node tests/pendingmark.cjs && node tests/sourcesupdates.cjs en && node tests/sourcesupdates.cjs ar && node tests/extsearch.cjs en && node tests/extsearch.cjs ar && node tests/translator/run.cjs && node tests/aitabs.cjs en && node tests/aitabs.cjs ar && node tests/aitranslateflow.cjs en && node tests/aitranslateflow.cjs ar && node tests/translatedepub.cjs en && node tests/translatedepub.cjs ar && node tests/customapi.cjs && node tests/pdfsearch.cjs && node tests/copybuttons.cjs && node tests/backupsafe.cjs && node tests/dbatomic.cjs && node tests/libselect.cjs && node tests/libraryhelpers.cjs en && node tests/libraryhelpers.cjs ar && node tests/syncmerge.cjs && node tests/highlightplace.cjs && node tests/readpos.cjs && node tests/staysinbook.cjs && node tests/epubcrash.cjs && node tests/epubglue.cjs && node tests/chaptertitles.cjs && node tests/readgestures.cjs && node tests/perfbudget.cjs && node tests/diag.cjs && node tests/backkeys.cjs && node tests/readbar.cjs && node tests/readbuttons.cjs && node tests/lazychapters.cjs && node tests/pdfroom.cjs && node tests/statsshape.cjs && node tests/platformsettings.cjs && node tests/coverbadges.cjs && node tests/booksearch.cjs && node tests/speakstop.cjs && node tests/exportpins.cjs && node tests/textmeta.cjs && node tests/docxlists.cjs && node tests/epubanchors.cjs && node tests/pdfpassword.cjs && node tests/booksettings.cjs && node tests/chaptermap.cjs && node tests/chapterhealth.cjs && node tests/textrules.cjs && node tests/pdf2docxrunstate.cjs && node tests/pdf2docxchars.cjs && node tests/pdf2docxspaces.cjs && node tests/pdf2docxlines.cjs && node tests/pdf2docxpagenum.cjs && node tests/pdf2docxfonts.cjs && node tests/pdf2docxfontsout.cjs && node tests/pdf2docxmem.cjs && node tests/pdf2docxcorpus.cjs && node tests/pdf2docxcorpus3.cjs && node tests/pdf2docxedit.cjs && node tests/anilistlink.cjs && node tests/alreview.cjs en && node tests/alreview.cjs ar && node tests/glossary.cjs && node tests/glossarytidy.cjs && node tests/glossarytap.cjs en && node tests/glossarytap.cjs ar && node tests/glossarylang.cjs && node tests/pcui.cjs && node tests/pcmenu.cjs && node tests/pcread.cjs && node tests/titlebar.cjs reader && node tests/appicon.cjs && node tests/resettle.cjs && node tests/resettle.cjs late && node tests/scrollsites.cjs && node tests/convbudget.cjs && node tests/firstrun.cjs && node tests/handover.cjs && node tests/handover-fixture.cjs && node tests/installerpatch.cjs && node tests/updatenames.cjs && node tests/setupui.cjs && node tests/tauribridge.cjs && node tests/pins.cjs && node tests/deletebooks.cjs && node tests/undo.cjs && node tests/undopill.cjs && node tests/uihunt.cjs && node tests/startup.cjs && node tests/glass.cjs && node tests/styleeditor.cjs && node tests/stylepair.cjs && node tests/apptheme.cjs && node tests/readingdict.cjs && node tests/readingdictreal.cjs && node tests/readingdictkuro.cjs && node tests/shared-copies.cjs
+        env: { REASON: '${{ steps.green.outputs.reason }}' }
+      # (The short chain: the updater, the start-up budget and the smoke set. Their sources are in the chain above too.)
+      - name: Tests (the short chain, a green Preflight stands in for the rest)
+        if: steps.green.outputs.found == 'true'
+        run: |
+          { echo '### Release tests: the short chain'; echo "The full chain ran in Preflight [run $RUN_ID]($RUN_URL) on $SHA: $REASON"; } >> "$GITHUB_STEP_SUMMARY"
+          node tests/updater.cjs && node tests/updatenames.cjs && node tests/installerpatch.cjs && node tests/handover.cjs && node tests/handover-fixture.cjs && node tests/perfbudget.cjs && node tests/startup.cjs && node tests/pcui.cjs && node tests/readpos.cjs && node tests/pdfroom.cjs
+        env: { RUN_ID: '${{ steps.green.outputs.run_id }}', RUN_URL: '${{ steps.green.outputs.run_url }}', SHA: '${{ steps.green.outputs.sha }}', REASON: '${{ steps.green.outputs.reason }}' }
       - name: Package web build
         run: cd dist && zip -r ../KurokawaReader-web.zip . && cd ..
       - uses: actions/upload-artifact@v4
@@ -189,121 +213,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: ios, path: apps/reader/out/*.ipa }
 
-  windows:
-    needs: version
-    name: Windows EXE
-    runs-on: windows-latest
-    timeout-minutes: 60
-    permissions: { contents: write }   # (the failure comment)
-    defaults: { run: { working-directory: apps/reader } }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install
-      - run: npm run build
-      - name: Build installer and portable EXE
-        shell: bash
-        run: |
-          cd desktop
-          V=${{ needs.version.outputs.v }}
-          npm version "$V" --no-git-tag-version --allow-same-version || true
-          npm install
-          node prepare.cjs && npx electron-builder --win nsis portable --publish never 2>&1 | tee $RUNNER_TEMP/win-build.log | tail -n 200
-          ls -la out
-      - name: Report failure
-        if: failure()
-        shell: bash
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: |
-          { echo "### Windows job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/win-build.log 2>/dev/null; echo '```'; } > body.md
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows
-          path: |
-            apps/reader/desktop/out/*.exe
-            apps/reader/desktop/out/*.blockmap
-            apps/reader/desktop/out/latest.yml
-
-  macos:
-    needs: version
-    name: macOS DMG
-    runs-on: macos-15
-    timeout-minutes: 60   # (15 minutes in the 0.64.0 run)
-    permissions: { contents: write }   # (the failure comment)
-    defaults: { run: { working-directory: apps/reader } }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install
-      - run: npm run build
-      - name: Build DMG (unsigned; universal)
-        shell: bash
-        run: |
-          cd desktop
-          V=${{ needs.version.outputs.v }}
-          npm version "$V" --no-git-tag-version --allow-same-version || true
-          npm install
-          node prepare.cjs && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg zip --universal --publish never 2>&1 | tee $RUNNER_TEMP/mac-build.log | tail -n 60
-          ls -la out
-      - name: Report failure
-        if: failure()
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: |
-          { echo "### macOS job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/mac-build.log 2>/dev/null; echo '```'; } > body.md
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos
-          path: |
-            apps/reader/desktop/out/*.dmg
-            apps/reader/desktop/out/*.zip
-            apps/reader/desktop/out/*.blockmap
-            apps/reader/desktop/out/latest-mac.yml
-
-  linux:
-    needs: version
-    name: Linux AppImage
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions: { contents: write }   # (the failure comment)
-    defaults: { run: { working-directory: apps/reader } }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install
-      - run: npm run build
-      - name: Build AppImage
-        shell: bash
-        run: |
-          cd desktop
-          V=${{ needs.version.outputs.v }}
-          npm version "$V" --no-git-tag-version --allow-same-version || true
-          npm install
-          node prepare.cjs && npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee $RUNNER_TEMP/linux-build.log | tail -n 60
-          ls -la out
-      - name: Report failure
-        if: failure()
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: |
-          { echo "### Linux job failed"; echo '```'; tail -n 120 $RUNNER_TEMP/linux-build.log 2>/dev/null; echo '```'; } > body.md
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@body.md > /dev/null || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux
-          path: |
-            apps/reader/desktop/out/*.AppImage
-            apps/reader/desktop/out/latest-linux.yml
-
-  # ---------- The Rust (Tauri) build: the main computer download from the switch-over on (R6b) ----------
-  # Its files never take the Electron build's names, so no Electron copy's own updater takes one by mistake:
+  # ---------- The Rust (Tauri) build: the computer app (the Electron build is no longer built) ----------
+  # Its files never take the old Electron build's names, so no old copy's own updater takes one by mistake:
   # KurokawaReader-<v>-windows-x64-setup.exe, …-windows-x64-portable.zip, …-macos-universal.DMG, …-linux-x64.appimage,
-  # …-linux-x64.deb (desktop-tauri/src-tauri/src/updatelogic.rs, desktop/rustswitch.cjs, src/updateCore.ts). (An
-  # Electron copy's page takes the first /\.dmg$/ and the first /\.AppImage$/ — case-sensitive —: the Rust disk image
-  # and AppImage end «.DMG» and «.appimage», which those patterns cannot match, whatever the order of the files.)
+  # …-linux-x64.deb (desktop-tauri/src-tauri/src/updatelogic.rs, src/updateCore.ts). (An old Electron copy's page takes
+  # the first /\.dmg$/ and the first /\.AppImage$/ — case-sensitive —: the Rust disk image and AppImage end «.DMG» and
+  # «.appimage», which those patterns cannot match, whatever the order of the files. What those copies DO find is the
+  # frozen bridge build, carried forward by the «Carry forward» step of the release job.)
   rust-desktop:
     needs: version
     name: Rust ${{ matrix.name }}
@@ -395,9 +311,11 @@ jobs:
 
   release:
     name: Publish release
-    needs: [version, web, android, ios, windows, macos, linux, rust-desktop]
-    # Published when every build but the macOS ones succeeded (those may be missing when no macOS runner came).
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success' }}
+    needs: [version, web, android, ios, rust-desktop]
+    # Published when every build but the macOS one succeeded (the Rust macOS build is optional: no macOS runner may come;
+    # the matrix's continue-on-error makes its failure no failure of the job). The Windows and Linux Rust files are asked
+    # for by name below.
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.web.result == 'success' && needs.android.result == 'success' && needs.rust-desktop.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { contents: write }   # (creates the release, uploads its files)
@@ -409,9 +327,6 @@ jobs:
       - name: Note a missing IPA
         if: ${{ needs.ios.result != 'success' }}
         run: echo "IOS_NOTE=- _The iOS build did not run this time (no macOS runner came); the previous release's IPA still works, and the next release will carry a new one._" >> $GITHUB_ENV
-      - name: Note a missing DMG
-        if: ${{ needs.macos.result != 'success' }}
-        run: echo "MAC_NOTE=- _The macOS build did not run this time (no macOS runner came); the previous release's DMG still works, and the next release will carry a new one._" >> $GITHUB_ENV
       - name: Release notes
         run: |
           [ -s "$APP/docs/notes/v${{ needs.version.outputs.v }}.md" ] || { echo "::error::$APP/docs/notes/v${{ needs.version.outputs.v }}.md is missing or empty"; exit 1; }
@@ -427,11 +342,9 @@ jobs:
             # (The notes written for this version, docs/notes/v<version>.md: the version job has already refused a missing or empty file, and there is no fallback text — the commit subjects above are only kept for the log.)
             cat "$APP/docs/notes/v${{ needs.version.outputs.v }}.md"
             if [ -n "$IOS_NOTE" ]; then echo "$IOS_NOTE"; fi
-            if [ -n "$MAC_NOTE" ]; then echo "$MAC_NOTE"; fi
-            # (The new computer build is optional on macOS: without it the previous build's DMG is the Mac download, and
-            # the previous build on a Mac then keeps updating as before — it offers the move only when the new DMG is there.)
-            if [ ! -d artifacts/rust-macOS ]; then echo "- _macOS: the new, smaller build did not come this time; the Mac download is the previous build's \`*-mac-universal.dmg\`, which keeps working and updating as before._"; fi
-            for os in Windows Linux; do if [ ! -d "artifacts/rust-$os" ]; then echo "- _$os: the new, smaller build did not come this time; the previous build stays the $os download._"; fi; done
+            # (The computer build is optional on macOS only: without it the previous release's disk image stays the Mac download, and
+            # a Mac copy keeps updating from there — it takes the newest release that has one.)
+            if [ ! -d artifacts/rust-macOS ]; then echo "- _macOS: the new build did not come this time (no macOS runner came); the previous release's disk image stays the Mac download._"; fi
             echo
             echo "## Files"
             echo
@@ -441,15 +354,13 @@ jobs:
             echo "| Android (older 32-bit phones) | \`*-armeabi-v7a.apk\` |"
             echo "| Android (emulators / x86 tablets) | \`*-x86_64.apk\` |"
             echo "| Android (any, larger) | \`*-universal.apk\` |"
-            echo "| Windows | \`*-windows-x64.exe\` — the installer (new, about a sixth of the size; a few seconds, no administrator rights). The classic installer is \`*-windows-x64-setup.exe\`; the portable build is \`*-windows-x64-portable.zip\` |"
-            echo "| Windows (previous engine, kept for two versions) | \`*-win-x64.exe\` installer, or the portable \`*.exe\` |"
+            echo "| Windows | \`*-windows-x64.exe\` — the installer (a few seconds, no administrator rights). The classic installer is \`*-windows-x64-setup.exe\`; the portable build is \`*-windows-x64-portable.zip\` |"
             echo "| macOS | \`*-macos-universal.DMG\` (unsigned: right-click → Open the first time) |"
-            echo "| macOS (previous engine) | \`*-mac-universal.dmg\` |"
-            echo "| Linux | \`*-linux-x64.appimage\` (chmod +x, then run), or \`*-linux-x64.deb\`; the previous engine: \`*-linux-x86_64.AppImage\` |"
+            echo "| Linux | \`*-linux-x64.appimage\` (chmod +x, then run), or \`*-linux-x64.deb\` |"
             echo "| iOS | \`*-ios-unsigned.ipa\` — AltStore / SideStore source: \`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/altstore.json\` · TrollStore · or install the web app from https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ |"
             echo "| Web (self-host) | \`KurokawaReader-web.zip\` — or use the hosted app above |"
             echo
-            echo "_\`latest*.yml\`, \`*.blockmap\` and the macOS zip are for the previous engine's own updater; \`*-SHA256SUMS.txt\` holds every file's SHA-256, which the app's updater checks before it installs anything._"
+            echo "_\`*-SHA256SUMS.txt\` holds every file's SHA-256, which the app's updater checks before it installs anything. The files named \`*-win-x64*.exe\`, \`*-mac-universal.dmg\`, \`*-linux-x86_64.AppImage\`, \`latest*.yml\` and \`*.blockmap\` are the last copy of the program this app replaced, repeated in every release only so that an older copy can update itself to the new app: they are not downloads to choose._"
             echo
             cat $APP/docs/INSTALL.md
           } > notes.md
@@ -459,20 +370,41 @@ jobs:
         run: |
           git fetch --quiet origin main
           if git diff --quiet ${{ github.sha }} origin/main -- $APP shared repo; then echo "TARGET=$(git rev-parse origin/main)" >> $GITHUB_ENV; else echo "TARGET=${{ github.sha }}" >> $GITHUB_ENV; fi
+      # (The frozen Electron «bridge» build's files — scripts/bridge-assets.json —, repeated in every release. An OLD installed
+      # Electron copy finds its update by name: the page takes /win-x64.*\.exe$/ (portable: …portable), the first /\.dmg$/ and the
+      # first /\.AppImage$/ of the newest release, and electron-updater reads latest.yml (Windows installer) and
+      # latest-linux.yml (AppImage) of it. They are fetched from the bridge release's tag with this job's token, each
+      # checked against the SHA-256 committed in the list — a list not yet filled, a file missing or different stops the
+      # release here, before anything is published —, and the two yml files are written afresh: the NEW version, over the
+      # bridge's own files, so the old copy sees a newer version, downloads the bridge build (the hash it checks is of the
+      # very file it gets) and the bridge makes the hand-over and installs the Rust build.)
+      - name: Carry forward the bridge build's files (old Electron copies still reach the new app)
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          V=${{ needs.version.outputs.v }}
+          TAG=$(node scripts/bridge-assets.mjs reader --tag)
+          mkdir -p artifacts/bridge
+          for n in $(node scripts/bridge-assets.mjs reader --names); do gh release download "$TAG" --pattern "$n" --dir artifacts/bridge --clobber -R "$GITHUB_REPOSITORY"; done
+          node scripts/bridge-assets.mjs reader --verify artifacts/bridge
+          node scripts/bridge-assets.mjs reader --yml artifacts/bridge --version "$V"
+          cat artifacts/bridge/latest.yml artifacts/bridge/latest-linux.yml
+          ls -la artifacts/bridge
       # (Every file's SHA-256, under its published name: the Rust build's updater refuses a file that does not match.)
       - name: Checksums
         run: |
           V=${{ needs.version.outputs.v }}
           (cd artifacts && find . -type f ! -name '*.blockmap' -print0 | sort -z | xargs -0 sha256sum | sed -E 's#  \./[^/]+/#  #') > "KurokawaReader-$V-SHA256SUMS.txt"
           cat "KurokawaReader-$V-SHA256SUMS.txt"
-      # (What a release must carry, by name — the files the job conditions above promise; the iOS and macOS files and the Rust
-      # build's are optional by design and are not asked for.)
+      # (What a release must carry, by name — the files the job conditions above promise; the iOS and macOS files are optional by
+      # design and are not asked for. The computer app is the Rust build: its Windows and Linux files must be there, and the
+      # bridge build's, which the step above fetched and checked.)
       - name: The release's files are all there
         run: |
           V=${{ needs.version.outputs.v }}; missing=0
           need() { if ! ls artifacts/*/"$1" > /dev/null 2>&1; then echo "::error::missing from the release: $1"; missing=1; fi; }
           for abi in arm64-v8a armeabi-v7a x86_64 universal; do need "KurokawaReader-$V-$abi.apk"; done
-          need "KurokawaReader-$V-win-x64.exe"; need "KurokawaReader-$V-linux-x86_64.AppImage"; need "KurokawaReader-web.zip"
+          need "KurokawaReader-$V-windows-x64-setup.exe"; need "KurokawaReader-$V-windows-x64-portable.zip"; need "KurokawaReader-$V-linux-x64.appimage"; need "KurokawaReader-web.zip"
+          for n in $(node scripts/bridge-assets.mjs reader --names) latest.yml latest-linux.yml; do need "$n"; done
           [ -s "KurokawaReader-$V-SHA256SUMS.txt" ] || { echo "::error::no checksums file"; missing=1; }
           exit $missing
       - uses: softprops/action-gh-release@v2
@@ -486,11 +418,9 @@ jobs:
             artifacts/web/*
             artifacts/android/*
             artifacts/ios/*
-            artifacts/windows/*
-            artifacts/macos/*
-            artifacts/linux/*
+            artifacts/bridge/*
             KurokawaReader-*-SHA256SUMS.txt
-      # (The Rust build's files, uploaded after the others. Their names already keep every Electron copy's updater off
+      # (The Rust build's files, uploaded after the others. Their names already keep every old Electron copy's updater off
       # them — «.DMG», «.appimage», «windows-…» —, so the order no longer matters: an Electron copy takes the bridge
       # build, which makes the hand-over and then offers the move itself.)
       - name: The Rust build's files

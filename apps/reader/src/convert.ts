@@ -470,7 +470,9 @@ export type PdfPaper = 'a4' | 'a5' | 'letter' | 'phone';
 const PAPER: Record<PdfPaper, { css: string; pt: [number, number] }> = { a4: { css: 'A4', pt: [595.28, 841.89] }, a5: { css: 'A5', pt: [419.53, 595.28] }, letter: { css: 'Letter', pt: [612, 792] }, phone: { css: '90mm 160mm', pt: [255.1, 453.5] } };
 /** What the reader can set for a conversion: the paper and type size of a PDF, whether pictures go along. */
 /** docxResult: PDF → Word's «Result» — 'edit' (the default: easy to edit) or 'exact' (the page's exact look). */
-export interface ConvOptions { paper?: PdfPaper; fontSize?: number; images?: boolean; docxResult?: 'edit' | 'exact' }
+/** docxFonts: PDF → Word's «Fonts» — 'embed' (the default: inside the file) or 'folder' (the PDF's fonts as files, in a
+ *  folder beside the document). */
+export interface ConvOptions { paper?: PdfPaper; fontSize?: number; images?: boolean; docxResult?: 'edit' | 'exact'; docxFonts?: 'embed' | 'folder' }
 
 export async function buildPdf(d: ConvDoc, progress: Progress, opts: ConvOptions = {}): Promise<Blob> {
   const paper = PAPER[opts.paper ?? 'a4'];
@@ -899,14 +901,20 @@ export async function buildCbz(book: Book, file: Blob, progress: Progress, passw
   return zip.generateAsync({ type: 'blob', compression: 'STORE' });
 }
 
-export async function convertBook(book: Book, target: Target, progress: Progress, password?: string, opts: ConvOptions = {}): Promise<{ blob: Blob; name: string }> {
+export async function convertBook(book: Book, target: Target, progress: Progress, password?: string, opts: ConvOptions = {}): Promise<{ blob: Blob; name: string; fonts?: import('./fontfolder').FolderFont[] }> {
   const file = await db.getFile(book.id);
   if (!file) throw new Error('missing');
   const tg = TARGETS.find((x) => x.id === target)!;
   // PDF → Word keeps the page layout (its own path); other routes go through the reflowed document.
   if (book.format === 'pdf' && target === 'docx') {
     try {
-      const { pdfToDocx } = await import('./pdf2docx');
+      const { pdfToDocx, pdfToDocxWithFonts } = await import('./pdf2docx');
+      // («Fonts: in a folder»: the document and the font files beside it; a PDF with no font to write gives the plain document.)
+      if (opts.docxFonts === 'folder') {
+        const out = await pdfToDocxWithFonts(book, file, progress, password, { exact: opts.docxResult === 'exact', fonts: 'folder' });
+        progress('done', 100);
+        return { blob: out.blob, name: `${slug(book.title)}.${tg.ext}`, ...(out.fonts.length ? { fonts: out.fonts } : {}) };
+      }
       const blob = await pdfToDocx(book, file, progress, password, { exact: opts.docxResult === 'exact' });
       progress('done', 100);
       return { blob, name: `${slug(book.title)}.${tg.ext}` };

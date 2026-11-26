@@ -1,4 +1,4 @@
-// window.kurokawaDesktop for the Tauri shell: every name desktop/preload.cjs (the Electron shell's bridge) gives the
+// window.kurokawaDesktop for the Tauri shell: every name tests/support/electron-preload.cjs (frozen) (the Electron shell's bridge) gives the
 // page, with the same arguments and results. Run by src-tauri/src/main.rs as the window's initialization script —
 // before the page's own scripts, on every load —, after a line that sets window.__KR_BOOT__ = { os, arch }.
 // Each Electron channel kr:a-b is the Tauri command kr_a_b (src-tauri/src/commands.rs and the files beside it). What
@@ -445,6 +445,11 @@
     scanFolder: function (root, exts) { return call('kr_scan_folder', { p: str(root), exts: (Array.isArray(exts) ? exts : []).map(str) }); },
     cancelDownload: function (id) { return call('kr_download_cancel', { id: str(id) }); },
     menuText: function (labels) { return call('kr_menu', { labels: obj(labels) }); },
+    // saveFiles(o) — PDF → Word «In a folder»: a converted document and its fonts written into folders the reader picked
+    // (pickFolder), in steps: { op: 'plan', dir, items: [{ rel, size, sha }] } → the name each file gets («name (2).ext» where
+    // another is; nothing to write where the same bytes are there); { op: 'part', dir, rel, b64, first, last }; { op: 'undo',
+    // dir, rels, dirs } (what a failed save made, taken away); { op: 'open', p } (a folder shown). src-tauri/src/savefiles.rs.
+    saveFiles: function (o) { return call('kr_save_files', { o: obj(o) }); },
   };
   if (boot.os && boot.os !== 'win32') EXTRA.printFile = function (b64, name) { return call('kr_print_file', { b64: str(b64), name: str(name || 'document.pdf') }); };
   Object.keys(EXTRA).forEach(function (k) { api[k] = EXTRA[k]; });

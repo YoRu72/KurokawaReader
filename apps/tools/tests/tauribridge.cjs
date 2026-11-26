@@ -1,4 +1,4 @@
-// The Tauri shell's bridge (desktop-tauri/bridge.js) against the Electron one (desktop/preload.cjs): the ported
+// The Tauri shell's bridge (desktop-tauri/bridge.js) against the Electron one (tests/support/electron-preload.cjs (frozen)): the ported
 // methods have the same names and send the same arguments (kt:xyz → the command kt_xyz), nothing outside the slice
 // is there, bytes come back as an ArrayBuffer, errors as Errors, the kt:tasks / kt:engineState events reach onTasks
 // and the kt:engine-state DOM event; every command the bridge calls is registered in main.rs with the argument names
@@ -78,7 +78,7 @@ function loadPreload() {
   const orig = Module._load;
   Module._load = function (req, ...rest) { return req === 'electron' ? fake : orig.call(this, req, ...rest); };
   global.window = { dispatchEvent() {}, addEventListener() {} };
-  try { require(path.join(ROOT, 'desktop', 'preload.cjs')); } finally { Module._load = orig; }
+  try { require(path.join(ROOT, 'tests', 'support', 'electron-preload.cjs')); } finally { Module._load = orig; }
   return exposed;
 }
 
@@ -109,14 +109,14 @@ function loadBridge(boot) {
   // Names: the slice and the boot-safe ones, every one of them a name the preload has; nothing else.
   const keys = Object.keys(kt).sort();
   assert.deepEqual(keys, [...new Set([...SLICE, ...BOOT, ...Object.keys(OWN), ...OWN_EVENTS])].sort(), 'bridge methods ≠ slice + boot-safe + own');
-  for (const k of keys) assert.ok(k in pre || k in OWN || OWN_EVENTS.includes(k), `${k} is not in preload.cjs`);
+  for (const k of keys) assert.ok(k in pre || k in OWN || OWN_EVENTS.includes(k), `${k} is not in the frozen electron preload`);
   for (const k of [...Object.keys(OWN), ...OWN_EVENTS]) assert.ok(!(k in pre), `${k} is the Tauri shell's own, not the preload's`);
   assert.equal(kt.platform, 'desktop');
   assert.equal(kt.available, false);
   assert.equal(kt.reason, '');
   assert.equal(kt.os, 'linux');
   // (Every channel of the preload is here now — the screen translator's 8 were the last.)
-  for (const k of Object.keys(pre)) assert.ok(k in kt || ELECTRON_ONLY.includes(k), `${k} is in preload.cjs but not in the bridge`);
+  for (const k of Object.keys(pre)) assert.ok(k in kt || ELECTRON_ONLY.includes(k), `${k} is in the frozen electron preload but not in the bridge`);
   for (const k of ELECTRON_ONLY) assert.ok(k in pre && !(k in kt), `${k} is Electron-only: in the preload, not in the bridge`);
 
   // Arguments: each slice method sends what the preload sends, under the command named after its channel.
@@ -301,13 +301,12 @@ function loadBridge(boot) {
     assert.equal((listeners['kt:screenCaption'] || []).length, 0, 'unlistened');
   }
 
-  // Stage P7: the browser's GRAB_JS is main.cjs's, unchanged.
+  // Stage P7: the browser's script in the Rust shell is native/grab.js, unchanged (the Electron copy it once matched is gone).
   {
-    const m = /const GRAB_JS = ("(?:[^"\\]|\\.)*");/.exec(readText(path.join(SRCROOT, 'desktop', 'main.cjs')));
-    assert.ok(m, 'GRAB_JS in main.cjs');
+    const g = await import(require('node:url').pathToFileURL(path.join(SRCROOT, 'native', 'embed-grab.mjs')).href);
     // (Line ends compared as LF: a Windows checkout gives grab.js CRLF — CI run 43543617161's Windows job failed here.)
     const lf = (t) => t.replace(/\r\n/g, '\n').trim();
-    assert.equal(lf(readText(path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'))), lf(JSON.parse(m[1])), 'grab.js ≠ main.cjs GRAB_JS');
+    assert.equal(lf(readText(path.join(SRCROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'))), lf(g.grabSource()), 'grab.js ≠ native/grab.js');
   }
 
   // Screen translator: the OCR helpers' scripts the Tauri shell writes are screentr.cjs's, unchanged (line ends as LF).

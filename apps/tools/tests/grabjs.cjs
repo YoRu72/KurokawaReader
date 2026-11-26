@@ -15,9 +15,9 @@ const PAGE = `<!doctype html><html><head><title>A clip</title>
 (async () => {
   const errors = []; const check = (what, ok) => { console.log(ok ? 'ok  ' : 'FAIL', what); if (!ok) errors.push(what); };
   const m = await import(path.join(ROOT, 'native', 'embed-grab.mjs'));
-  const desk = /^const GRAB_JS = (.*);$/m.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'));
   const java = /^ {4}static final String GRAB_JS = (.*);$/m.exec(fs.readFileSync(path.join(ROOT, 'native', 'android', 'KtBrowserActivity.java'), 'utf8'));
-  check('desktop copy matches native/grab.js (run node native/embed-grab.mjs)', desk && JSON.parse(desk[1]) === m.grabSource());
+  const lf = (t) => t.replace(/\r\n/g, '\n').trim();
+  check('the Rust shell\'s grab.js matches native/grab.js', lf(fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'grab.js'), 'utf8')) === lf(m.grabSource()));
   check('android copy matches native/grab.js', java && JSON.parse(java[1]) === m.grabSource());
   const web = serve(DIST).listen(0); const port = web.address().port;
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });

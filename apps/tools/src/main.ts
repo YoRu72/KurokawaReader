@@ -200,7 +200,7 @@ else {
     void import('./native').then((n) => { const kp = n.ktPlugin() as unknown as { setDoh?(o: { provider: string }): Promise<unknown> } | null; if (kp?.setDoh) void kp.setDoh({ provider: s0.doh || 'off', allowSystem: !!s0.dohSystem } as { provider: string }).catch(() => undefined); }); if (s0.secureScreen) void import('./native').then((n) => (n.ktPlugin() as unknown as { secureScreen?(o: { on: boolean }): Promise<void> } | null)?.secureScreen?.({ on: true })); }
   // (Stage P9: the computer's two builds. The Tauri build: its first-run screen once — carrying the offer of the data the
   // previous (Electron) version handed over —, else that offer alone when there is one (ui/firstrun.ts startScreens).
-  // The Electron build: the hand-over's maker reachable by the shell without an import (desktop/handover.cjs prepare
+  // The Electron build: the hand-over's maker reachable by the shell without an import (tests/support/bridge-handover.cjs (frozen) prepare
   // runs window.__KT_HANDOVER__.beforeInstall() and installs the Tauri build only on true), and a while after the start
   // the move offered when a release carries it — never while main.cjs's RUST_SWITCH is off (switchInfo answers null).)
   // (Both shells that give window.kurokawaHandover: the tests' and CI's way in too — make, snapshot, the offer.)
