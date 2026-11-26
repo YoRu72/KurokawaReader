@@ -1,4 +1,4 @@
-// window.kurokawaDesktop for the Tauri shell: every name desktop/preload.cjs (the Electron shell's bridge) gives the
+// window.kurokawaDesktop for the Tauri shell: every name tests/support/electron-preload.cjs (frozen) (the Electron shell's bridge) gives the
 // page, with the same arguments and results. Run by src-tauri/src/main.rs as the window's initialization script —
 // before the page's own scripts, on every load —, after a line that sets window.__KR_BOOT__ = { os, arch }.
 // Each Electron channel kr:a-b is the Tauri command kr_a_b (src-tauri/src/commands.rs and the files beside it). What

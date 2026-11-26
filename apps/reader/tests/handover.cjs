@@ -1,8 +1,8 @@
 // node tests/handover.cjs: the hand-over from the Electron build to the Rust build (stage R6a — src/handover.ts,
-// ui/handoversheet.ts, desktop/handover.cjs, desktop-tauri/handover-bridge.js; the Rust side's file rules are
+// ui/handoversheet.ts, tests/support/bridge-handover.cjs (frozen), desktop-tauri/handover-bridge.js; the Rust side's file rules are
 // src-tauri/src/handoverlogic.rs's own tests, and CI runs the real thing: tests/handover-electron.cjs then
 // desktop-tauri/handovercheck.js). The built app (dist/) in Chromium, in two shapes:
-//   «Electron»: window.kurokawaHandover as preload.cjs gives it, its channels answered here by desktop/handover.cjs's
+//   «Electron»: window.kurokawaHandover as preload.cjs gives it, its channels answered here by tests/support/bridge-handover.cjs (frozen)'s
 //     own Writer, in a temp «userData» folder;
 //   «Rust»: desktop-tauri/bridge.js and handover-bridge.js over a fake Tauri IPC whose kr_handover_* commands do what
 //     src-tauri/src/handover.rs does (the same rules, in Node).
@@ -16,7 +16,7 @@
 // missing ones and merged notes; backups cross: a «phone» backup restores on the computer and the reverse (the PC-only
 // icon left on the phone), a backup of a newer format version is read.
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os'); const crypto = require('crypto');
-const H = require('../desktop/handover.cjs');
+const H = require('./support/bridge-handover.cjs');
 const ROOT = path.resolve(__dirname, '..');
 const DIST = process.env.KR_DIST ? path.resolve(process.env.KR_DIST) : path.join(ROOT, 'dist');
 const BRIDGE = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8');
@@ -35,7 +35,7 @@ const userData = path.join(TMP, 'electron-userData'); const tauriData = path.joi
 const ICON = 'data:image/png;base64,' + fs.readFileSync(path.join(ROOT, 'desktop', 'icon.png')).toString('base64');
 const SKIP_LOCAL = /^(kr\.update\.lastCheck|kr\.libraryVisit|kr\.sources\.checkedAt|kr\.orphansCleaned)$/;   // (times the app writes itself at each start)
 
-// ---------- the Electron shell's channels: desktop/handover.cjs's Writer, in TMP ----------
+// ---------- the Electron shell's channels: tests/support/bridge-handover.cjs (frozen)'s Writer, in TMP ----------
 let writer = null; const E = { free: undefined, failVerify: false, lastBegin: null };
 async function electronCall(cmd, a) {
   switch (cmd) {

@@ -4,7 +4,7 @@
 // starts with an empty profile, finds that folder on its first start and brings it all back. Nothing is deleted from
 // the old profile, and the folder itself goes only when the reader asks (after a restore that worked).
 //
-// The folder (desktop/handover.cjs writes it; desktop-tauri/src-tauri/src/handover.rs finds and reads it):
+// The folder (tests/support/bridge-handover.cjs (frozen) writes it; desktop-tauri/src-tauri/src/handover.rs finds and reads it):
 //   kurokawa-backup.json         a full backup's manifest (src/backup.ts) — so the folder is also a full backup,
 //   paths.json                   with its files at safe names: { "books/<id>/<fileName>": "books/3/file", … }
 //   books/<n>/file, cover, …     each copied book's file (a LINKED book's file stays where it is: its link crosses)
@@ -24,7 +24,7 @@
 import { db, uid, type Book } from './db';
 import { backupManifest, readManifest, restoreManifest, type BackupParts } from './backup';
 
-/* ---------- the shells' halves (desktop/preload.cjs, desktop-tauri/handover-bridge.js) ---------- */
+/* ---------- the shells' halves (tests/support/electron-preload.cjs (frozen), desktop-tauri/handover-bridge.js) ---------- */
 export interface MarkerFile { rel: string; size: number; sha256: string }
 export interface Counts { books: number; copied: number; linked: number; files: number; meta: number; local: number; highlights: number; bookmarks: number; bytes: number }
 export interface Marker { app: string; kind: 'handover'; format: number; id: string; createdAt: number; from?: { shell?: string; version?: string; platform?: string; portable?: boolean }; counts?: Partial<Counts>; bytes: number; files: MarkerFile[] }

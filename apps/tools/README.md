@@ -25,5 +25,4 @@ Arabic · English · 日本語 · 한국어 · 中文, right-to-left or left-to-
 npm install && npm run build       # web → dist/
 npm run android:prepare            # Android project
 cd desktop-tauri && npx @tauri-apps/cli@^2 icon ../desktop/icon.png && npx @tauri-apps/cli@^2 build   # computer app (Windows / macOS / Linux)
-cd desktop && npm install && npm run dist:win   # the previous computer build (Electron), kept for two versions
 ```

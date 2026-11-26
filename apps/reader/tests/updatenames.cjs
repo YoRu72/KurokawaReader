@@ -1,9 +1,9 @@
 // The Rust (Tauri) build's release files (stage R6b), named alike in the three places that pick them —
-// desktop-tauri/src-tauri/src/updatelogic.rs (the Tauri app's updater), desktop/rustswitch.cjs (the Electron app's
+// desktop-tauri/src-tauri/src/updatelogic.rs (the Tauri app's updater), tests/support/bridge-rustswitch.cjs (frozen) (the Electron app's
 // switch) and src/updateCore.ts (the page's update sheet) —; the Electron switch's choices (a release of this
 // version or newer, the Tauri file for this system, beta only on the beta channel, the checksum it must have); the
 // Electron build's own patterns — Windows, and the Mac's and Linux's «first .dmg / .AppImage» — never taking a Tauri
-// file; the switch OFF by default, and its hand-over gate (desktop/handover.cjs prepare: the page's
+// file; the switch OFF by default, and its hand-over gate (tests/support/bridge-handover.cjs (frozen) prepare: the page's
 // beforeInstall() must say true and a fresh hand-over be on the disk) there and packaged. Plain node: node tests/updatenames.cjs
 'use strict';
 const fs = require('node:fs');
@@ -11,7 +11,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const ROOT = path.join(__dirname, '..');
-const RS = require(path.join(ROOT, 'desktop', 'rustswitch.cjs'));
+const RS = require(path.join(ROOT, 'tests', 'support', 'bridge-rustswitch.cjs'));
 const logic = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'src-tauri', 'src', 'updatelogic.rs'), 'utf8');
 const core = fs.readFileSync(path.join(ROOT, 'src', 'updateCore.ts'), 'utf8');
 
@@ -84,19 +84,37 @@ assert.deepEqual(RS.expectedSha(`sha256:${h}`, g), { error: 'checksum' });
 assert.deepEqual(RS.expectedSha(null, null), { error: 'nochecksum' });
 assert.equal(RS.cmpVersion('1.0.0-beta.2', '1.0.0'), -1); assert.ok(RS.cmpVersion('0.10.0', '0.9.9') > 0);
 
-// The switch: ON since 0.62.0 (the bridge build); its hand-over gate there, by its name, and packaged with the app.
-const main = fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
-assert.match(main, /^const RUST_SWITCH = true;$/m, 'RUST_SWITCH is on since the switch-over (0.62.0): the Electron build is the bridge build');
-assert.match(main, /await handover\.prepare\(/); assert.match(main, /const handover = require\('\.\/handover\.cjs'\);/);
-const ho = require(path.join(ROOT, 'desktop', 'handover.cjs'));
+// The bridge build (the frozen Electron build every old copy ends up running): its hand-over gate, from the frozen Writer.
+const ho = require(path.join(ROOT, 'tests', 'support', 'bridge-handover.cjs'));
 assert.equal(typeof ho.prepare, 'function');
-const files = JSON.parse(fs.readFileSync(path.join(ROOT, 'desktop', 'package.json'), 'utf8')).build.files;
-for (const f of ['rustswitch.cjs', 'handover.cjs']) assert.ok(files.includes(f), `${f} packaged`);
-assert.match(main, /handover\.prepare\(\{ app, webContents: e\.sender \}\)/, 'the page that asked makes the hand-over');
-assert.match(main, /if \(!h \|\| h\.ok !== true\) throw/, 'nothing installed unless it said ok');
-assert.equal((main.match(/require\('\.\/handover\.cjs'\)/g) || []).length, 1, 'handover.cjs required once');
+// The carry-forward (scripts/bridge-assets.json, the release workflow): each release repeats the bridge build's files under the
+// names an old copy picks by — and only those: the first of them an old copy's own pattern finds is the bridge's, whatever the
+// order the release lists its files in; the Rust files come before or after them, it makes no difference.
+{
+  const br = JSON.parse(fs.readFileSync(path.join(ROOT, '..', '..', 'scripts', 'bridge-assets.json'), 'utf8')).reader;
+  const bnames = br.assets.map((x) => x.name);
+  for (const os of ['win32', 'darwin', 'linux']) for (const order of [[...bnames, ...mixed.slice(0, 5).filter((n) => !bnames.includes(n))], [...mixed.slice(0, 5), ...bnames], [...bnames].reverse()]) {
+    const got = electronPick(order, os); assert.ok(got && bnames.includes(got.name), `an old ${os} copy takes the bridge's own file (${got && got.name})`);
+  }
+  assert.equal(electronPick(bnames, 'win32').name, `KurokawaReader-${br.version}-win-x64.exe`, 'old installer');
+  const portablePick = (names) => names.find((n) => /win-x64.*\.exe$/.test(n) && /portable/.test(n));
+  assert.equal(portablePick(bnames), `KurokawaReader-${br.version}-win-x64-portable.exe`, 'old portable copy');
+  assert.ok(bnames.includes(`KurokawaReader-${br.version}-mac-universal.dmg`) && bnames.includes(`KurokawaReader-${br.version}-linux-x86_64.AppImage`));
+  // …and the bridge build itself still finds the Rust build of a release made today (its own frozen pickRust).
+  const rn = (vv) => [`KurokawaReader-${vv}-windows-x64-setup.exe`, `KurokawaReader-${vv}-SHA256SUMS.txt`, `KurokawaReader-${vv}-linux-x64.appimage`, `KurokawaReader-${vv}-macos-universal.DMG`, ...bnames];
+  const today = [rel('v0.80.0', rn('0.80.0'))];
+  assert.equal(RS.pickRust(today, br.version, 'win32', 'x64').asset.name, 'KurokawaReader-0.80.0-windows-x64-setup.exe', 'the bridge finds the Rust installer in a release that also carries its own files');
+  assert.equal(RS.pickRust(today, br.version, 'linux', 'x64').asset.name, 'KurokawaReader-0.80.0-linux-x64.appimage');
+  assert.equal(RS.pickRust(today, br.version, 'darwin', 'arm64').asset.name, 'KurokawaReader-0.80.0-macos-universal.DMG');
+  // The workflow: no Electron build any more; the carry-forward is there, verified, and refuses an unfilled list.
+  const wf = fs.readFileSync(path.join(ROOT, '..', '..', '.github', 'workflows', 'release.yml'), 'utf8');
+  assert.ok(!/electron-builder|node prepare\.cjs/.test(wf), 'release.yml builds no Electron');
+  assert.ok(/bridge-assets\.mjs reader --verify artifacts\/bridge/.test(wf) && /bridge-assets\.mjs reader --yml artifacts\/bridge/.test(wf), 'release.yml carries the bridge build forward, verified');
+  assert.ok(wf.indexOf('--verify artifacts/bridge') < wf.indexOf('name: Checksums') && wf.indexOf('name: Checksums') < wf.indexOf('softprops/action-gh-release'), 'verified before the checksums and the publishing');
+  assert.ok(/artifacts\/bridge\/\*/.test(wf), 'and published');
+}
 (async () => {
-  // The gate (desktop/handover.cjs prepare), with a stand-in for the page: it runs beforeInstall() and is ok ONLY when
+  // The gate (tests/support/bridge-handover.cjs (frozen) prepare), with a stand-in for the page: it runs beforeInstall() and is ok ONLY when
   // the page said true AND a hand-over marked since is on the disk.
   const os = require('node:os');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-gate-'));
@@ -122,6 +140,6 @@ assert.equal((main.match(/require\('\.\/handover\.cjs'\)/g) || []).length, 1, 'h
   // (No placeholder left: the page's side is R6a's — makeHandover / restoreHandover, the first-run screen's offer.)
   const pageHo = fs.readFileSync(path.join(ROOT, 'src', 'handover.ts'), 'utf8');
   assert.ok(!/PLACEHOLDER|export async function restore\(/.test(pageHo) && /export async function makeHandover\(/.test(pageHo));
-  assert.ok(!/PLACEHOLDER/.test(fs.readFileSync(path.join(ROOT, 'desktop', 'handover.cjs'), 'utf8')));
+  assert.ok(!/PLACEHOLDER/.test(fs.readFileSync(path.join(ROOT, 'tests', 'support', 'bridge-handover.cjs'), 'utf8')));
   console.log('updatenames: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

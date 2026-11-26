@@ -1,0 +1,92 @@
+{
+ "app": "KurokawaReader",
+ "kind": "handover",
+ "format": 1,
+ "id": "mwxql0ko-2a7b43c1edc6",
+ "createdAt": 1795708679208,
+ "from": {
+  "shell": "electron",
+  "platform": "win32",
+  "version": "0.67.0",
+  "portable": false
+ },
+ "counts": {
+  "books": 1,
+  "files": 3,
+  "records": 1,
+  "local": 2
+ },
+ "bytes": 914,
+ "files": [
+  {
+   "rel": "books/0/cover",
+   "size": 12,
+   "sha256": "4353a1de7e0dcc4e87350e22d5c9ee9f3e70e8ce9c31533ec991bee8870c4814"
+  },
+  {
+   "rel": "books/0/file",
+   "size": 34,
+   "sha256": "98aa5f8ec42d695d69cd7611171da87b2429e7dcc337bf94167227a377242e9b"
+  },
+  {
+   "rel": "books/0/translations.json",
+   "size": 35,
+   "sha256": "18a0c3a06abbe7e416891529d6122c644d973695868486d76ac2736117d961c9"
+  },
+  {
+   "rel": "files/0",
+   "size": 9,
+   "sha256": "c88b8dd6dfccbd7ed8d8b3dacbc76fa97d0935bfad36fd3ae5f8e1cd7e3da732"
+  },
+  {
+   "rel": "fonts/0",
+   "size": 8,
+   "sha256": "8c71069e06e86ea4804d9c2700b213811bfc991c04ecda5a6520d188a1156af9"
+  },
+  {
+   "rel": "handover/books.jsonl",
+   "size": 151,
+   "sha256": "0a49310f5f6dd1ab1acb00c903331f78e0570d7153f67592b6258afbd2847148"
+  },
+  {
+   "rel": "handover/files.json",
+   "size": 242,
+   "sha256": "4151e0f48e5efc6d8faa2032539e4b7e063ed55998f6bc89da1a968936499346"
+  },
+  {
+   "rel": "handover/local.json",
+   "size": 52,
+   "sha256": "6b95e887370cdbcc1ff29f80722363ed9d8e96715065e5a414adf20aa90c4630"
+  },
+  {
+   "rel": "handover/meta.jsonl",
+   "size": 69,
+   "sha256": "7fc040ee41a359790aba183cd33e0d0a9fcb22044dbb0f3c841f2adb301e9168"
+  },
+  {
+   "rel": "handover/opfs.json",
+   "size": 2,
+   "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+   "rel": "kurokawa-backup.json",
+   "size": 174,
+   "sha256": "73e558737e90ef022bdeebe9b44e7f43c9947fab4632d69709b55ad7dfffab7c"
+  },
+  {
+   "rel": "paths.json",
+   "size": 72,
+   "sha256": "f21bba8c5d9f64fc6b3274008b7bae0e64d5245127ead8944a6c5b7d41edf847"
+  },
+  {
+   "rel": "shell/custom-icon.png",
+   "size": 9,
+   "sha256": "3fd37197e91e0b2cc29edce5ba07ec90a98144f34c1ac9b33efbc765ccbbd7fe"
+  },
+  {
+   "rel": "shell/window-state.json",
+   "size": 45,
+   "sha256": "9c32bbf4a6bacb5fb3d36e08ad52cb257a6124942023513769ce96d6274ff9b3"
+  }
+ ]
+}

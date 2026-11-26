@@ -1,6 +1,15 @@
 # Kurokawa Reader — Rust port plan for PC
 
 Written 2026-11-12. For the Reader's computer app (Windows, macOS, Linux). The Tools app has its own plan (`docs/RUST-PORT.md`); the two share ground work.
+
+> **Status, 2026-11-26.** The computer app is the Rust (Tauri) one, and only that one is built, tested and offered: the Electron
+> program is gone from the release workflow (`release.yml`), from the dependencies (`apps/reader/desktop/package.json` keeps
+> only the version the release gate reads and 7zip-bin, which the Rust build bundles) and from the repository's shell sources (`main.cjs`, `preload.cjs`, the archive reader, the hand-over writer and the
+> switch's decisions are no longer shipped; the last two and the preload are kept, frozen, under `apps/reader/tests/support/` as
+> test support). Old Electron copies still reach the new app: every release carries the frozen **bridge build** (`v0.67.0`)
+> forward — `scripts/bridge-assets.json`, `scripts/bridge-assets.mjs`, `docs/RELEASING.md` — under the names those copies look
+> for; the bridge makes the hand-over and installs the Rust build. A made-up hand-over folder, as the bridge leaves it, is
+> committed (`apps/reader/tests/data/handover-bridge/`) and read by `tests/handover-fixture.cjs`.
 Starts after the Reader release now being collected, and after or beside the Tools PC stages — the owner decides the order.
 
 ## 1. Goal and non-goals

@@ -152,6 +152,20 @@ What to do:
    send the row's text to the orchestrator.
 3. Never edit a row to hide it. The retry is for timing only, and it is always visible.
 
+## The bridge build: how an old Electron copy still reaches the new app
+
+The Electron program is no longer built. Copies of it still run on people's computers, and each finds its update by file name in the
+newest release: Tools — the first file named `…-win-x64.exe` (not the portable), the first `.dmg`, the first `.AppImage`; the Reader — the
+same, the portable `…-win-x64-portable.exe` for a portable copy, and, on Windows (installed) and Linux (AppImage), `electron-updater`'s
+`latest.yml` / `latest-linux.yml`. The last Electron build, the **bridge build** (Reader `v0.67.0`, Tools `tools-v0.23.0`), makes the hand-over of the
+library and installs the Rust build. So every release repeats its files, byte for byte, under those names.
+
+- `scripts/bridge-assets.json` lists them with the SHA-256 each must have; `scripts/bridge-assets.mjs` reads it (`--list`, `--verify <dir>`, `--fill <dir>`, `--yml <dir> --version <v>`).
+- The release job, after the Rust build and before the checksums, downloads those files from the bridge release with its own token (`gh release download`), **refuses to go on** if a hash is `TODO`, a file is missing or differs, and, for the Reader, writes `latest.yml` and `latest-linux.yml` afresh: the **new** version over the bridge's own installer / AppImage (so `electron-updater` of an old copy sees a newer version, downloads the bridge build and checks the very file it gets). The macOS Electron updater does not exist (a Mac copy opens the `.dmg`), so there is no `latest-mac.yml`.
+- **Before the first release without Electron:** fill the hashes once from the real bridge releases — `gh release download v0.67.0 -D /tmp/rb -p 'KurokawaReader-0.67.0-*'`, `node scripts/bridge-assets.mjs reader --fill /tmp/rb`, the same for `tools-v0.23.0` and `tools` — and commit the result. `node scripts/release-check.mjs <app>` says while any is still `TODO`.
+- The notes' file table lists only the Rust files; the carried files are named in one line as «not downloads to choose», and the releases page hides them from any release that has the Rust files.
+- Nothing of the bridge is ever rebuilt: if its files have to change, that is a new bridge release and a deliberate edit of the list.
+
 ## How a push releases, and the second workflow
 
 A push to `main` starts a release workflow by the paths it changes:

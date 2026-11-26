@@ -1,5 +1,5 @@
 // The hybrid's sign-ins carried (../../PORTING.md «Closed by the hybrid»): the in-app browser's cookies the last
-// Electron build exported into the hand-over (desktop/handover.cjs exportCookies, behind RUST_SWITCH: those that
+// Electron build exported into the hand-over (tests/support/bridge-handover.cjs (frozen) exportCookies, behind RUST_SWITCH: those that
 // outlive the session, in browser-cookies.json — this user's only — with a note naming the hand-over's id, their count
 // and the file's SHA-256) put into this build's browser cookie store when the person takes the hand-over
 // (kt_handover_mark «restored»), then the file overwritten and deleted. Deleted unread when the hand-over is declined

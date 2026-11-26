@@ -1,7 +1,9 @@
 # Porting the Reader's desktop shell to Tauri v2
 
-The Electron shell (`../desktop/`) keeps shipping; this Tauri shell grows beside it, stage by stage
-(`docs/RUST-PORT-READER.md`), until it has every function below, then replaces it. **Stage R0**: the shared crate, the
+This Tauri shell has replaced the Electron one: the Electron program is no longer built, tested or offered (see the status in
+`docs/RUST-PORT-READER.md`; the frozen bridge build every release still carries forward is `scripts/bridge-assets.json`). The text
+below is the history of the port, written while the Electron shell (`../desktop/`) still shipped beside it, and keeps its words; this
+shell grows, stage by stage, until it has every function below. **Stage R0**: the shared crate, the
 Tauri project, the interface opening in it, and the bridge's round trips proven by a self-test in CI. **Stage R1**: the
 engine test — the web app's key cases run in each system's own web view in CI (see «Engine test» below). **Stage R2**:
 files and library — files opened from outside, single instance, file associations, drag and drop, folders by path (see

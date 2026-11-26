@@ -1,0 +1,14 @@
+{
+ "app": "KurokawaReader",
+ "version": 1,
+ "books": [
+  {
+   "id": "b1",
+   "title": "A Made-up Book",
+   "fileName": "made-up.txt"
+  }
+ ],
+ "handover": {
+  "format": 1
+ }
+}

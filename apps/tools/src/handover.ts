@@ -9,7 +9,7 @@
 // from the old data folder, and the hand-over folder goes only when the person asks (after a restore that worked).
 // The Reader's src/handover.ts (stage R6a) is the model: the same folder, marker and checks; Tools keeps no books.
 //
-// The folder (desktop/handover.cjs writes it; desktop-tauri/src-tauri/src/handover.rs finds and reads it):
+// The folder (tests/support/bridge-handover.cjs (frozen) writes it; desktop-tauri/src-tauri/src/handover.rs finds and reads it):
 //   handover/local.json          every localStorage key but the hand-over's own and a downloaded update's path
 //   handover/idb.jsonl           every record of the database, one per line: { store, key, value }
 //   handover/files.json          the database's kept files (store «files»), by the key they are kept under
@@ -22,7 +22,7 @@
 
 import { safeStored } from './settingsSafe';
 
-/* ---------- the shells' halves (desktop/preload.cjs, desktop-tauri/handover-bridge.js) ---------- */
+/* ---------- the shells' halves (tests/support/electron-preload.cjs (frozen), desktop-tauri/handover-bridge.js) ---------- */
 export interface MarkerFile { rel: string; size: number; sha256: string }
 export interface Counts { local: number; records: number; files: number; history: number; addons: number; downloads: number; moving: number; videos: number; lists: number; bytes: number }
 export interface Marker { app: string; kind: 'handover'; format: number; id: string; createdAt: number; from?: { shell?: string; version?: string; platform?: string; portable?: boolean; userData?: string }; counts?: Partial<Counts>; bytes: number; files: MarkerFile[] }

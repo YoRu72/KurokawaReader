@@ -672,23 +672,24 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
     if (n.endsWith('.ipa')) return ['ios', 'ipa'];
     if (/-sha256sums\.txt$/.test(n)) return ['updater'];
     // (From 0.62.0 the computer app is the new, far smaller build: its files are named «windows-…», «.DMG» (upper
-    // case), «.appimage» (lower case), «.deb»; the previous engine's — kept for two versions — «win-x64», «.dmg»,
-    // «.AppImage».)
+    // case), «.appimage» (lower case), «.deb». The previous program's files — «win-x64», «.dmg», «.AppImage» — are in a
+    // release that has the new ones only so that an older copy can update itself to the new app: never offered here.
+    // A release from before the new build has them as its only computer files, and shows them.)
     if (/-windows-x64\.exe$/.test(n)) return ['windows', 'installer'];
     if (/-windows-x64-setup\.exe$/.test(n)) return ['windows', 'classic'];
     if (/-windows-x64-portable\.zip$/.test(n)) return ['windows', 'portable'];
     const old = r.assets && r.assets.some((a) => /-windows-x64|\.DMG$|\.appimage$/.test(a.name));
-    if (n.endsWith('-portable.exe')) return ['windows', old ? 'oldPortable' : 'portable'];
-    if (n.endsWith('.exe')) return ['windows', old ? 'oldInstaller' : 'installer'];
+    if (n.endsWith('-portable.exe')) return old ? ['hidden'] : ['windows', 'portable'];
+    if (n.endsWith('.exe')) return old ? ['hidden'] : ['windows', 'installer'];
     if (name.endsWith('.DMG')) return ['mac', 'dmg'];
-    if (n.endsWith('.dmg')) return ['mac', old ? 'oldDmg' : 'dmg'];
+    if (n.endsWith('.dmg')) return old ? ['hidden'] : ['mac', 'dmg'];
     if (name.endsWith('.appimage')) return ['linux', 'appimage'];
-    if (n.endsWith('.appimage')) return ['linux', old ? 'oldAppimage' : 'appimage'];
+    if (n.endsWith('.appimage')) return old ? ['hidden'] : ['linux', 'appimage'];
     if (n.endsWith('.deb')) return ['linux', 'deb'];
     if (n.endsWith('web.zip')) return ['web', 'webZip'];
     return ['other'];
   };
-  const ORDER = { arm64: 0, v7a: 1, x86: 2, universal: 3, installer: 0, classic: 1, portable: 2, dmg: 0, appimage: 0, deb: 1, oldInstaller: 10, oldPortable: 11, oldDmg: 10, oldAppimage: 10 };
+  const ORDER = { arm64: 0, v7a: 1, x86: 2, universal: 3, installer: 0, classic: 1, portable: 2, dmg: 0, appimage: 0, deb: 1 };
   const PLATS = [['android', 'phone'], ['ios', 'tablet'], ['windows', 'monitor'], ['mac', 'laptop'], ['linux', 'terminal'], ['web', 'globe']];
   const ua = navigator.userAgent; const mine = /android/i.test(ua) ? 'android' : /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1) ? 'ios' : /windows/i.test(ua) ? 'windows' : /mac os x|macintosh/i.test(ua) ? 'mac' : /linux|x11|cros/i.test(ua) ? 'linux' : 'web';
 
@@ -772,8 +773,8 @@ footer { color: var(--muted); font-size: 14px; text-align: center; padding: 24px
       if (p === 'android') { rows = files.map(([k, a]) => fileLink(a, tail(a).replace(/\.apk$/, ''), t(k))).join(''); after = `<p class="hint">${esc(t('androidHint'))}</p>`; }
       else if (p === 'ios') { rows = files.map(([, a]) => fileLink(a, 'IPA', t('ipa'))).join(''); after = `<p class="hint">${esc(t('altstore'))}</p><div class="copy"><code>${esc(ALTSTORE)}</code><button type="button" data-copy="${esc(ALTSTORE)}">${esc(t('copy'))}</button></div>`; }
       else if (p === 'web') rows = `<a class="file" href="${SITE}">${I.open}<span class="t"><b>${esc(t('openWeb'))}</b><span class="sub">${esc(t('webApp'))}</span></span></a>` + files.map(([k, a]) => fileLink(a, a.name, t(k))).join('');
-      else rows = files.map(([k, a]) => fileLink(a, k === 'installer' ? t('installer') : k === 'classic' ? t('classic') : k === 'portable' ? t('portableName') : k === 'appimage' ? 'AppImage' : k === 'deb' ? '.deb' : k === 'dmg' ? 'DMG' : k.startsWith('old') ? t('oldBuild') : tail(a),
-        k === 'portable' ? t('portable') : k === 'installer' ? t('installerSub') : k === 'classic' ? t('classicSub') : k.startsWith('old') ? `${t('oldSub')} · ${tail(a)}` : t(k))).join('');
+      else rows = files.map(([k, a]) => fileLink(a, k === 'installer' ? t('installer') : k === 'classic' ? t('classic') : k === 'portable' ? t('portableName') : k === 'appimage' ? 'AppImage' : k === 'deb' ? '.deb' : k === 'dmg' ? 'DMG' : tail(a),
+        k === 'portable' ? t('portable') : k === 'installer' ? t('installerSub') : k === 'classic' ? t('classicSub') : t(k))).join('');
       html += `<section class="card plat${p === mine ? ' mine' : ''}"><div class="plat-h"><div class="badge-ic">${I[ic]}</div><div><h3>${esc(t(p))}</h3>${p === mine ? `<div class="you">${esc(t('thisDevice'))}</div>` : ''}</div></div><div class="rows">${rows}</div>${after}</section>`;
     }
     $('plats').innerHTML = html;

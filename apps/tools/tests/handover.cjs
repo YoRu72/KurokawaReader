@@ -1,8 +1,8 @@
 // node tests/handover.cjs: the hand-over from the Electron build to the Rust build (Tools' stage P9 — src/handover.ts,
-// src/ui/handoversheet.ts, desktop/handover.cjs, desktop-tauri/handover-bridge.js; the Rust side's file rules are
+// src/ui/handoversheet.ts, tests/support/bridge-handover.cjs (frozen), desktop-tauri/handover-bridge.js; the Rust side's file rules are
 // kt-core's handoverlogic.rs's own tests, and CI runs the real thing: tests/handover-electron.cjs then
 // desktop-tauri/handovercheck.js). The built app (dist/) in Chromium, in two shapes:
-//   «Electron»: window.kurokawaHandover as preload.cjs gives it, its channels answered here by desktop/handover.cjs's
+//   «Electron»: window.kurokawaHandover as preload.cjs gives it, its channels answered here by tests/support/bridge-handover.cjs (frozen)'s
 //     own install() — over a pretend ipcMain, in a temp «userData» folder, with a pretend aria2 (JSON-RPC answers, its
 //     session file written as aria2 writes it);
 //   «Rust»: desktop-tauri/bridge.js and handover-bridge.js over a pretend Tauri IPC whose kt_handover_* commands do what
@@ -23,7 +23,7 @@ const ROOT = path.resolve(__dirname, '..');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-handover-'));
 // (The pointer goes to the Rust build's data folder: here, under a temp XDG_DATA_HOME — never the real one.)
 process.env.XDG_DATA_HOME = path.join(TMP, 'xdg'); delete process.env.KT_HANDOVER_FREE;
-const H = require('../desktop/handover.cjs');
+const H = require('./support/bridge-handover.cjs');
 const DIST = path.join(ROOT, 'dist');
 const BRIDGE = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'bridge.js'), 'utf8');
 const HBRIDGE = fs.readFileSync(path.join(ROOT, 'desktop-tauri', 'handover-bridge.js'), 'utf8');

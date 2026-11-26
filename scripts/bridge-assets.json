@@ -1,0 +1,24 @@
+{
+  "_about": "The frozen Electron «bridge» builds' files that every release carries forward, so an OLD installed Electron copy of either app still finds, under the names it looks for, a file to update to — the bridge build, which hands the library over and installs the Rust build. scripts/bridge-assets.mjs reads this file; the release workflows download the files from `tag`, refuse any whose SHA-256 is not the one listed here, and publish them with the new release. The Electron program is no longer built.",
+  "_todo": "THE SHA-256 VALUES BELOW ARE NOT FILLED YET. Until they are, `node scripts/bridge-assets.mjs <app> --verify <dir>` refuses and so does the release workflow (nothing is released). Fill them from a real download of the two bridge releases: `gh release download <tag> -D <dir>` (for the names listed) then `node scripts/bridge-assets.mjs <app> --fill <dir>`; check the names against the release page first and delete a line the release does not have. The value «TODO» is the marker the script looks for.",
+  "reader": {
+    "tag": "v0.67.0",
+    "version": "0.67.0",
+    "assets": [
+      { "name": "KurokawaReader-0.67.0-win-x64.exe", "role": "win-installer", "sha256": "TODO" },
+      { "name": "KurokawaReader-0.67.0-win-x64.exe.blockmap", "role": "win-blockmap", "sha256": "TODO" },
+      { "name": "KurokawaReader-0.67.0-win-x64-portable.exe", "role": "win-portable", "sha256": "TODO" },
+      { "name": "KurokawaReader-0.67.0-mac-universal.dmg", "role": "mac-dmg", "sha256": "TODO" },
+      { "name": "KurokawaReader-0.67.0-linux-x86_64.AppImage", "role": "linux-appimage", "sha256": "TODO" }
+    ]
+  },
+  "tools": {
+    "tag": "tools-v0.23.0",
+    "version": "0.23.0",
+    "assets": [
+      { "name": "KurokawaTools-0.23.0-win-x64.exe", "role": "win-installer", "sha256": "TODO" },
+      { "name": "KurokawaTools-0.23.0-mac-universal.dmg", "role": "mac-dmg", "sha256": "TODO" },
+      { "name": "KurokawaTools-0.23.0-linux-x86_64.AppImage", "role": "linux-appimage", "sha256": "TODO" }
+    ]
+  }
+}

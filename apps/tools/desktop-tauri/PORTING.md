@@ -1,7 +1,9 @@
 # Porting the desktop shell to Tauri v2
 
-The Electron shell (`../desktop/`) keeps shipping; this Tauri shell grows beside it until it has every channel
-below, then replaces it. Why: Electron bundles are ~84 MB (Windows), ~87 MB (Linux AppImage), ~168 MB (macOS
+This Tauri shell has replaced the Electron one: the Electron program is no longer built, tested or offered (see the status in
+`docs/RUST-PORT.md`; the frozen bridge build every release still carries forward is `scripts/bridge-assets.json`). The text below
+is the history of the port, written while the Electron shell (`../desktop/`) still shipped beside it, and keeps its words; this shell grows
+until it has every channel below. Why: Electron bundles are ~84 MB (Windows), ~87 MB (Linux AppImage), ~168 MB (macOS
 universal dmg). A Tauri shell uses the system's web view (WebView2 / WKWebView / WebKitGTK), so the shell itself
 should be a few MB; `.github/workflows/tauri-check.yml` prints the real sizes.
 

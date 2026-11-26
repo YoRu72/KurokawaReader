@@ -1,6 +1,6 @@
 // window.kurokawaHandover for the Tauri shell (stage R6a): the hand-over's reading half — the folder the last Electron
 // build left found, checked, read file by file, what became of it kept, its space freed when the reader asks
-// (src-tauri/src/handover.rs). The writing half is the Electron build's (desktop/preload.cjs, desktop/handover.cjs);
+// (src-tauri/src/handover.rs). The writing half is the Electron build's (tests/support/electron-preload.cjs (frozen), tests/support/bridge-handover.cjs (frozen));
 // the page's side is src/handover.ts. Run by main.rs after bridge.js, before the page's own scripts. Its own name, not
 // one of kurokawaDesktop's, so the bridge keeps exactly the preload's names (tests/tauribridge.cjs).
 (function () {

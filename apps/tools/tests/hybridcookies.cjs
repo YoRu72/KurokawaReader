@@ -1,4 +1,4 @@
-// The hybrid's Electron half (desktop-tauri/PORTING.md «Closed by the hybrid»): desktop/handover.cjs exportCookies —
+// The hybrid's Electron half (desktop-tauri/PORTING.md «Closed by the hybrid»): tests/support/bridge-handover.cjs (frozen) exportCookies —
 // what the bridge build hands the Rust build of the in-app browser's sign-ins — on made-up cookies in a temp folder:
 // only those that outlive the session and have not expired, the file this user's only (POSIX 0600), a note naming the
 // hand-over with the file's size and SHA-256 (what cookiecarry.rs checks), nothing written into the marker; dropCookies
@@ -7,7 +7,7 @@
 'use strict';
 const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os'); const crypto = require('node:crypto'); const assert = require('node:assert/strict');
 const ROOT = path.join(__dirname, '..');
-const H = require(path.join(ROOT, 'desktop', 'handover.cjs'));
+const H = require(path.join(ROOT, 'tests', 'support', 'bridge-handover.cjs'));
 
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-hybrid-cookies-'));
@@ -46,15 +46,7 @@ const H = require(path.join(ROOT, 'desktop', 'handover.cjs'));
   assert.equal(await H.tidyCookies(root, Date.now() + 15 * 86400000), true); assert.ok(!fs.existsSync(path.join(hd, H.COOKIE_FILE)), 'an old one wiped');
   fs.rmSync(root, { recursive: true, force: true });
 
-  // (The bridge build: the switch on; the export and the tidy still only behind it.)
-  const main = fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
-  assert.ok(/^const RUST_SWITCH = true;$/m.test(main), 'RUST_SWITCH on (the bridge build)');
-  const sw = main.indexOf('async function rustSwitch('); const end = main.indexOf('\n}\n', sw);
-  const calls = [...main.matchAll(/Handover\.(exportCookies|dropCookies)\(/g)].map((m) => m.index);
-  assert.ok(/if \(RUST_SWITCH\) void Handover\.tidyCookies\(/.test(main), 'the tidy only behind RUST_SWITCH');
-  assert.ok(calls.length === 2 && calls.every((i) => i > sw && i < end), 'the export and its wipe only inside rustSwitch');
-  assert.ok(/if \(RUST_SWITCH\) \{ const r = await rustSwitch\(e\)/.test(main), 'rustSwitch runs only with the switch on');
   // (The ffmpeg pack's digest of the program itself, for the adoption — packadopt.rs.)
   assert.ok(/unpackedSha256: crypto\.createHash\('sha256'\)\.update\(raw\)/.test(fs.readFileSync(path.join(ROOT, 'desktop', 'ffmpeg-pack.cjs'), 'utf8')), 'ffmpeg-pack.cjs gives unpackedSha256');
-  console.log('hybridcookies: ok — 2 of 6 made-up cookies exported (session, expired, ending soon, nameless left out), 0600, the note\'s size and SHA-256, wiped; the export only behind RUST_SWITCH; the pack\'s program digest');
+  console.log('hybridcookies: ok — 2 of 6 made-up cookies exported (session, expired, ending soon, nameless left out), 0600, the note\'s size and SHA-256, wiped; the pack\'s program digest');
 })().catch((e) => { console.error(e); process.exit(1); });

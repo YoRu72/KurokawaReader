@@ -1,4 +1,4 @@
-// The Reader's Tauri shell, its bridge (desktop-tauri/bridge.js) against the Electron one (desktop/preload.cjs):
+// The Reader's Tauri shell, its bridge (desktop-tauri/bridge.js) against the Electron one (tests/support/electron-preload.cjs, frozen):
 //  1. in plain node: the bridge has exactly the preload's names; each ported function sends the preload's arguments
 //     under the command named after its channel (kr:a-b → kr_a_b); bytes come back as an ArrayBuffer, errors as
 //     Errors, a page's text in its own charset; each stub answers as bridge.js documents and never reaches the IPC;
@@ -35,7 +35,7 @@ function loadPreload() {
   };
   const orig = Module._load;
   Module._load = function (req, ...rest) { return req === 'electron' ? fake : orig.call(this, req, ...rest); };
-  try { delete require.cache[require.resolve(path.join(ROOT, 'desktop', 'preload.cjs'))]; require(path.join(ROOT, 'desktop', 'preload.cjs')); } finally { Module._load = orig; }
+  try { delete require.cache[require.resolve(path.join(ROOT, 'tests', 'support', 'electron-preload.cjs'))]; require(path.join(ROOT, 'tests', 'support', 'electron-preload.cjs')); } finally { Module._load = orig; }
   return exposed;
 }
 
@@ -380,16 +380,16 @@ async function nodePart() {
   assert.match(main, /openfile::at_start\(&handle\)/); assert.match(main, /RunEvent::Opened \{ urls \}/);
   const cargo = fs.readFileSync(path.join(TAURI, 'src-tauri', 'Cargo.toml'), 'utf8');
   assert.match(cargo, /^tauri-plugin-single-instance = "2"$/m); assert.match(cargo, /^name = "KurokawaReader"$/m);
-  // (The kinds of file the system opens with the app: Electron's list, desktop/package.json's build.fileAssociations.)
+  // (The kinds of file the system opens with the app: the Electron build's list — frozen in tests/support/electron-file-associations.json.)
   const conf = JSON.parse(fs.readFileSync(path.join(TAURI, 'src-tauri', 'tauri.conf.json'), 'utf8'));
-  const eAssoc = JSON.parse(fs.readFileSync(path.join(ROOT, 'desktop', 'package.json'), 'utf8')).build.fileAssociations;
+  const eAssoc = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'support', 'electron-file-associations.json'), 'utf8'));
   assert.deepEqual(conf.bundle.fileAssociations.map((a) => [a.ext.join(','), a.name, a.role, a.mimeType || null]), eAssoc.map((a) => [a.ext, a.name, a.role, a.mimeType || null]), 'file associations ≠ Electron\'s');
   assert.deepEqual(conf.plugins['deep-link'].desktop.schemes, ['kurokawareader']);
-  // (openargs.rs's DOC_EXT is main.cjs's.)
-  const docExt = /const DOC_EXT = \/\\\.\(([^)]*)\)\$\/i/.exec(fs.readFileSync(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8'))[1];
+  // (openargs.rs's DOC_EXT is the Electron build's, frozen here: the kinds of file a launch argument may be.)
+  const docExt = 'epub|pdf|docx|xlsx|pptx|txt|md|markdown|html?|fb2|odt|cbz|cbr|cb7|cbt|csv|tsv|jpe?g|png|gif|webp|ttf|otf|woff2?|zip|rar|7z|tar';
   const expand = (alt) => alt.split('|').flatMap((x) => (x === 'jpe?g' ? ['jpg', 'jpeg'] : x === 'html?' ? ['html', 'htm'] : x === 'woff2?' ? ['woff', 'woff2'] : [x]));
   const rsExt = [...fs.readFileSync(path.join(src, 'openargs.rs'), 'utf8').match(/pub const DOC_EXT: \[&str; \d+\] = \[([\s\S]*?)\];/)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
-  assert.deepEqual([...rsExt].sort(), expand(docExt).sort(), 'openargs.rs DOC_EXT ≠ main.cjs DOC_EXT');
+  assert.deepEqual([...rsExt].sort(), expand(docExt).sort(), 'openargs.rs DOC_EXT ≠ the Electron build\'s frozen list');
   assert.equal(Number(/DOC_EXT: \[&str; (\d+)\]/.exec(fs.readFileSync(path.join(src, 'openargs.rs'), 'utf8'))[1]), rsExt.length);
   for (const [cmd, ks] of Object.entries(sent)) {
     assert.ok(registered.includes(cmd), `${cmd} not registered in main.rs`);

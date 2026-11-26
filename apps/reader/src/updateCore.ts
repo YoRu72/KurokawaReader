@@ -85,7 +85,7 @@ export function versionChange(key: string, now: string): string | null {
 
 /* ---------- the Rust (Tauri) build's files (stage R6b) ---------- */
 // The release files of the Reader's Tauri build, by the names the release workflow gives them — the same as
-// desktop-tauri/src-tauri/src/updatelogic.rs (asset_name) and desktop/rustswitch.cjs (tests/updatenames.cjs keeps
+// desktop-tauri/src-tauri/src/updatelogic.rs (asset_name) and tests/support/bridge-rustswitch.cjs (frozen) (tests/updatenames.cjs keeps
 // the three equal): KurokawaReader-<v>-windows-x64-setup.exe, …-windows-x64-portable.zip, …-macos-universal.DMG,
 // …-linux-x64.appimage, …-linux-x64.deb, and the checksums …-SHA256SUMS.txt. None of them matches the patterns every
 // Electron copy's page picks its file by (updates.ts suitableAsset: /win-x64.*\.exe$/, the first /\.dmg$/, the first

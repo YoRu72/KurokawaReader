@@ -1,6 +1,18 @@
 # Kurokawa Tools — Rust port plan (PC, then mobile)
 
 Written 2026-11-11. Starts when the Reader work (bug hunt, fixes, mobile performance) is done.
+
+> **Status, 2026-11-26.** The computer app is the Rust (Tauri) one, and only that one is built, tested and offered: the Electron
+> program is gone from the release workflow (`release-tools.yml`), from the dependencies (`apps/tools/desktop/package.json` keeps
+> only the version the release gate reads, 7zip-bin, ffmpeg-static for the computer ffmpeg pack, and webtorrent for
+> `tests/webstream.cjs`) and from the repository's shell sources (`main.cjs`, `preload.cjs`, the hand-over writer and the
+> switch's decisions are no longer shipped; the last two and the preload are kept, frozen, under `apps/tools/tests/support/` as
+> test support). Old Electron copies still reach the new app: every release carries the frozen **bridge build** (`tools-v0.23.0`)
+> forward — `scripts/bridge-assets.json`, `scripts/bridge-assets.mjs`, `docs/RELEASING.md` — under the names those copies look
+> for; the bridge makes the hand-over and installs the Rust build. A made-up hand-over folder, as the bridge leaves it, is
+> committed (`apps/tools/tests/data/handover-bridge/`) and read by `tests/handover-fixture.cjs`. What is left of the Electron-era
+> engine modules in `apps/tools/desktop/*.cjs` is kept only because tests and shared vectors still run them as the reference of
+> the Rust ports (they ship in nothing).
 Stage status is kept in this file; channel-level status for the PC shell is in
 `apps/tools/desktop-tauri/PORTING.md` (branch `work-tauri`).
 

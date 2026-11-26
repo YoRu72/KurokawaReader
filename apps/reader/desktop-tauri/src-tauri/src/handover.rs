@@ -1,5 +1,5 @@
 // The hand-over's reading half (stage R6a of docs/RUST-PORT-READER.md; ../../PORTING.md «The hand-over»): the folder
-// the last Electron build wrote (desktop/handover.cjs) found — through the pointer it left in this build's data
+// the last Electron build wrote (tests/support/bridge-handover.cjs (frozen)) found — through the pointer it left in this build's data
 // folder, beside a portable .exe, or in Electron's own data folder —, checked (each file's size, then its SHA-256
 // against the marker), read file by file for the page (src/handover.ts brings it into this web view's profile), what
 // became of it kept (restored, declined: never offered twice), and deleted only when the reader asks («Free the
