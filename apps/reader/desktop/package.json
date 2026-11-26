@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-reader-desktop",
-  "version": "0.67.0",
+  "version": "0.68.0",
   "description": "KurokawaReader for Windows, macOS and Linux \u2014 no Electron here any more: this file keeps the version the release gate reads (scripts/release-check.mjs) and 7zip-bin, whose 7za the Rust build bundles (the release workflow copies it from node_modules/7zip-bin).",
   "private": true,
   "author": "KurokawaReader",
