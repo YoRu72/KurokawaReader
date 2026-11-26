@@ -626,6 +626,8 @@ export const ar: Strings = {
   paperPhone: 'هاتف',
   fontSizeDefault: 'الافتراضي',
   convKeepImages: 'مع الصور', docxResult: 'الناتج', docxResultEdit: 'سهولة التحرير', docxResultExact: 'مطابقة الشكل',
+  docxFonts: 'الخطوط', docxFontsInside: 'داخل الملف', docxFontsFolder: 'في مجلد', docxWithFonts: 'مستند Word وخطوطه، العدد: {n}',
+  docxFontsHint: 'خطوط الملف نفسها، مقصورةً على ما استُعمل من حروفها. ثبِّتها لترى المستند على هيئته.',
   convertManyBody: '{n} من الكتب، واحدًا بعد واحد، إلى الصيغة التي تختارها.',
   convertManyDone: 'حُوِّل {n}',
   saveZip: 'حفظ في ملف ZIP',

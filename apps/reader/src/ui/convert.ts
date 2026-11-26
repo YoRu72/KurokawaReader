@@ -7,6 +7,7 @@ import { db, stampAfter, type Book } from '../db';
 import { importFiles } from '../library';
 import { shareFile, downloadBlob, fileNameField } from './share';
 import { runJob } from '../jobs';
+import { fontCount, resultFile, folderFiles, folderName } from '../fontfolder';
 
 /** Choose which book to convert (library tools button), then open the sheet for it. */
 export async function convertPicker(books: Book[], pickFile: () => void): Promise<void> {
@@ -40,7 +41,19 @@ function optionsRow(): { el: HTMLElement; get(): ConvOptions; showPdf(v: boolean
     return h('button', { type: 'button', role: 'radio', 'aria-pressed': String(on), 'aria-checked': String(on), onclick: () => { o.docxResult = v; save(); drawSeg(); } }, l);
   }));
   drawSeg();
-  const docxOnly = h('div', { class: 'field conv-docx-opts', hidden: true }, h('span', { class: 'label' }, t('docxResult')), seg);
+  // (PDF → Word's «Fonts»: the PDF's own fonts inside the file — as it has always been — or as files in a folder
+  // beside it; the line under it only while «In a folder» is chosen.)
+  const fontsSeg = h('div', { class: 'segmented conv-fonts', role: 'radiogroup', 'aria-label': t('docxFonts') });
+  const fontsHint = h('p', { class: 'hint conv-fonts-hint', hidden: true }, t('docxFontsHint'));
+  const drawFonts = () => {
+    fontsSeg.replaceChildren(...([['embed', t('docxFontsInside')], ['folder', t('docxFontsFolder')]] as ['embed' | 'folder', string][]).map(([v, l]) => {
+      const on = (o.docxFonts ?? 'embed') === v;
+      return h('button', { type: 'button', role: 'radio', 'aria-pressed': String(on), 'aria-checked': String(on), onclick: () => { o.docxFonts = v; save(); drawFonts(); } }, l);
+    }));
+    fontsHint.hidden = (o.docxFonts ?? 'embed') !== 'folder';
+  };
+  drawFonts();
+  const docxOnly = h('div', { class: 'field conv-docx-opts', hidden: true }, h('span', { class: 'label' }, t('docxResult')), seg, h('span', { class: 'label', style: { marginTop: '6px' } }, t('docxFonts')), fontsSeg, fontsHint);
   // (Keep pictures: a switch, as the app's on/off settings are.)
   const el = h('div', { class: 'conv-opts-wrap' }, h('label', { class: 'row conv-images' }, h('span', { class: 'label' }, t('convKeepImages')), h('span', { class: 'switch' }, images, h('i'))), h('div', { class: 'scan-filters conv-opts' }, pdfOnly), docxOnly);
   return { el, get: () => ({ ...o }), showPdf: (v) => { pdfOnly.hidden = !v; }, showDocx: (v) => { docxOnly.hidden = !v; } };
@@ -61,7 +74,7 @@ export function convertManySheet(books: Book[], onDone?: () => void): void {
   let busy = false;
   const run = async (target: Target) => {
     if (busy) return; busy = true; grid.querySelectorAll('button').forEach((b) => { b.disabled = true; }); track.hidden = false; result.hidden = true;
-    const outs: { blob: Blob; name: string; book: Book }[] = []; const failed: string[] = [];
+    const outs: { blob: Blob; name: string; book: Book; fonts?: import('../fontfolder').FolderFont[] }[] = []; const failed: string[] = [];
     for (let i = 0; i < list.length; i++) {
       const book = list[i];
       status.textContent = `${i + 1}/${list.length} · ${book.title}`;
@@ -71,8 +84,8 @@ export function convertManySheet(books: Book[], onDone?: () => void): void {
     status.textContent = t('convertManyDone', { n: outs.length }) + (failed.length ? ` — ${t('convertFailed')}: ${failed.join('، ')}` : '');
     const tg = TARGETS.find((x) => x.id === target)!;
     result.replaceChildren(
-      h('button', { class: 'btn small primary', type: 'button', onclick: async () => { const { default: JSZip } = await import('jszip'); const zip = new JSZip(); for (const o of outs) zip.file(o.name, o.blob); downloadBlob(await zip.generateAsync({ type: 'blob', compression: 'STORE' }), `${tg.label}.zip`); } }, icon('download'), t('saveZip')),
-      h('button', { class: 'btn small', type: 'button', onclick: () => { for (const o of outs) downloadBlob(o.blob, o.name); } }, icon('download'), t('saveEach')),
+      h('button', { class: 'btn small primary', type: 'button', onclick: async () => { const { default: JSZip } = await import('jszip'); const zip = new JSZip(); for (const o of outs) { zip.file(o.name, o.blob); if (o.fonts?.length) for (const f of folderFiles(o.fonts)) zip.file(`${folderName(o.name)}/${f.name}`, f.data); } downloadBlob(await zip.generateAsync({ type: 'blob', compression: 'STORE' }), `${tg.label}.zip`); } }, icon('download'), t('saveZip')),
+      h('button', { class: 'btn small', type: 'button', onclick: async () => { for (const o of outs) { const f = await resultFile(o); downloadBlob(f.blob, f.name); } } }, icon('download'), t('saveEach')),
       h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; await importFiles(outs.map((o) => new File([o.blob], o.name, { type: o.blob.type }))); toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')));
     result.hidden = false; busy = false; grid.querySelectorAll('button').forEach((b) => { b.disabled = false; });
   };
@@ -106,11 +119,14 @@ export function convertSheet(book: Book, onDone?: () => void): void {
       // (Its name can be chosen: the field shows the one made for it.)
       nf.suggest(out.name); nf.el.hidden = false;
       const name = () => nf.name(out.name);
-      const tell = () => { status.textContent = t('convertDone', { name: `\u2068${name()}\u2069`, size: `\u2068${formatBytes(blob.size)}\u2069` }); };
+      // (A document with its fonts is one result: what is shared or saved is the document and its fonts folder in one ZIP.)
+      const nFonts = fontCount(out); const whole = () => resultFile({ blob, name: name(), fonts: out.fonts });
+      const total = blob.size + (nFonts ? out.fonts!.reduce((a, f) => a + f.data.length, 0) : 0);
+      const tell = () => { status.textContent = t('convertDone', { name: `\u2068${name()}\u2069`, size: `\u2068${formatBytes(total)}\u2069` }) + (nFonts ? ` · ${t('docxWithFonts', { n: nFonts })}` : ''); };
       tell(); nf.input.oninput = tell;
       result.replaceChildren(
-        h('button', { class: 'btn small primary', type: 'button', onclick: () => void shareFile(blob, name(), book.title) }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),
-        h('button', { class: 'btn small', type: 'button', onclick: () => downloadBlob(blob, name()) }, icon('download'), t('saveFile')),
+        h('button', { class: 'btn small primary', type: 'button', onclick: async () => { const f = await whole(); void shareFile(f.blob, f.name, book.title); } }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),
+        h('button', { class: 'btn small', type: 'button', onclick: async () => { const f = await whole(); downloadBlob(f.blob, f.name); } }, icon('download'), t('saveFile')),
         h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name(), { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; b.folderAt = stampAfter(b.folderAt); }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
       );
       result.hidden = false;

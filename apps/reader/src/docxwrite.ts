@@ -341,7 +341,7 @@ export class DocxWriter {
 
   /** The package as a JSZip (its parts and pictures in place), ready for the finishing pass and the zip. Its
    *  word/document.xml is a placeholder: the body, written as the sections were added, is documentBlob(). */
-  async pack(fonts: EmbeddedFont[] = []): Promise<JSZip> {
+  async pack(fonts: EmbeddedFont[] = [], carry = true): Promise<JSZip> {
     const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
     const parts = this.hfParts;
@@ -378,6 +378,8 @@ export class DocxWriter {
     const fontRels: string[] = [];
     let fontsXmlOut = '';
     fonts.forEach((f, i) => {
+      // (Fonts that go in a folder beside the file: named in the table, not carried.)
+      if (!carry) { fontsXmlOut += fontEntry(f.name, f); return; }
       const guid = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
       const key = `{${guid.slice(0, 8)}-${guid.slice(8, 12)}-${guid.slice(12, 16)}-${guid.slice(16, 20)}-${guid.slice(20)}}`;
       const kb = (guid.match(/../g) ?? []).map((h) => parseInt(h, 16)).reverse();
@@ -388,7 +390,7 @@ export class DocxWriter {
       fontsXmlOut += fontEntry(f.name, f, `<w:embedRegular r:id="${id}" w:fontKey="${key}"/>`);
     });
     zip.file('word/fontTable.xml', `${XML_HEAD}<w:fonts xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ${NS_W} mc:Ignorable="w14 w15">${fontsXmlOut}</w:fonts>`);
-    zip.file('word/_rels/fontTable.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${fontRels.join('')}</Relationships>`);
+    if (carry) zip.file('word/_rels/fontTable.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${REL_NS}">${fontRels.join('')}</Relationships>`);
     // The package's own parts.
     const title = esc(this.opts.title ?? ''); const creator = esc(this.opts.creator ?? 'KurokawaReader'); const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
     zip.file('docProps/core.xml', `${XML_HEAD}<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${title}</dc:title><dc:creator>${creator}</dc:creator><cp:lastModifiedBy>${creator}</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`);
@@ -405,7 +407,7 @@ export class DocxWriter {
       ...(this.lists.length ? [['/word/numbering.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml']] : []),
       ...(this.notes.length ? [['/word/footnotes.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml']] : []),
     ];
-    zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default ContentType="image/png" Extension="png"/><Default ContentType="image/jpeg" Extension="jpeg"/><Default ContentType="image/jpeg" Extension="jpg"/><Default ContentType="application/vnd.openxmlformats-package.relationships+xml" Extension="rels"/><Default ContentType="application/xml" Extension="xml"/><Default ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont" Extension="odttf"/>${overrides.map(([n, c]) => `<Override ContentType="${c}" PartName="${n}"/>`).join('')}</Types>`);
+    zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default ContentType="image/png" Extension="png"/><Default ContentType="image/jpeg" Extension="jpeg"/><Default ContentType="image/jpeg" Extension="jpg"/><Default ContentType="application/vnd.openxmlformats-package.relationships+xml" Extension="rels"/><Default ContentType="application/xml" Extension="xml"/>${carry ? '<Default ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont" Extension="odttf"/>' : ''}${overrides.map(([n, c]) => `<Override ContentType="${c}" PartName="${n}"/>`).join('')}</Types>`);
     return zip;
   }
 }

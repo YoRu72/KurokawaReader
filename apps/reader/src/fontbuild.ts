@@ -459,13 +459,13 @@ export function writeTrueType(meta: FontMeta, glyphs: Outline[], extra: Map<stri
   return writeSfnt(tables);
 }
 
-export function writeSfnt(tables: Map<string, Uint8Array>): Uint8Array {
+export function writeSfnt(tables: Map<string, Uint8Array>, version = 0x00010000): Uint8Array {
   const tags = [...tables.keys()].sort();
   const n = tags.length;
   let off = 12 + n * 16; const offs: number[] = [];
   for (const t of tags) { offs.push(off); off += (tables.get(t)!.length + 3) & ~3; }
   const out = new Uint8Array(off); const d = dvOf(out);
-  d.setUint32(0, 0x00010000); d.setUint16(4, n);
+  d.setUint32(0, version); d.setUint16(4, n);
   const es = Math.floor(Math.log2(n)); d.setUint16(6, 16 * 2 ** es); d.setUint16(8, es); d.setUint16(10, n * 16 - 16 * 2 ** es);
   const sum = (a: Uint8Array) => { let s = 0; for (let i = 0; i < a.length; i += 4) s = (s + ((a[i] << 24) | ((a[i + 1] ?? 0) << 16) | ((a[i + 2] ?? 0) << 8) | (a[i + 3] ?? 0))) >>> 0; return s; };
   tags.forEach((t, i) => {

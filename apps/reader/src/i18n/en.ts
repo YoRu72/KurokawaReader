@@ -621,6 +621,8 @@ export const en = {
   paperPhone: 'Phone',
   fontSizeDefault: 'Default',
   convKeepImages: 'Keep pictures', docxResult: 'Result', docxResultEdit: 'Easy to edit', docxResultExact: 'Exact look',
+  docxFonts: 'Fonts', docxFontsInside: 'Inside the file', docxFontsFolder: 'In a folder', docxWithFonts: 'Word document + fonts, count: {n}',
+  docxFontsHint: "The PDF's own fonts, cut down to the letters it uses. Install them to see the document as it was.",
   convertManyBody: '{n} books, one after the other, to the format you pick.',
   convertManyDone: '{n} converted',
   saveZip: 'Save as ZIP',

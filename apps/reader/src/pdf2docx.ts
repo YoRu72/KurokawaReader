@@ -3436,13 +3436,23 @@ function endLane(l: { w: Worker; pw: Worker }): void {
   liveWorkers.delete(l.w); liveWorkers.delete(l.pw);
 }
 
-export async function pdfToDocx(book: Book, file: Blob, progress: Progress, password?: string, opts: { exact?: boolean } = {}): Promise<Blob> {
+/** PDF → Word. `opts.fonts`: 'embed' (the default) puts the PDF's own fonts inside the file; 'folder' leaves them out
+ *  (use pdfToDocxWithFonts to get them: here they are not returned). */
+export async function pdfToDocx(book: Book, file: Blob, progress: Progress, password?: string, opts: { exact?: boolean; fonts?: 'embed' | 'folder' } = {}): Promise<Blob> {
+  return (await pdfToDocxWithFonts(book, file, progress, password, opts)).blob;
+}
+
+/** PDF → Word, with the fonts beside the document: for `fonts: 'folder'` the document carries none and names the
+ *  same families; `fonts` are the files to install (src/fontfolder.ts), none when the PDF has no font of its own to
+ *  write. For 'embed' (the default) `fonts` is empty and the document is what pdfToDocx makes. */
+export async function pdfToDocxWithFonts(book: Book, file: Blob, progress: Progress, password?: string, opts: { exact?: boolean; fonts?: 'embed' | 'folder' } = {}): Promise<{ blob: Blob; fonts: import('./fontfolder').FolderFont[] }> {
   p2d.edit = !opts.exact;
+  const sink: FontSink | undefined = opts.fonts === 'folder' ? { fonts: [] } : undefined;
   // Whatever the job opened or drew on is let go when it ends — done, failed or cancelled: pdf.js's documents
   // (and the worker each keeps), the canvases kept from page to page, the pictures met. (A document left open by a
   // job that failed half-way held its whole file and pdf.js's caches until the app was closed.)
   const docs = new Set<{ destroy(): unknown }>();
-  try { return await convertPdf(book, file, progress, password, (o) => { docs.add(o); return o; }); }
+  try { const blob = await convertPdf(book, file, progress, password, (o) => { docs.add(o); return o; }, sink); return { blob, fonts: sink?.fonts ?? [] }; }
   finally {
     for (const o of docs) { try { await o.destroy(); } catch { /* gone */ } }
     for (const c of [graphicsCanvas, scanCanvas]) if (c) { c.width = 0; c.height = 0; }
@@ -3451,7 +3461,9 @@ export async function pdfToDocx(book: Book, file: Blob, progress: Progress, pass
   }
 }
 
-async function convertPdf(book: Book, file: Blob, progress: Progress, password: string | undefined, track: <T extends { destroy(): unknown }>(o: T) => T): Promise<Blob> {
+/** Where a conversion for «Fonts: in a folder» puts the font files it wrote (none: the fonts go inside the document). */
+type FontSink = { fonts: import('./fontfolder').FolderFont[] };
+async function convertPdf(book: Book, file: Blob, progress: Progress, password: string | undefined, track: <T extends { destroy(): unknown }>(o: T) => T, sink?: FontSink): Promise<Blob> {
   const pdfjs = await loadPdfjs();
   const { yieldNow } = await import('./jobs');
   const RES = new URL('./pdfjs/', import.meta.url).href;
@@ -3979,7 +3991,31 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
   const embedded: import('./docxwrite').EmbeddedFont[] = [];
   const extraFaces: { family: string; face: Face; data: Uint8Array }[] = [];
   const sigs = new Map<string, Os2>();
+  // «Fonts: in a folder»: each face written as a font file of its own, under the name the runs will ask for (a font
+  // that goes by a name a computer already has — Times New Roman — under one of its own: «… (PDF)»); the document
+  // carries none, and a family none of whose faces could be written is left as the PDF named it.
+  const asked = new Map<string, string>();
+  if (sink) {
+    const { folderFamily, standaloneFont, postScriptName } = await import('./fontstandalone');
+    const taken = new Set<string>([...faces.keys(), ...[...fonts.values()].map((f) => f.family), ...usedChars.keys()].map((x) => x.split('|')[0]));
+    const ps = new Set<string>();
+    for (const [family, m] of faces) {
+      const name = folderFamily(family, taken); taken.add(name);
+      const mine: import('./fontfolder').FolderFont[] = [];
+      for (const [face, data] of m) { const style = face === 'BoldItalic' ? 'Bold Italic' : face; const f = standaloneFont(data, name, style, postScriptName(name, style, ps)); if (f) mine.push(f); }
+      if (mine.length) { sink.fonts.push(...mine); asked.set(family, name); }
+    }
+  }
   for (const [family, m] of faces) {
+    if (sink) {
+      // (A family with no file written is not in the document's table as a font it carries: its runs keep their name.)
+      const name = asked.get(family); if (!name) continue;
+      const first = (m.get('Regular') ?? m.values().next().value)!;
+      const arabic = [...(usedChars.get(`${family}|Regular`) ?? []), ...(usedChars.get(`${family}|Bold`) ?? [])].some((c) => c >= 0x600 && c <= 0x6ff);
+      embedded.push({ name, data: first, arabic, ...declOf(family, first), alt: undefined });
+      const os2 = readOs2(first); if (os2) sigs.set(name, os2);
+      continue;
+    }
     const arabic = [...(usedChars.get(`${family}|Regular`) ?? []), ...(usedChars.get(`${family}|Bold`) ?? [])].some((c) => c >= 0x600 && c <= 0x6ff);
     const first = (m.get('Regular') ?? m.values().next().value)!;
     const firstFace = [...m.entries()].find(([, v]) => v === first)![0];
@@ -3995,6 +4031,8 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
   if (TT) TT.build = performance.now() - tb;
   // Fonts that are neither carried in the file nor common: named after a common font of the same kind.
   const subs = new Map<string, { latin: string; cs: string; ea: string }>();
+  // (The runs ask for the folder's name of a font that goes by another there.)
+  for (const [family, name] of asked) if (name !== family) { const e = name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); subs.set(family, { latin: e, cs: e, ea: e }); }
   for (const key of usedChars.keys()) {
     const family = key.split('|')[0];
     if (faces.has(family) || subs.has(family)) continue;
@@ -4016,9 +4054,9 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
     await writer.mapBody((xml) => xml.replace(/w:line="\u00a7(\d+)\u00a7"/g, (_m, i: string) => { const x = lineFix[+i]; return `w:line="${Math.max(120, Math.min(720, Math.round(240 * x.pitch / (x.size * factorOf(x.font)))))}"`; }), yieldNow);
   }
   const tc0 = performance.now();
-  const zip = await writer.pack(embedded);
+  const zip = await writer.pack(embedded, !sink);
   memMark('pack');
-  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs, declOf, writer, yieldNow);
+  await finishDocx(zip as unknown as ZipLike, rtlDoc, extraFaces, sigs, subs, declOf, writer, yieldNow, !sink);
   if (TT) TT.compile = performance.now() - tc0;
   memMark('finish');
   progress('build', 95);
@@ -4047,7 +4085,7 @@ function fixBodyXml(xml: string, rtl: boolean, ea: { n: number }): string {
 const positionsInHalfPoints = (xml: string): string => xml.replace(/<w:position w:val="(-?[\d.]+)pt"\/>/g, (_m, v: string) => `<w:position w:val="${Math.round(+v * 2)}"/>`);
 
 /** Word details the library has no option for: right-to-left sections, footnote numbers restart on each page. */
-async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>(), declOf?: (name: string) => import('./docxwrite').FontDecl, writer?: { mapBody(fix: (xml: string) => string, pause?: () => Promise<void>): Promise<void> }, pause?: () => Promise<void>): Promise<void> {
+async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: string; face: string; data: Uint8Array }[] = [], sigs = new Map<string, Os2>(), subs = new Map<string, { latin: string; cs: string; ea: string }>(), declOf?: (name: string) => import('./docxwrite').FontDecl, writer?: { mapBody(fix: (xml: string) => string, pause?: () => Promise<void>): Promise<void> }, pause?: () => Promise<void>, carry = true): Promise<void> {
   // (The document's own XML — word/document.xml, a placeholder in the zip — was written by the writer piece by
   // piece and changed as it was written (fixBodyXml); what is done to it here is done to its pieces.)
   const DOC = 'word/document.xml';
@@ -4077,7 +4115,7 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
       table = table.replace(re, `$1<w:embed${face} r:id="${id}" w:fontKey="${key}"/>$2`);
     }
     zip.file('word/fontTable.xml', table);
-    zip.file('word/_rels/fontTable.xml.rels', rels);
+    if (carry) zip.file('word/_rels/fontTable.xml.rels', rels);
   }
   if (!writer) { const docXml = await zip.file(DOC)!.async('string'); zip.file(DOC, fixBodyXml(docXml, rtl, { n: 1 })); }
   // Full-width punctuation keeps its full width (as the PDF sets it): no squeezing that would fit more
@@ -4140,7 +4178,7 @@ async function finishDocx(zip: ZipLike, rtl: boolean, extraFaces: { family: stri
   if (settings) {
     let s = await settings.async('string');
     if (!s.includes('w:footnotePr')) s = s.replace(/<w:settings([^>]*)>/, (m) => `${m}<w:footnotePr><w:numRestart w:val="${notesRestart ? 'eachPage' : 'continuous'}"/></w:footnotePr>`);
-    if (ft && !s.includes('w:embedTrueTypeFonts')) s = s.replace(/<w:settings([^>]*)>/, (m) => `${m}<w:embedTrueTypeFonts/>`);
+    if (ft && carry && !s.includes('w:embedTrueTypeFonts')) s = s.replace(/<w:settings([^>]*)>/, (m) => `${m}<w:embedTrueTypeFonts/>`);
     zip.file('word/settings.xml', s);
   }
 }
