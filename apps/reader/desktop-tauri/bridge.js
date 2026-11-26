@@ -445,6 +445,11 @@
     scanFolder: function (root, exts) { return call('kr_scan_folder', { p: str(root), exts: (Array.isArray(exts) ? exts : []).map(str) }); },
     cancelDownload: function (id) { return call('kr_download_cancel', { id: str(id) }); },
     menuText: function (labels) { return call('kr_menu', { labels: obj(labels) }); },
+    // saveFiles(o) — PDF → Word «In a folder»: a converted document and its fonts written into folders the reader picked
+    // (pickFolder), in steps: { op: 'plan', dir, items: [{ rel, size, sha }] } → the name each file gets («name (2).ext» where
+    // another is; nothing to write where the same bytes are there); { op: 'part', dir, rel, b64, first, last }; { op: 'undo',
+    // dir, rels, dirs } (what a failed save made, taken away); { op: 'open', p } (a folder shown). src-tauri/src/savefiles.rs.
+    saveFiles: function (o) { return call('kr_save_files', { o: obj(o) }); },
   };
   if (boot.os && boot.os !== 'win32') EXTRA.printFile = function (b64, name) { return call('kr_print_file', { b64: str(b64), name: str(name || 'document.pdf') }); };
   Object.keys(EXTRA).forEach(function (k) { api[k] = EXTRA[k]; });

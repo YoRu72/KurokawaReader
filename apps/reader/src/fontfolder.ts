@@ -37,6 +37,9 @@ export const folderName = (docName: string): string => `${safeFileName(docName.r
 /** How many files a result's folder holds (0: a plain document). */
 export const fontCount = (out: WithFonts): number => (out.fonts?.length ? folderFiles(out.fonts).length : 0);
 
+/** The name of the ZIP a document with fonts is saved under (the document's name, .zip). */
+export const zipName = (docName: string): string => `${safeFileName(docName.replace(/\.docx$/i, ''), 100)}.zip`;
+
 /** What is saved or shared of a result: a plain document as it is; a document with fonts, one ZIP (stored) holding
  *  the document and its fonts folder, named after the document. */
 export async function resultFile(out: { blob: Blob; name: string } & WithFonts): Promise<{ blob: Blob; name: string }> {
@@ -45,5 +48,5 @@ export async function resultFile(out: { blob: Blob; name: string } & WithFonts):
   const { zipWrite } = await import('./zipstore');
   const base = safeFileName(out.name.replace(/\.docx$/i, ''), 100); const dir = folderName(out.name);
   const blob = await zipWrite([{ name: `${base}.docx`, blob: out.blob, store: true }, ...files.map((f) => ({ name: `${dir}/${f.name}`, blob: f.data, store: true }))], { type: 'application/zip' });
-  return { blob, name: `${base}.zip` };
+  return { blob, name: zipName(out.name) };
 }

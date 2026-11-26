@@ -7,7 +7,8 @@ import { db, stampAfter, type Book } from '../db';
 import { importFiles } from '../library';
 import { shareFile, downloadBlob, fileNameField } from './share';
 import { runJob } from '../jobs';
-import { fontCount, resultFile, folderFiles, folderName } from '../fontfolder';
+import { fontCount, resultFile, folderFiles, folderName, zipName } from '../fontfolder';
+import { folderWhere, readPlaces, writePlaces, pickPlace, sendResult, openFolder, canOpenFolder, type Place, type Places, type Sent } from '../savefolder';
 
 /** Choose which book to convert (library tools button), then open the sheet for it. */
 export async function convertPicker(books: Book[], pickFile: () => void): Promise<void> {
@@ -21,7 +22,7 @@ export async function convertPicker(books: Book[], pickFile: () => void): Promis
 
 /** The options row: the paper and type size (for a PDF), and whether pictures come along; for a PDF made into
  *  Word, the result — easy to edit or the page's exact look; remembered. */
-function optionsRow(): { el: HTMLElement; get(): ConvOptions; showPdf(v: boolean): void; showDocx(v: boolean): void } {
+function optionsRow(withPlaces = false): { el: HTMLElement; get(): ConvOptions; places(): Places; showPdf(v: boolean): void; showDocx(v: boolean): void } {
   const KEY = 'kr.convert';
   let o: ConvOptions = { paper: 'a4', images: true };
   try { o = { ...o, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as ConvOptions) }; } catch { /* defaults */ }
@@ -44,6 +45,23 @@ function optionsRow(): { el: HTMLElement; get(): ConvOptions; showPdf(v: boolean
   // (PDF → Word's «Fonts»: the PDF's own fonts inside the file — as it has always been — or as files in a folder
   // beside it; the line under it only while «In a folder» is chosen.)
   const fontsSeg = h('div', { class: 'segmented conv-fonts', role: 'radiogroup', 'aria-label': t('docxFonts') });
+  // (Where the file goes — the document into a folder the reader chose, its fonts into another, or by default beside it —:
+  // the computer's Rust shell and the phone only; the web keeps its ZIP, and no row is drawn there. Remembered.)
+  let places: Places = withPlaces ? readPlaces() : {};
+  const placeBox = h('div', { class: 'conv-places' });
+  const drawPlaces = () => {
+    placeBox.replaceChildren(); placeBox.hidden = true;
+    if (!withPlaces || !folderWhere()) return;
+    const row = (cls: string, label: string, p: Place | undefined, none: string, set: (v: Place | undefined) => void, enabled = true): HTMLElement => h('div', { class: `conv-place ${cls}` },
+      h('span', { class: 'label' }, label),
+      h('div', { class: 'conv-place-line' },
+        h('span', { class: p ? 'conv-place-val' : 'conv-place-val none', dir: 'auto', title: p?.dir ?? '' }, p ? p.label : none),
+        h('button', { class: 'btn tonal', type: 'button', disabled: !enabled, onclick: () => void pickPlace().then((v) => { if (v) { set(v); writePlaces(places); drawPlaces(); } }) }, t('convChoose')),
+        p ? h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('convClear'), title: t('convClear'), onclick: () => { set(undefined); writePlaces(places); drawPlaces(); } }, icon('close')) : null));
+    placeBox.append(row('conv-place-doc', t('convSaveTo'), places.doc, t('convPlaceNone'), (v) => { places.doc = v; if (!v) places.fonts = undefined; }));
+    if ((o.docxFonts ?? 'embed') === 'folder') placeBox.append(row('conv-place-fonts', t('convFontsFolder'), places.fonts, t('convFontsBeside'), (v) => { places.fonts = v; }, !!places.doc));
+    placeBox.hidden = false;
+  };
   const fontsHint = h('p', { class: 'hint conv-fonts-hint', hidden: true }, t('docxFontsHint'));
   const drawFonts = () => {
     fontsSeg.replaceChildren(...([['embed', t('docxFontsInside')], ['folder', t('docxFontsFolder')]] as ['embed' | 'folder', string][]).map(([v, l]) => {
@@ -51,12 +69,13 @@ function optionsRow(): { el: HTMLElement; get(): ConvOptions; showPdf(v: boolean
       return h('button', { type: 'button', role: 'radio', 'aria-pressed': String(on), 'aria-checked': String(on), onclick: () => { o.docxFonts = v; save(); drawFonts(); } }, l);
     }));
     fontsHint.hidden = (o.docxFonts ?? 'embed') !== 'folder';
+    drawPlaces();
   };
   drawFonts();
-  const docxOnly = h('div', { class: 'field conv-docx-opts', hidden: true }, h('span', { class: 'label' }, t('docxResult')), seg, h('span', { class: 'label', style: { marginTop: '6px' } }, t('docxFonts')), fontsSeg, fontsHint);
+  const docxOnly = h('div', { class: 'field conv-docx-opts', hidden: true }, h('span', { class: 'label' }, t('docxResult')), seg, h('span', { class: 'label', style: { marginTop: '6px' } }, t('docxFonts')), fontsSeg, fontsHint, placeBox);
   // (Keep pictures: a switch, as the app's on/off settings are.)
   const el = h('div', { class: 'conv-opts-wrap' }, h('label', { class: 'row conv-images' }, h('span', { class: 'label' }, t('convKeepImages')), h('span', { class: 'switch' }, images, h('i'))), h('div', { class: 'scan-filters conv-opts' }, pdfOnly), docxOnly);
-  return { el, get: () => ({ ...o }), showPdf: (v) => { pdfOnly.hidden = !v; }, showDocx: (v) => { docxOnly.hidden = !v; } };
+  return { el, get: () => ({ ...o }), places: () => ({ ...places }), showPdf: (v) => { pdfOnly.hidden = !v; }, showDocx: (v) => { docxOnly.hidden = !v; } };
 }
 
 /** Several books to one format, one after the other; the results saved one by one or together as a ZIP. */
@@ -97,9 +116,9 @@ export function convertManySheet(books: Book[], onDone?: () => void): void {
 export function convertSheet(book: Book, onDone?: () => void): void {
   const sh = openSheet(t('convertFile'), t('close'));
   sh.body.style.fontFamily = 'var(--font-ui)';
-  const opts = optionsRow();
+  const opts = optionsRow(book.format === 'pdf');
   const targets = TARGETS.filter((x) => x.from(book.format) && !(x.id === 'epub' && book.format === 'epub'));
-  const status = h('p', { class: 'src' }, t('convertBody', { title: book.title, format: book.format.toUpperCase() }));
+  const status = h('p', { class: 'src' }, t('convertBody', { title: `\u2068${book.title}\u2069`, format: `\u2068${book.format.toUpperCase()}\u2069` }));
   const bar = h('span'); const track = h('div', { class: 'progress-bar', hidden: true }, bar);
   const result = h('div', { class: 'convert-result', hidden: true });
   const nf = fileNameField(); nf.el.hidden = true;
@@ -113,20 +132,34 @@ export function convertSheet(book: Book, onDone?: () => void): void {
     try {
       const label = TARGETS.find((x) => x.id === target)?.label ?? target;
       // A job: it goes on (with a notification) when this sheet is closed or the app is left.
-      const out = await runJob(`${book.title} → ${label}`, (report) => convertBook(book, target, (msg, pct) => { if (sh.el.isConnected) progress(msg, pct); if (pct !== undefined) report(pct); }, password, opts.get()), () => sh.el.isConnected);
+      const out = await runJob(`${book.title} → ${label}`, (report) => convertBook(book, target, (msg, pct) => { if (sh.el.isConnected) progress(msg, pct); if (pct !== undefined) report(pct); }, password, opts.get()).then((o) => ({ ...o, folder: book.format === 'pdf' && target === 'docx' })), () => sh.el.isConnected);
       if (!out) return;
       const { blob } = out;
       // (Its name can be chosen: the field shows the one made for it.)
       nf.suggest(out.name); nf.el.hidden = false;
       const name = () => nf.name(out.name);
-      // (A document with its fonts is one result: what is shared or saved is the document and its fonts folder in one ZIP.)
+      // (A document with its fonts is one result. Where a folder is chosen for it (the computer's Rust shell, the phone), Save
+      // writes the real document and its fonts folder there; else — and for Share — it is one ZIP holding both.)
       const nFonts = fontCount(out); const whole = () => resultFile({ blob, name: name(), fonts: out.fonts });
+      const toFolder = () => target === 'docx' && book.format === 'pdf' && !!opts.places().doc && !!folderWhere();
       const total = blob.size + (nFonts ? out.fonts!.reduce((a, f) => a + f.data.length, 0) : 0);
-      const tell = () => { status.textContent = t('convertDone', { name: `\u2068${name()}\u2069`, size: `\u2068${formatBytes(total)}\u2069` }) + (nFonts ? ` · ${t('docxWithFonts', { n: nFonts })}` : ''); };
+      // (What is made is told as it is: the .zip where the result is one, the .docx where the document stands alone or goes to a folder.)
+      const tell = () => { status.textContent = t('convertDone', { name: `⁨${nFonts && !toFolder() ? zipName(name()) : name()}⁩`, size: `⁨${formatBytes(total)}⁩` }) + (nFonts ? ` · ${t('docxWithFonts', { n: nFonts })}` : ''); };
       tell(); nf.input.oninput = tell;
+      const iso = (x: string) => `⁨${x}⁩`;
+      const said = (z: Sent) => (z.nothingNew ? t('convSavedNothing', { where: iso(z.docIn) }) : t('convSaved', { where: iso(z.docIn), name: iso(z.docName), size: iso(formatBytes(z.docSize)) }))
+        + (z.fontsCount ? ` · ${t('convSavedFonts', { n: z.fontsCount, where: iso(z.fontsIn) })}` : '') + (z.same && !z.nothingNew ? ` · ${t('convSavedSame', { n: z.same })}` : '');
+      const saveBtn = h('button', { class: 'btn small', type: 'button', onclick: async () => {
+        if (!toFolder()) { const f = await whole(); downloadBlob(f.blob, f.name); return; }
+        saveBtn.disabled = true; result.querySelector('.conv-open')?.remove();
+        try {
+          const z = await sendResult({ blob, name: name(), fonts: out.fonts }, opts.places()); status.textContent = said(z);
+          if (canOpenFolder()) result.append(h('button', { class: 'btn small tonal conv-open', type: 'button', onclick: () => void openFolder(z.docDir) }, icon('folder'), t('convOpenFolder')));
+        } catch (e) { console.warn('[kurokawa] save to the folder failed', e); status.textContent = t('convFolderFailed'); } finally { saveBtn.disabled = false; }
+      } }, icon('download'), t('saveFile'));
       result.replaceChildren(
         h('button', { class: 'btn small primary', type: 'button', onclick: async () => { const f = await whole(); void shareFile(f.blob, f.name, book.title); } }, icon('external'), target === 'kindle' ? t('sendToKindle') : t('shareFile')),
-        h('button', { class: 'btn small', type: 'button', onclick: async () => { const f = await whole(); downloadBlob(f.blob, f.name); } }, icon('download'), t('saveFile')),
+        saveBtn,
         h('button', { class: 'btn small tonal', type: 'button', onclick: async (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; const file = new File([blob], name(), { type: blob.type }); const added = await importFiles([file]); if (added.length) { const folder = (await db.getBook(book.id))?.folderId; if (folder) await db.updateBook(added[0].id, (b) => { b.folderId = folder; b.folderAt = stampAfter(b.folderAt); }); } toast(t('addedToLibrary')); onDone?.(); } }, icon('import'), t('addToLibrary')),
       );
       result.hidden = false;

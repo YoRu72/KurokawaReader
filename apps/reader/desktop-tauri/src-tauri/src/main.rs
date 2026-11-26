@@ -21,6 +21,9 @@ mod handoverlogic;
 mod menu;
 mod openargs;
 mod openfile;
+// (PDF → Word «In a folder»: the document and its fonts written into the folders the reader picked — savefiles.rs, its pure parts savelogic.rs.)
+mod savefiles;
+mod savelogic;
 mod scan;
 mod selftest;
 mod titlebar;
@@ -162,6 +165,7 @@ fn main() {
             winbits::kr_progress,
             winbits::kr_copy_image,
             winbits::kr_print_file,
+            savefiles::kr_save_files,
             winbits::kr_selftest_clipimage,
             menu::kr_menu,
             menu::kr_selftest_command,

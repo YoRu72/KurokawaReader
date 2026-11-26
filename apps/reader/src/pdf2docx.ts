@@ -2405,21 +2405,49 @@ async function buildDocFonts(fonts: Map<string, FontInfo>, store: UseStore, stre
     } catch { /* unreadable: no evidence either way */ }
     return m;
   };
-  const alike = (a: string, b: string): boolean => {
-    const x = drawnBy(a), y = drawnBy(b); let common = 0;
-    for (const [ch, gs] of x) { const o = y.get(ch); if (!o) continue; common++; for (const g of gs) if (o.has(g)) return true; }
-    return common < 3;
+  // (Two subsets are of one face when no character is drawn with different outlines in them: a character each draws
+  // with ONE outline, and another one in the other, is a clash — never merged, whatever else they share. Letters
+  // that take several forms (Arabic) can differ by the forms each subset happens to hold; those are not told apart
+  // that way: the subsets are one face when they share an outline or too few characters meet to tell.)
+  // (Outlines are told the same glyph when they have the same extent, within 12 units of 1000: two subsets of one font drew
+  // 港 of Noto Sans CJK JP from contours made another way — one a unit off here, whole contours cut otherwise there — and
+  // were taken for two fonts. Another font's glyph under the same character differs in its extent.)
+  const extents = new Map<string, [number, number, number, number]>();
+  const extentOf = (k: string): [number, number, number, number] => {
+    let e = extents.get(k); if (e) return e;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const pt of k.split(/[|;]/)) { const c = pt.indexOf(','); const x = +pt.slice(0, c), y = +pt.slice(c + 1); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    e = [x0, y0, x1, y1]; extents.set(k, e); return e;
   };
-  const byFace = new Map<string, string[]>();
+  const sameOutline = (p: string, q: string): boolean => {
+    if (p === q) return true;
+    const a = extentOf(p), b = extentOf(q);
+    return a.every((v, i) => Math.abs(v - b[i]) <= 24);
+  };
+  const anySame = (gs: Set<string>, o: Set<string>): boolean => { for (const g of gs) { if (o.has(g)) return true; for (const h of o) if (sameOutline(g, h)) return true; } return false; };
+  const clash = (a: string, b: string): boolean => {
+    const x = drawnBy(a), y = drawnBy(b);
+    for (const [ch, gs] of x) { const o = y.get(ch); if (o && gs.size === 1 && o.size === 1 && !anySame(gs, o)) { if ((globalThis as { krDebugP2D?: boolean }).krDebugP2D) console.warn('P2D clash', fonts.get(a)!.family, ch, JSON.stringify(extentOf([...gs][0])), JSON.stringify(extentOf([...o][0]))); return true; } }
+    return false;
+  };
+  const alike = (a: string, b: string): boolean => {
+    if (clash(a, b)) return false;
+    const x = drawnBy(a), y = drawnBy(b); let common = 0;
+    for (const [ch, gs] of x) { const o = y.get(ch); if (!o) continue; common++; if (anySame(gs, o)) return true; }
+        return common < 3;
+  };
+  // (A subset joins a group when it is alike to its first member and clashes with none of the others: it was put with
+  // a second one that draws a letter another way when it met only the first.)
+  const byFace = new Map<string, string[][]>();
   const firstName = new Map<string, string>(); // a group's first font → the name its font gets
   const taken = new Set([...fonts.values()].map((f) => f.family));
   for (const [k, f] of used) {
-    const key = `${f.family}|${f.bold}|${f.italic}`; const reps = byFace.get(key);
-    if (!reps) { byFace.set(key, [k]); continue; }
-    const o = reps.find((r) => alike(r, k));
-    if (o) { union(o, k); continue; }
-    reps.push(k);
-    let n = reps.length, name: string; do name = `${f.family} (${n++})`; while (taken.has(name));
+    const key = `${f.family}|${f.bold}|${f.italic}`; const gs = byFace.get(key);
+    if (!gs) { byFace.set(key, [[k]]); continue; }
+    const o = gs.find((m) => alike(m[0], k) && m.every((r) => !clash(r, k)));
+    if (o) { union(o[0], k); o.push(k); continue; }
+    gs.push([k]);
+    let n = gs.length, name: string; do name = `${f.family} (${n++})`; while (taken.has(name));
     taken.add(name); firstName.set(k, name);
   }
   // Legacy fonts are one font when they meet inside words often (a bold face meets the regular one only now
