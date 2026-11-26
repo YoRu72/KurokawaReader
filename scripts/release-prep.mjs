@@ -75,7 +75,7 @@ let notesNext = notesText;
 if (notesText === null) { notesNext = TEMPLATE; say(`create ${rel(notesPath)} from the template (it holds «—» placeholders on purpose: the preflight and the release check refuse it until it is written)`); }
 if (DROP.length || FINISH) {
   if (notesText === null) problems.push(`${rel(notesPath)} does not exist: nothing to drop or finish`);
-  else { const r = editNotes(notesNext, DROP, FINISH); notesNext = r.text; for (const l of r.said) say(l); }
+  else { const r = editNotes(notesNext, DROP, FINISH); notesNext = r.text; for (const l of r.said) say(l); for (const l of r.refuse) problems.push(l); }
 }
 
 // ---------- 3. report, write, verify ----------
@@ -115,13 +115,28 @@ function editNotes(text, drop, finish) {
     keep.push(finish ? l.replace(MARK, '') : l); i++;
   }
   let out = keep.join('\n').replace(/\n{3,}/g, '\n\n');
-  // a heading left with nothing under it goes too
-  const parts = out.split('\n'); const cleaned = [];
-  for (let k = 0; k < parts.length; k++) {
-    if (/^#{1,6}\s/.test(parts[k])) { let n = k + 1; while (n < parts.length && parts[n].trim() === '') n++; if (n >= parts.length || /^#{1,6}\s/.test(parts[n])) { said.push(`empty section removed: ${parts[k]}`); continue; } }
-    cleaned.push(parts[k]);
+  // A heading left with nothing under it goes too. «Nothing» means no text and no sub-heading that stays: a «## New» that is
+  // followed directly by «### …» sub-headings (with text under them) is NOT empty. Taken in rounds, deepest first: removing an
+  // empty «### A» can leave its «## New» empty, and that goes in the next round.
+  const parts = out.split('\n'); const removed = new Set(); const dropped = [];
+  const levelOf = (l) => { const m = l.match(/^(#{1,6})\s/); return m ? m[1].length : 0; };
+  const sectionEnd = (k) => { const lv = levelOf(parts[k]); let n = k + 1; while (n < parts.length && !(levelOf(parts[n]) && levelOf(parts[n]) <= lv)) n++; return n; }; // up to the next heading of the same or a higher level
+  for (let again = true; again;) {
+    again = false;
+    for (let k = parts.length - 1; k >= 0; k--) {
+      if (removed.has(k) || !levelOf(parts[k])) continue;
+      let live = false; for (let n = k + 1; n < sectionEnd(k); n++) if (!removed.has(n) && parts[n].trim() !== '') { live = true; break; }
+      if (!live) { removed.add(k); dropped.push(k); again = true; said.push(`empty section removed: ${parts[k]}`); }
+    }
   }
+  // the guard: nothing this cleanup removed may have had text, or a sub-heading that stays, under it
+  const refuse = [];
+  for (const k of dropped) for (let n = k + 1; n < sectionEnd(k); n++) if (!removed.has(n) && parts[n].trim() !== '') { refuse.push(`would drop «${parts[k]}» but line ${n + 1} («${parts[n].slice(0, 60)}») is under it`); break; }
+  const cleaned = parts.filter((_, k) => !removed.has(k));
   out = cleaned.join('\n'); if (!out.endsWith('\n')) out += '\n';
+  // what stays: the headings of the result, printed before anything is written
+  const keptHeadings = out.split('\n').filter((l) => levelOf(l));
+  said.push(`headings kept (${keptHeadings.length}): ${keptHeadings.map((l) => l.replace(/\s*<!--.*?-->/, '').trim()).join(' | ')}`);
   if (finish) said.push('branch markers removed');
-  return { text: out, said };
+  return { text: out, said, refuse };
 }

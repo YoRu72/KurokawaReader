@@ -1,0 +1,30 @@
+name: Rerun unstarted release jobs
+
+# GitHub sometimes cancels a job before it has run a single step because it found no machine for it (on 25 Nov the Reader
+# release's macOS and iOS jobs, at 15 minutes). A manual «re-run failed jobs» fixed it. This does that once, by itself:
+# when a release run has completed without success, scripts/rerun-unstarted.mjs looks for jobs that concluded «cancelled» with
+# no step at all (and that waited 10 minutes or more) and, if there are any, asks for «re-run failed jobs» for the run.
+#
+# (A workflow of its own, not a last job of the release: the API only re-runs a run that has COMPLETED, and a job inside the run
+# keeps it in progress. The run_attempt guard keeps it from looping: it acts on the first attempt only.)
+on:
+  workflow_run:
+    workflows: ['Release reader', 'Release tools']
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun:
+    name: Re-run jobs that never started
+    if: ${{ github.event.workflow_run.run_attempt == 1 && github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { sparse-checkout: scripts, sparse-checkout-cone-mode: true }
+      - name: Re-run once
+        env: { GITHUB_TOKEN: '${{ github.token }}', RUN_ID: '${{ github.event.workflow_run.id }}' }
+        run: node scripts/rerun-unstarted.mjs "$RUN_ID"
