@@ -1,0 +1,247 @@
+{
+ "meta": {
+  "kind": "invoice",
+  "title": "Invoice 2026-0417",
+  "header": "",
+  "footer": "Payment within 30 days to account 40-12-77 31559284. Tools damaged beyond fair wear are charged at cost.",
+  "dir": "ltr"
+ },
+ "footnotes": {},
+ "blocks": [
+  {
+   "type": "p",
+   "id": "firm",
+   "role": "letterhead",
+   "runs": [
+    {
+     "t": "Brightwater Tool Hire",
+     "b": true
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "firm-addr",
+   "role": "letterhead",
+   "runs": [
+    {
+     "t": "14 Kestrel Yard, Port Amble PA2 7LD"
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "to1",
+   "align": "right",
+   "runs": [
+    {
+     "t": "Invoice to:",
+     "b": true
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "to2",
+   "align": "right",
+   "runs": [
+    {
+     "t": "Marlow and Finch Builders"
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "to3",
+   "align": "right",
+   "runs": [
+    {
+     "t": "22 Orchard Row"
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "to4",
+   "align": "right",
+   "runs": [
+    {
+     "t": "Hollin Vale HV3 9QT"
+    }
+   ]
+  },
+  {
+   "type": "h",
+   "level": 1,
+   "text": "Invoice 2026-0417"
+  },
+  {
+   "type": "p",
+   "id": "date",
+   "runs": [
+    {
+     "t": "Date: 12 March 2026"
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "thanks",
+   "runs": [
+    {
+     "t": "Thank you for your order. The tools below were hired for the Orchard Row site and were all returned on time and in good order."
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "id": "items",
+   "money": [
+    3,
+    4
+   ],
+   "rows": [
+    [
+     {
+      "text": "Group",
+      "header": true
+     },
+     {
+      "text": "Item",
+      "header": true
+     },
+     {
+      "text": "Days",
+      "header": true
+     },
+     {
+      "text": "Rate",
+      "header": true
+     },
+     {
+      "text": "Amount",
+      "header": true
+     }
+    ],
+    [
+     {
+      "text": "Access",
+      "rowspan": 2
+     },
+     {
+      "text": "Tower scaffold"
+     },
+     {
+      "text": "4"
+     },
+     {
+      "text": "25.00"
+     },
+     {
+      "text": "100.00"
+     }
+    ],
+    [
+     {
+      "text": "Step ladder 3 m"
+     },
+     {
+      "text": "4"
+     },
+     {
+      "text": "6.50"
+     },
+     {
+      "text": "26.00"
+     }
+    ],
+    [
+     {
+      "text": "Mixing",
+      "rowspan": 2
+     },
+     {
+      "text": "Cement mixer 120 L"
+     },
+     {
+      "text": "5"
+     },
+     {
+      "text": "18.00"
+     },
+     {
+      "text": "90.00"
+     }
+    ],
+    [
+     {
+      "text": "Spot board"
+     },
+     {
+      "text": "5"
+     },
+     {
+      "text": "2.00"
+     },
+     {
+      "text": "10.00"
+     }
+    ],
+    [
+     {
+      "text": "Delivery and collection",
+      "span": 4
+     },
+     {
+      "text": "35.00"
+     }
+    ]
+   ]
+  },
+  {
+   "type": "p",
+   "id": "sub",
+   "align": "right",
+   "runs": [
+    {
+     "t": "Subtotal 261.00"
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "vat",
+   "align": "right",
+   "runs": [
+    {
+     "t": "VAT 20% 52.20"
+    }
+   ]
+  },
+  {
+   "type": "p",
+   "id": "total",
+   "align": "right",
+   "runs": [
+    {
+     "t": "Total due 313.20",
+     "b": true
+    }
+   ]
+  },
+  {
+   "type": "field",
+   "id": "sign",
+   "label": "Signed:"
+  },
+  {
+   "type": "p",
+   "id": "for",
+   "runs": [
+    {
+     "t": "For Brightwater Tool Hire"
+    }
+   ]
+  }
+ ]
+}

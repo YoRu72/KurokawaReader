@@ -37,7 +37,7 @@ export type UseStore = { seqs: GlyphRuns; seen: Map<string, Set<number>>;
 const USE_CAP = 150000; // glyph uses kept per font (later only for glyphs not seen yet)
 const GAP_CAP = 2000; // word gaps kept per font (spaceEm: a sample from more than the first page or two)
 
-type Piece = { /** For a document to edit: the link the piece stands in (a URL, or #ref of a page in the file). */ link?: string; /** For a document to edit: underlined (its colour), struck, shaded (its colour) — see decorate. */ u?: string; /** a piece kept as drawn: its text */ was?: string; strike?: boolean; shd?: string; text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; raw?: boolean; inked?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
+type Piece = { /** For a document to edit: the link the piece stands in (a URL, or #ref of a page in the file). */ link?: string; /** For a document to edit: underlined (its colour), struck, shaded (its colour) — see decorate. */ u?: string; /** a piece kept as drawn: its text */ was?: string; strike?: boolean; shd?: string; text: string; l: number; r: number; y: number; h: number; font: string; drawnAs?: string; color: string; bold: boolean; hidden?: boolean; sup?: boolean; art?: boolean; codes?: GlyphUse[]; conn?: boolean; ordered?: boolean; keep?: boolean; /** beside a drop cap (see dropCaps): the cap's outer edge */ capEdge?: number; raw?: boolean; inked?: boolean; pic?: { png: Uint8Array; kind?: 'png' | 'jpg'; w: number; h: number; drop: number };
   /** Marks put into this piece's text that the page draws in a colour of their own (a red haraka on a black letter). */
   tints?: { base: string; mark: string; color: string }[] };
 /** OS/2 of a TrueType font: weight, italic, and the Unicode/code-page ranges Word reads as its signature. */
@@ -924,10 +924,33 @@ function pullOpenTables(lines: Line[], hs: { x0: number; x1: number; y: number; 
 /* Layout analysis                                                     */
 /* ------------------------------------------------------------------ */
 
+/** A drop cap: one letter at least twice the height of the text beside it, with two or more lines of smaller text starting
+ *  just right of it (left of it in a right-to-left paragraph) whose baselines lie within its height. Measured on its own, its
+ *  height swallows the lines it stands beside into one line and their words interleave; it is the first letter of the topmost
+ *  of them — moved onto that line's baseline at that line's size, it starts the line's first word. */
+function dropCaps(pieces: Piece[]) {
+  const letters = pieces.filter((p) => /^\p{L}$/u.test(p.text.trim()) && !p.pic); if (!letters.length) return;
+  const sizes = pieces.filter((p) => p.text.trim().length > 1).map((p) => p.h); if (sizes.length < 6) return; const body = median(sizes);
+  for (const c of letters) {
+    if (c.h < body * 2) continue;
+    const rtl = isRtlText(c.text);
+    const beside = pieces.filter((p) => p !== c && p.text.trim() && p.h < c.h * 0.6 && p.y <= c.y + c.h * 0.85 && p.y >= c.y - p.h * 0.4 && (rtl ? p.r <= c.l + 1 && c.l - p.r < c.h * 1.2 : p.l >= c.r - 1 && p.l - c.r < c.h * 1.2));
+    const bases: number[] = []; for (const p of beside) if (!bases.some((b) => Math.abs(b - p.y) < p.h * 0.4)) bases.push(p.y);
+    if (bases.length < 2) continue;
+    const top = Math.max(...bases); const first = beside.filter((p) => Math.abs(p.y - top) < p.h * 0.4); const near = rtl ? Math.max(...first.map((p) => p.r)) : Math.min(...first.map((p) => p.l));
+    // (Its line's first word starts right beside it — the letter's line, not a line that only runs past it.)
+    if (rtl ? c.l - near > c.h * 0.6 : near - c.r > c.h * 0.6) continue;
+    c.y = top; c.h = median(first.map((p) => p.h));
+    // (The lines beside it start where it starts: they are indented only around the letter.)
+    for (const p of beside) p.capEdge = rtl ? c.r : c.l;
+  }
+  pieces.sort((a, b) => b.y - a.y);
+}
 function buildLines(all: Piece[]): Line[] {
   // Drawn spaces join the line they separate words of once the lines are made: they decide nothing.
   const spaces = all.filter((p) => p.text === '\u2009');
   const pieces = all.filter((p) => p.text !== '\u2009').sort((a, b) => b.y - a.y);
+  dropCaps(pieces);
   // Each line is measured from its biggest piece so far: a raised note number met first is no baseline.
   const groups: Piece[][] = []; const ref = new Map<Piece[], Piece>();
   for (const p of pieces) {
@@ -1002,6 +1025,7 @@ function buildLines(all: Piece[]): Line[] {
     let l = Math.min(...ext.map((p) => p.l)), r = Math.max(...ext.map((p) => p.r));
     // (Save a list's bullet kept as drawn — a symbol font's glyph — before the line's first word: the line starts
     // there, where the page has its mark.)
+    for (const p of g) if (p.capEdge !== undefined) { if (rtl) r = Math.max(r, p.capEdge); else l = Math.min(l, p.capEdge); }
     if (ext0.length) for (const p of g) if (p.art && !p.pic?.w && p.r - p.l < size * 0.9 && (rtl ? p.l >= r - 0.5 && p.l - r < size * 3 : p.r <= l + 0.5 && l - p.r < size * 3)) { if (rtl) r = Math.max(r, p.r); else l = Math.min(l, p.l); }
     return { pieces: g, base, size, l, r, rtl };
   }).sort((a, b) => b.base - a.base);
@@ -1131,7 +1155,9 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
   const extras: number[] = [];
   for (const p of pieces) {
     const gl = (p.codes ?? []).filter((u) => u[5] > 0 && u[1] && !/^\s+$/.test(u[1]) && !/\u0640/.test(u[1])).sort((a, b) => a[2] - b[2]);
-    for (let i = 1; i < gl.length; i++) { const a = gl[i - 1], b = gl[i]; const d = b[2] - (a[2] + a[5] * a[4]); if (Math.abs(d) < a[4] * 0.3) extras.push(d); }
+    // (Not between two leader marks — a row of dots to a page number is spaced by the leader, not tracked: counted as
+    // tracking, the line's words lost their spaces.)
+    for (let i = 1; i < gl.length; i++) { const a = gl[i - 1], b = gl[i]; if (/^[.\u00b7\u2024\u2026_\-]$/.test(a[1]) && /^[.\u00b7\u2024\u2026_\-]$/.test(b[1])) continue; const d = b[2] - (a[2] + a[5] * a[4]); if (Math.abs(d) < a[4] * 0.3) extras.push(d); }
   }
   const midCs = extras.length >= 8 ? median(extras) : 0;
   // (Word's letter spacing would part joined Arabic letters: the same narrowing is given as a horizontal scale.)
@@ -1209,7 +1235,10 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
       const cut = Math.min(trim, /\u0640$/.test(lastText) ? lead : lead - 1);
       if (cut > 0) text = text.slice(cut);
     }
-    const look: Omit<Run, 'text'> = { ...(p.link ? { link: p.link } : {}), ...(p.u ? { u: p.u } : {}), ...(p.strike ? { strike: true } : {}), ...(p.shd ? { shd: p.shd } : {}), font: f.family, fk: p.font, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
+    // (A document to edit keeps no page drawing behind its text where the page runs on into the next — a slide's full-bleed
+    // fill is not shown — so text set white or near white, with no shading of its own, would be white on the white page: it
+    // is set in black.)
+    const look: Omit<Run, 'text'> = { ...(p.link ? { link: p.link } : {}), ...(p.u ? { u: p.u } : {}), ...(p.strike ? { strike: true } : {}), ...(p.shd ? { shd: p.shd } : {}), font: f.family, fk: p.font, size: Math.round(p.h * 2) / 2, bold: f.bold || p.bold, italic: f.italic, color: p2d.edit && !p.shd && /^[E-F][0-9A-F][E-F][0-9A-F][E-F][0-9A-F]$/i.test(p.color) ? '000000' : p.color, rtl: !p.raw && (isRtlText(text) || (rtlLine && !/[A-Za-z0-9]/.test(text))), sup: !!p.sup, raise: p.sup && lineBase !== null ? Math.round((p.y - lineBase) * 2) / 2 : undefined, ...(tracked ? { spacing: Math.round(tracked * 4) / 4 } : {}), cs: lineCs };
     // (Marks the page colours apart from their letters: the text cut there, each part a run in its colour.)
     const parts = p.tints ? tintParts(text, p.tints, look.color) : null;
     if (parts) text = parts[0].text;
@@ -1318,6 +1347,8 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     // (For a document to edit: lines set in from the start and well short of the end — a list's item, a note —
     // start where they start, set in; they are not set flush to the far side.)
     else if (p2d.edit && ls.every((l) => startGap(l) < endGap(l))) align = 'start';
+    // (Nor a list item, however far in its mark stands: a bullet beside a picture is set in, not flush to the far side.)
+    else if (p2d.edit && !first.rtl && markerAt(first)) align = 'start';
     else align = 'end';
     let indStart = 0, indEnd = 0, firstLine = 0;
     if (align !== 'center') {
@@ -1479,6 +1510,9 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     if (END_PUNCT.test(textOf(last).trimEnd()) && /^\s*(?:[0-9]{1,3}|[*\u2020\u2021\u00a7])\s*\p{Lu}/u.test(textOf(line))) return why(7);
     // A word broken at the line's end goes on in the next line.
     const lastText = textOf(last).trimEnd();
+    // (A line that leads by a row of dots to a number at its end — a contents entry, a form's fee — is a paragraph of its
+    // own: the next entry starts anew however full the line.)
+    if (/(?:\.\s?){4,}\s*[0-9ivxlcdm][0-9.,ivxlcdm]*$/i.test(lastText) || /\u2026{2,}\s*[0-9][0-9.,]*$/.test(lastText)) return why(16);
     if (/\p{L}[-\u00ad\u2010]$/u.test(lastText) && /^\s*\p{L}/u.test(textOf(line))) return false;
     // A line that had room for the next line's first word ended there on purpose. (The measure: the text's, or the
     // paragraph's own where its lines stop short of it all alike — an indented block, a narrower column.)
@@ -1489,17 +1523,26 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     const ownOk = (last.rtl ? R - own : own - L) >= (R - L) * 0.6;
     const room = centered(last) ? Math.max(...all.map((l) => l.r - l.l)) - (last.r - last.l) : ownOk ? Math.min(endGap(last), last.rtl ? last.l - own : own - last.r) : endGap(last);
     if (room > firstWordW(line) + last.size * 0.6 + tolOf(last) * 0.5) return why(8);
+    // (Lines set flush to the end edge and short — an address over a letter's right side: the room is at their start. A
+    // line that had room there for the next one's first word ended on purpose.)
+    if (!centered(last) && endGap(last) < tolOf(last) && endGap(line) < tolOf(line) && startGap(last) > (R - L) * 0.3 && startGap(last) > firstWordW(line) + last.size * 0.6 + tolOf(last) * 0.5) return why(14);
     // Centred lines go on together; a centred line after one that is not (or the reverse) starts anew.
-    if (centered(line) !== centered(last)) return why(9);
+    // (Save a block set in on both sides — a quotation — whose next line starts where it starts and runs short: its first
+    // line only looks centred.)
+    const quoteGoesOn = centered(last) && !centered(line) && ls.length === 1 && Math.abs(line.l - last.l) < tolOf(line) * 0.5 && line.r < last.r - tolOf(line) && (line.l - L) > line.size * 1.2;
+    if (centered(line) !== centered(last) && !quoteGoesOn) return why(9);
+    // (A centred caption's label starts the next caption: «Figure 1: …» over «Table 1: …».)
+    if (centered(line) && centered(last) && /^\s*(?:figure|fig\.|table|chart|plate|exhibit|\u0634\u0643\u0644|\u062c\u062f\u0648\u0644)\s*[0-9\u0660-\u0669]{1,3}\s*[:.\-\u2013]/iu.test(textOf(line))) return why(15);
     if (centered(line) && centered(last)) return false;
     // A line set in further than the paragraph's lines start is a new paragraph's first line — save the lines
     // after a list item's mark, which start where its text does.
-    const hang = ls.length === 1 && markerAt(last);
+    // (Or after a reference's label, «[2] Rowntree, A. …»: its next lines hang under its text.)
+    const hang = ls.length === 1 && (markerAt(last) || /^\s*\[[0-9]{1,3}\]\s/.test(textOf(last)));
     if (!hang && startGap(line) > (ls.length > 1 ? Math.min(...ls.slice(1).map(startGap)) : startGap(last)) + tolOf(line)) return why(10);
     if (hang && startGap(line) < startGap(last) - tolOf(line)) return why(11);
     // (After a paragraph of one line set in — its first line's indent, where this page's paragraphs go on at their
     // edge — a line set in as far is the next paragraph's first.)
-    if (ls.length === 1 && !hang) { const cs = contsDir.get(`${line.rtl}|${Math.round(line.size)}`); if (cs && startGap(last) > median(cs) + tolOf(last) * 0.5 && startGap(line) > startGap(last) - tolOf(line) * 0.5) return why(12); }
+    if (ls.length === 1 && !hang && !quoteGoesOn) { const cs = contsDir.get(`${line.rtl}|${Math.round(line.size)}`); if (cs && startGap(last) > median(cs) + tolOf(last) * 0.5 && startGap(line) > startGap(last) - tolOf(line) * 0.5) return why(12); }
     if (ls.length > 1 && startGap(line) < Math.min(...ls.slice(1).map(startGap)) - tolOf(line) && startGap(last) - startGap(line) > tolOf(line)) return why(13);
     return false;
   };
@@ -1824,6 +1867,11 @@ function mergeAcrossPages(pages: PageModel[]): void {
     // before ends mid-sentence, a word or a comma.)
     const caseless = !/[\p{Lu}\p{Ll}]/u.test(ft.slice(0, 1));
     if (!/^\p{Ll}/u.test(ft) && !(caseless && /\p{L}/u.test(ft.slice(0, 1)))) continue;
+    // (A note whose number goes over with the words goes with them: Word's footnote is written where its number is, and
+    // the page it leaves would print it in its flow, its number nowhere. Not when the page before has a note of that number.)
+    const moved = new Set(first.runs.filter((r) => r.note !== undefined).map((r) => r.note!));
+    if (moved.size && (!realNotes(b) || a.notes.some((n) => moved.has(n.num)))) continue;
+    if (moved.size) { a.notes.push(...b.notes.filter((n) => moved.has(n.num))); b.notes = b.notes.filter((n) => !moved.has(n.num)); if (!b.notes.length) b.notesRaw = []; }
     first.runs[0] = { ...first.runs[0], lj: true, br: false };
     last.runs.push(...first.runs);
     fb.list.shift(); b.cont = true;
@@ -1842,7 +1890,7 @@ function flowPages(pages: PageModel[]): void {
   for (let k = 0; k + 1 < pages.length; k++) {
     const a = pages[k], b = pages[k + 1];
     if (a.low === undefined || a.placed?.length || b.placed?.length || a.vert || b.vert || a.w !== b.w || a.h !== b.h) continue;
-    if (a.low - floor <= 1.5 * (a.lowPitch ?? 14)) b.cont = true;
+        if (a.low - floor <= 1.5 * (a.lowPitch ?? 14)) b.cont = true;
   }
   for (let k = 1; k < pages.length; k++) {
     const a = pages[k - 1], b = pages[k];
@@ -1930,6 +1978,9 @@ function structure(pages: PageModel[], outline: { title: string; depth: number; 
     if (b.kind !== 'p' || !b.runs.length) continue; const t = textOf(b);
     if (!t || t.length > 150 || lines(b) > 2 || /[.,;:]$/.test(t) || LIST_MARK.test(t) || /^\d+$/.test(t)) continue;
     if (!/\p{L}/u.test(t)) continue;
+    // (Nor two labels a wide gap parts — a form's columns, «Emergency contact      Club use only»: a heading's only tab
+    // follows its number.)
+    { const ti = b.runs.findIndex((r) => r.tab !== undefined); if (ti > 0 && !/^\s*[0-9ivxIVX.]+\s*$/.test(b.runs.slice(0, ti).map((r) => r.text).join(''))) continue; }
     const big = b.size >= bodySize * 1.12, strong = bold(b) && b.size >= bodySize * 0.95 && t.length < 80;
     if (big || strong) cands.push({ b, page: k, key: Math.round(b.size * 2) / 2 + (bold(b) ? 0.25 : 0) });
   } });
@@ -1956,6 +2007,8 @@ function structure(pages: PageModel[], outline: { title: string; depth: number; 
   // ---- lists
   type Item = { b: Para; kind: 'bullet' | 'number'; fmt: string; text: string; start: number; at: number; mark: string; font?: string };
   const markOf = (b: Para): Item | null => {
+    // (A line of marks and nothing else — an ornament, «* * *» — is no list item: nothing follows its mark.)
+    if (!b.runs.some((r) => r.art) && !/[\p{L}\p{N}]/u.test(b.runs.map((r) => r.text).join(''))) return null;
     const i = b.runs.findIndex((r) => r.text.trim() || r.art); if (i < 0) return null;
     const r = b.runs[i];
     // (A bullet kept as drawn — a symbol font's glyph — is the list's mark: the glyph it stands for, Word's own.)
@@ -2011,7 +2064,8 @@ function structure(pages: PageModel[], outline: { title: string; depth: number; 
       group = [];
     };
     // (Numbers without a stop — "1 Calibrate", "2 Run" — make a list only as a run of them counting up.)
-    const bare = (b: Block) => (b.kind === 'p' ? /^\s*([0-9]{1,3})\s+\p{L}/u.exec(textOf(b))?.[1] : undefined);
+    // (Not contents entries — a row of dots to a page number at the end: «1 The Lamp Keeper . . . 1» is no list item.)
+    const bare = (b: Block) => (b.kind === 'p' && !/(?:\.\s?){4,}\s*[0-9ivxlcdm][0-9.,ivxlcdm]*\s*$/i.test(textOf(b)) ? /^\s*([0-9]{1,3})\s+\p{L}/u.exec(textOf(b))?.[1] : undefined);
     const counted = new Set<Block>();
     for (let k = 0; k + 1 < bs.length; k++) { const a = bare(bs[k]), n = bare(bs[k + 1]); if (a && n && +n === +a + 1) { counted.add(bs[k]); counted.add(bs[k + 1]); } }
     for (const b of bs) {
@@ -2061,6 +2115,9 @@ function sortFurniture(pages: PageModel[]): void {
     const keys = top.map(key).filter(Boolean);
     if (!keys.length) return; // (a number or a mark alone stays where it was put)
     for (let j = Math.max(0, k - 4); j <= Math.min(pages.length - 1, k + 4); j++) if (j !== k && keys.some((x) => heads[j].has(x))) return;
+    // (A head that repeats the title of a heading on its page or one near — a chapter's title over its pages, «Low Water» over
+    // «2 Low Water» — is a running head too, met once when the chapter is short.)
+    for (let j = Math.max(0, k - 4); j <= Math.min(pages.length - 1, k + 4); j++) for (const b of pages[j].body.slice(0, 4)) if (b.kind === 'p' && b.size > Math.max(...top.map((f) => f.size)) * 1.15) { const hk = b.runs.map((r) => r.text).join('').replace(/[\s\u0640\u064B-\u065F\u0670\u06D6-\u06ED.,:;!?\u060C\u061B\u061F()[\]{}\u00ab\u00bb\-\u2013\u2014*0-9\u0660-\u0669\u06F0-\u06F9]/g, ''); if (hk && keys.some((x) => x.length >= 4 && hk.endsWith(x) && hk.length <= x.length + 12)) return; }
     // (The text's first line keeps its place: the room between the lines put back and it goes before it.)
     pg.body[0].before += Math.max(0, pg.m.top - u.bottom);
     pg.body.unshift(...u.blocks);
@@ -2208,10 +2265,19 @@ function splitNotes(blocks: Block[]): Note[] {
   }
   return notes;
 }
+/** One reference per note: where several raised numbers name the same note of the page — an author's affiliation mark,
+ *  an exponent, then the note's own number in the text — the last in reading order is the note's; the others stay raised
+ *  text (made notes, each became a footnote of its own, empty). */
+function oneRefPerNote(blocks: Block[]) {
+  const last = new Map<number, Run>();
+  for (const b of blocks) for (const runs of b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []) for (const r of runs) if (r.note !== undefined) last.set(r.note, r);
+  for (const b of blocks) for (const runs of b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []) for (const r of runs) if (r.note !== undefined && last.get(r.note) !== r) delete r.note;
+}
 /** Note references in blocks (small raised numbers that name a note of the page); whether every note is referenced. */
 function markNoteRefs(blocks: Block[], notes: Note[]): boolean {
   const nums = new Set(notes.map((n) => n.num)); const refs = new Set<number>();
   for (const b of blocks) for (const runs of b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []) for (const r of runs) { const m = r.sup && DIGITS.exec(r.text); if (m && nums.has(toInt(m[1]))) { r.note = toInt(m[1]); refs.add(r.note); } }
+  oneRefPerNote(blocks);
   return notes.length > 0 && notes.every((n) => n.num >= 0 && refs.has(n.num));
 }
 
@@ -2992,7 +3058,12 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   // is settled across the pages, and a line that turns out to be neither goes back into the text: see
   // sortFurniture.)
   const nearGap = (gap: number, next: Line) => gap > Math.max(pitchOf(next.size) * 0.85, next.size * 1.5);
-  const cutTop = (i: number) => ((body[i].base > H * 0.88 || (body[i].base > H * 0.75 && folio(body[i]))) && body[i].base - body[i + 1].base > pitchOf(body[i + 1].size) * 1.2 && sparse(body[i]))
+  // (A head set smaller than the text under it stands apart by its size: the white between its baseline and the next line's
+  // top a little over its own size will do — Writer sets its header's line about 1.15 pitches over the text, and a title
+  // set close under a small head has a pitch of its own far over the gap.)
+  const apart = (i: number) => { const a = body[i], b = body[i + 1], gap = a.base - b.base; return a.size <= b.size * 0.9 && a.base > H * 0.88 ? gap - b.size * 0.75 > a.size * 0.8 && gap > pitchOf(a.size) : gap > pitchOf(b.size) * 1.2; };
+  // (A little lower when a wide gap — over two pitches — parts it from the text: TeX's books set by lines leave a deep top margin.)
+  const cutTop = (i: number) => ((body[i].base > H * 0.88 || (body[i].base > H * 0.75 && folio(body[i])) || (body[i].base > H * 0.84 && body[i].base - body[i + 1].base > pitchOf(body[i + 1].size) * 2.2)) && apart(i) && sparse(body[i]))
     || (body[i].base > H * 0.85 && nearGap(body[i].base - body[i + 1].base, body[i + 1]) && edgeFolio(body[i]));
   // (For a document to edit, a further line is the head's only when it stands nearer the head than the text: the
   // first lines of a page set close under a short head are the text's.)
@@ -3009,6 +3080,8 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
   const preGrids = body.length > 1 ? pullGrids(body, findShapes(pdfjs, ol, true), W, H).filter((l) => l.grid).map((l) => l.grid!) : [];
   const inGrid = (l: Line) => preGrids.some((g) => l.base < g.ys[0] + 1 && l.base > g.ys[g.ys.length - 1] - 1 && l.l > g.xs[0] - 2 && l.r < g.xs[g.xs.length - 1] + 2);
   while (body.length > 1 && footer.length < 2 && cutBottom(body.length - 1) && nearerFoot() && !inGrid(body[body.length - 1])) footer.unshift(body.pop()!);
+  // (A page of nothing but its number — a blank left page of a book — has that number for furniture, not for text.)
+  if (body.length === 1 && !footer.length && folio(body[0]) && (body[0].base < H * 0.25 || body[0].base > H * 0.75)) (body[0].base > H / 2 ? header : footer).push(body.pop()!);
   // Columns: a gutter down the middle splits the text into regions — full-width lines (titles, an abstract)
   // and runs of lines set in two columns.
   // (A ruled table's columns are not the page's: its lines are left out when looking for a gutter, or a table of
@@ -3095,6 +3168,16 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
       const lowL = Math.min(...r.left!.map((l) => l.base)), lowR = Math.min(...r.right!.map((l) => l.base));
       const cut = Math.max(lowL, lowR) - 1.5 * median(r.orig!.map((l) => l.size));
       const tail = r.orig!.filter((l) => l.base < cut); if (!tail.length) continue;
+      // (Unless they go on with that side's text: four lines or more, the first at its pitch from its last line above, most
+      // of them filled out to its edges — a long column beside a short one, its lower part read before the other column.)
+      const side = tail.every((l) => !crosses(l) && l.r <= g0 + 1) ? r.left! : tail.every((l) => !crosses(l) && l.l >= g1 - 1) ? r.right! : null;
+      if (side && tail.length >= 4) {
+        const above = side.filter((l) => l.base >= cut), sz = median(side.map((l) => l.size));
+        if (above.length) {
+          const lastAbove = Math.min(...above.map((l) => l.base)), firstTail = Math.max(...tail.map((l) => l.base)), colL = Math.min(...above.map((l) => l.l)), colR = Math.max(...above.map((l) => l.r));
+          if (lastAbove - firstTail <= sz * 2.6 && tail.filter((l) => l.r >= colR - sz * 3 && l.l <= colL + sz * 3).length >= tail.length / 2) continue;
+        }
+      }
       r.orig = r.orig!.filter((l) => l.base >= cut); r.left = r.left!.filter((l) => l.base >= cut); r.right = r.right!.filter((l) => l.base >= cut);
       raw.splice(i + 1, 0, { full: tail });
     }
@@ -3243,6 +3326,7 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const rowsRuns = b.kind === 'p' ? [b.runs] : b.rows.flat();
     for (const runs of rowsRuns) for (const r of runs) { const m = r.sup && DIGITS.exec(r.text); if (m && nums.has(toInt(m[1]))) r.note = toInt(m[1]); }
   }
+  oneRefPerNote(bodyBlocks);
   if (p2d.edit) {
     // (A document to edit: the notes' separator goes when the notes become Word's footnotes, which draw their own.)
     const refs = new Set<number>(); for (const b of bodyBlocks) for (const runs of b.kind === 'p' ? [b.runs] : b.kind === 'grid' ? b.rows.flat() : []) for (const r of runs) if (r.note !== undefined) refs.add(r.note);
@@ -3790,7 +3874,9 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
     // with frames before a table).
     const page: import('./docxwrite').PageSetup = { width: Math.round(pg.w * PT), height: Math.round(pg.h * PT), margin: { top: Math.round(pg.m.top * PT), bottom: Math.round(pg.m.bottom * PT), left: Math.round(pg.m.left * PT), right: Math.round(pg.m.right * PT), header: Math.round(pg.m.header * PT), footer: Math.round(footerDist * PT), gutter: 0 } };
     const header = { xml: headerXml || emptyPara, part: hdr };
-    const footer = footerXml ? { xml: footerXml, part: ftr } : undefined;
+    // (A page without a foot still has a footer of its own, empty: given none, its section shows the previous section's —
+    // a page number printed twice where the page's foot is pinned in its frame. A hairline: it takes no room from the text.)
+    const footer = { xml: footerXml || hairline(0), part: ftr };
     if (pg.vert) {
       // Vertical writing: the page's text flows top to bottom, columns right to left; the margins are where its
       // columns stand, the line pitch the distance between columns, a paragraph's first column set lower by its
