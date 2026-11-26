@@ -126,7 +126,7 @@ function readPara(D, p, ctx) {
     R.sig = rp ? JSON.stringify(rp) : ''; R.sz = rp && kid(rp, 'w:sz') ? +attr(kid(rp, 'w:sz'), 'w:val') : null; R.plain = r.kids.every((c) => c.tag === 'w:rPr' || c.tag === 'w:t'); R.field = fieldStack.length > 0;
     for (const c of r.kids) {
       if (c.tag === 'w:t') R.text += textOf(c);
-      else if (c.tag === 'w:tab' || c.tag === 'w:br' || c.tag === 'w:noBreakHyphen') { R.text += c.tag === 'w:noBreakHyphen' ? '-' : ' '; if (c.tag === 'w:tab') R.tab = true; }
+      else if (c.tag === 'w:tab' || c.tag === 'w:br' || c.tag === 'w:noBreakHyphen') { R.text += c.tag === 'w:noBreakHyphen' ? '-' : ' '; if (c.tag === 'w:tab') R.tab = true; if (c.tag === 'w:br' && !c.attrs['w:type']) R.br = true; }
       else if (c.tag === 'w:footnoteReference' || c.tag === 'w:endnoteReference') { D.footRefs++; R.text += String(D.footRefs); R.foot = true; }
       else if (c.tag === 'w:instrText') { const f = fieldStack[fieldStack.length - 1]; if (f) f.instr += textOf(c); }
       else if (c.tag === 'w:fldChar') {

@@ -11,9 +11,11 @@
    "lists_real": 0.98,
    "table_cells": 0.98,
    "table_rtl": 0.98,
-   "verse": 0.48,
+   "verse": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "latin_order": 0.48,
+   "sup_false": 0.98
   },
   "arabic-lo": {
    "text_acc": 0.98,
@@ -27,21 +29,25 @@
    "table_rtl": 0.98,
    "verse": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "latin_order": 0.98,
+   "sup_false": 0.98
   },
   "arabic-xelatex": {
-   "text_acc": 0.936,
+   "text_acc": 0.97,
    "text_rec": 0.888,
-   "para_f1": 0.754,
+   "para_f1": 0.812,
    "headings_rec": 0.78,
    "headings_level": 0,
    "headings_prec": 0.78,
    "lists_real": 0.98,
    "table_cells": 0.897,
    "table_rtl": 0.98,
-   "verse": 0.48,
+   "verse": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "latin_order": 0.98,
+   "sup_false": 0.98
   },
   "book-lo": {
    "text_acc": 0.928,
@@ -56,7 +62,9 @@
    "toc_leaders": 0.98,
    "dropcap": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "page_fit": 0.79,
+   "sup_false": 0.98
   },
   "book-xelatex": {
    "text_acc": 0.953,
@@ -71,8 +79,10 @@
    "toc_leaders": 0.98,
    "dropcap": 0.98,
    "hyphen_page": 0.98,
-   "pages": 0,
-   "lo_opens": 0.98
+   "pages": 0.98,
+   "lo_opens": 0.98,
+   "page_fit": 0.788,
+   "sup_false": 0.98
   },
   "form-lo": {
    "text_acc": 0.467,
@@ -86,7 +96,8 @@
    "checkboxes": 0,
    "grid": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "sup_false": 0.98
   },
   "form-wk": {
    "text_acc": 0.414,
@@ -99,8 +110,9 @@
    "fields": 0,
    "checkboxes": 0,
    "grid": 0,
-   "pages": 0.48,
-   "lo_opens": 0.98
+   "pages": 0.98,
+   "lo_opens": 0.98,
+   "sup_false": 0.98
   },
   "invoice-chrome": {
    "text_acc": 0.759,
@@ -115,7 +127,8 @@
    "emphasis": 0.344,
    "fields": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "sup_false": 0.98
   },
   "invoice-lo": {
    "text_acc": 0.759,
@@ -130,12 +143,13 @@
    "emphasis": 0.344,
    "fields": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "sup_false": 0.98
   },
   "paper-lo": {
    "text_acc": 0.979,
    "text_rec": 0.971,
-   "para_f1": 0.889,
+   "para_f1": 0.98,
    "headings_rec": 0.98,
    "headings_level": 0.813,
    "headings_prec": 0.98,
@@ -148,12 +162,16 @@
    "hf_present": 0.98,
    "hf_pollution": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "eq_inline": 0.98,
+   "abstract": 0.98,
+   "page_fit": 0.938,
+   "sup_false": 0.98
   },
   "paper-pdflatex": {
-   "text_acc": 0.888,
+   "text_acc": 0.891,
    "text_rec": 0.971,
-   "para_f1": 0.78,
+   "para_f1": 0.91,
    "headings_rec": 0.98,
    "headings_level": 0.813,
    "headings_prec": 0.837,
@@ -166,7 +184,11 @@
    "hf_present": 0.98,
    "hf_pollution": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "eq_inline": 0.98,
+   "abstract": 0.98,
+   "page_fit": 0.913,
+   "sup_false": 0.98
   },
   "slides-chrome": {
    "text_acc": 0.804,
@@ -176,7 +198,9 @@
    "slide_order": 0.88,
    "slide_visible": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "page_fit": 0.647,
+   "sup_false": 0.98
   },
   "slides-lo": {
    "text_acc": 0.804,
@@ -186,7 +210,9 @@
    "slide_order": 0.88,
    "slide_visible": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "page_fit": 0.98,
+   "sup_false": 0.98
   }
  },
  "exact": {
@@ -202,7 +228,10 @@
    "table_rtl": 0.98,
    "verse": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "latin_order": 0.48,
+   "sup_false": 0.98,
+   "frames_visible": 0.98
   },
   "arabic-lo": {
    "text_acc": 0.967,
@@ -216,21 +245,25 @@
    "table_rtl": 0.98,
    "verse": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "latin_order": 0.98,
+   "sup_false": 0.98
   },
   "arabic-xelatex": {
-   "text_acc": 0.918,
+   "text_acc": 0.949,
    "text_rec": 0.888,
-   "para_f1": 0.754,
+   "para_f1": 0.812,
    "headings_rec": 0,
    "headings_level": 0,
    "headings_prec": 0.98,
    "lists_real": 0,
    "table_cells": 0.897,
    "table_rtl": 0.98,
-   "verse": 0.48,
+   "verse": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "latin_order": 0.98,
+   "sup_false": 0.98
   },
   "book-lo": {
    "text_acc": 0.928,
@@ -245,7 +278,9 @@
    "toc_leaders": 0.58,
    "dropcap": 0.98,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "page_fit": 0.915,
+   "sup_false": 0.98
   },
   "book-xelatex": {
    "text_acc": 0.953,
@@ -260,8 +295,10 @@
    "toc_leaders": 0.58,
    "dropcap": 0.98,
    "hyphen_page": 0,
-   "pages": 0.48,
-   "lo_opens": 0.98
+   "pages": 0.98,
+   "lo_opens": 0.98,
+   "page_fit": 0.913,
+   "sup_false": 0.98
   },
   "form-lo": {
    "text_acc": 0.467,
@@ -275,7 +312,8 @@
    "checkboxes": 0,
    "grid": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "sup_false": 0.98
   },
   "form-wk": {
    "text_acc": 0.414,
@@ -288,8 +326,9 @@
    "fields": 0,
    "checkboxes": 0,
    "grid": 0,
-   "pages": 0.48,
-   "lo_opens": 0.98
+   "pages": 0.98,
+   "lo_opens": 0.98,
+   "sup_false": 0.98
   },
   "invoice-chrome": {
    "text_acc": 0.759,
@@ -304,7 +343,9 @@
    "emphasis": 0.837,
    "fields": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "sup_false": 0.98,
+   "frames_visible": 0.98
   },
   "invoice-lo": {
    "text_acc": 0.759,
@@ -319,7 +360,9 @@
    "emphasis": 0.837,
    "fields": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "sup_false": 0.98,
+   "frames_visible": 0.98
   },
   "paper-lo": {
    "text_acc": 0.584,
@@ -337,7 +380,12 @@
    "hf_present": 0.98,
    "hf_pollution": 0.98,
    "pages": 0.48,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "eq_inline": 0.23,
+   "abstract": 0,
+   "page_fit": 0.366,
+   "sup_false": 0.98,
+   "frames_visible": 0.98
   },
   "paper-pdflatex": {
    "text_acc": 0.662,
@@ -355,7 +403,12 @@
    "hf_present": 0.48,
    "hf_pollution": 0,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "eq_inline": 0,
+   "abstract": 0.48,
+   "page_fit": 0.98,
+   "sup_false": 0.98,
+   "frames_visible": 0.98
   },
   "slides-chrome": {
    "text_acc": 0.804,
@@ -365,7 +418,10 @@
    "slide_order": 0.88,
    "slide_visible": 0.616,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "page_fit": 0.98,
+   "sup_false": 0.98,
+   "frames_visible": 0.98
   },
   "slides-lo": {
    "text_acc": 0.794,
@@ -375,7 +431,10 @@
    "slide_order": 0.88,
    "slide_visible": 0.616,
    "pages": 0.98,
-   "lo_opens": 0.98
+   "lo_opens": 0.98,
+   "page_fit": 0.98,
+   "sup_false": 0.98,
+   "frames_visible": 0.98
   }
  }
 }

@@ -29,7 +29,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'p2d-fontsout-'));
 // «Inside the file», hashed over its parts as HEAD (0.67.x) built it: each part's bytes, the file's dates and keys and the fonts'
 // obfuscation undone. (Two corpus PDFs; filled in from the HEAD build with KR_P2D_HASHES=1 KR_DIST=<head dist>.)
 const EMBED_HASHES = {
-  'lo-docx-untagged': '65c379c1221aefc3d6b010b3c98235858dc605b4',
+  // (P2b: the heading under the title's bottom border is set 6 pt higher — a border's space and width are inside its paragraph.)
+  'lo-docx-untagged': '42f908d0213dd0128140eb4b27975449baaf52c5',
   'pdflatex': '8d4f532c5d78bfc23984fa18ea3bd541d610ae3f',
 };
 

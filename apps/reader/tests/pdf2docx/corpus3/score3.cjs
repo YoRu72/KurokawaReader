@@ -4,7 +4,7 @@
 // columns, a right-to-left table's column order, equation numbers kept with their equation, a verse's two halves, slide boxes'
 // reading order and visibility, leaders, field lines, check boxes, a box grid, drop caps, running heads (odd/even) out of the body.
 const { fold, sim, dist } = require('../corpus2/score.cjs');
-const ORDER = ['text_layer_recall', 'text_acc', 'text_rec', 'para_f1', 'headings_rec', 'headings_level', 'headings_prec', 'lists_real', 'table_cells', 'table_merged', 'table_money', 'table_rtl', 'emphasis', 'supsub', 'footnotes', 'notes_false', 'eq_num', 'refs_whole', 'verse', 'hf_present', 'hf_pollution', 'odd_even', 'toc_leaders', 'leaders', 'fields', 'checkboxes', 'grid', 'dropcap', 'hyphen_page', 'slide_order', 'slide_visible', 'pages', 'lo_opens'];
+const ORDER = ['text_layer_recall', 'text_acc', 'text_rec', 'para_f1', 'headings_rec', 'headings_level', 'headings_prec', 'lists_real', 'table_cells', 'table_merged', 'table_money', 'table_rtl', 'emphasis', 'supsub', 'sup_false', 'frames_visible', 'footnotes', 'notes_false', 'eq_num', 'eq_inline', 'abstract', 'page_fit', 'refs_whole', 'verse', 'latin_order', 'hf_present', 'hf_pollution', 'odd_even', 'toc_leaders', 'leaders', 'fields', 'checkboxes', 'grid', 'dropcap', 'hyphen_page', 'slide_order', 'slide_visible', 'pages', 'lo_opens'];
 const clamp = (x) => Math.max(0, Math.min(1, x));
 const words = (s) => (s.normalize('NFKC').replace(/[​-‏‪-‮⁦-⁩﻿­]/g, '').replace(/[ً-ٰٟـ]/g, '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || []);
 function recall(exp, got) { const g = new Map(); for (const x of got) g.set(x, (g.get(x) || 0) + 1); let hit = 0; for (const x of exp) { const n = g.get(x) || 0; if (n) { hit++; g.set(x, n - 1); } } return exp.length ? hit / exp.length : null; }
@@ -39,15 +39,18 @@ async function score3(D, T, meta) {
   const body = D.paras.filter((p) => !p.table && fold(p.text)); const all = D.paras.filter((p) => fold(p.text));
   const tableTexts = T.blocks.filter((b) => b.type === 'table').flatMap((b) => b.rows.flat().map((c) => c.text));
   const layoutTexts = T.blocks.filter((b) => b.type === 'layout').flatMap((b) => b.cols.flat());
+  // (A verse kept as a borderless row of two cells — its halves apart — is the verse's own form: it is looked for there, not
+  // in the body's paragraphs.)
+  for (const u of U) if (u.kind === 'verse') { const a = fold(u.b.a), b = fold(u.b.b); if (D.tables.flatMap((t) => t.rows).some((r) => r.cells.some((c) => sim(fold(c.text), a) >= 0.85) && r.cells.some((c) => sim(fold(c.text), b) >= 0.85))) u.row = true; }
   // ---- text: the body (not tables, not headers/footers/notes) against the truth's units in reading order (order-sensitive),
   // and every truth word (tables and layout cells too) found anywhere in the body or its tables.
-  { const exp = fold(U.map((u) => u.text).join('')); const lay = new Set(layoutTexts.map(fold));
+  { const exp = fold(U.filter((u) => !u.row).map((u) => u.text).join('')); const lay = new Set(layoutTexts.map(fold));
     const got = fold(body.filter((p) => !lay.has(fold(p.text))).map((p) => p.text).join('').replace(/([a-z])-\s*([a-z])/g, '$1$2'));
     const gotJoined = got; S.text_acc = clamp(1 - dist(gotJoined, exp) / Math.max(exp.length, gotJoined.length, 1));
     const ew = words(U.map((u) => u.text).concat(tableTexts, layoutTexts).join(' ')); const gw = words(all.map((p) => p.text).join(' ').replace(/([A-Za-z])[‐‑­-]\s+([a-z])/g, '$1$2')); S.text_rec = recall(ew, gw); }
   // ---- paragraphs: truth units matched one to one by text (sim >= 0.85), F1 over units and body paragraphs
   const match = (u, pool, used) => { const fe = fold(u.text); let best = 0, bp = null; for (const p of pool) { if (used.has(p)) continue; const f = fold(p.text.replace(/^\s*[•◦▪●·\-–]\s*/, '').replace(/(?:[.·…_]\s?){3,}/g, ' ')); if (!f) continue; const sc = sim(f, fe); if (sc > best) { best = sc; bp = p; } } return best >= 0.85 ? bp : null; };
-  { const used = new Set(); let m = 0; for (const u of U) { const p = match(u, body, used); if (p) { used.add(p); m++; u.p = p; } } const rec = m / U.length, prec = body.length ? used.size / body.length : 0; S.para_f1 = rec + prec ? 2 * rec * prec / (rec + prec) : 0; }
+  { const used = new Set(); let m = 0; for (const u of U) { if (u.row) { m++; continue; } const p = match(u, body, used); if (p) { used.add(p); m++; u.p = p; } } const rec = m / U.length, prec = body.length ? used.size / body.length : 0; S.para_f1 = rec + prec ? 2 * rec * prec / (rec + prec) : 0; }
   // ---- headings: truth headings as headings (level as given); headings_prec: share of the .docx headings that are truth headings
   { const hs = U.filter((u) => u.kind === 'h' && !u.slide); if (hs.length) { let st = 0, lv = 0; for (const u of hs) { const p = u.p; if (p && p.heading) { st++; const want = u.b.type === 'title' ? 0 : u.b.level; if (p.heading.level === want || (want === 0 && p.heading.title)) lv++; } } S.headings_rec = st / hs.length; S.headings_level = lv / hs.length; }
     const dh = body.filter((p) => p.heading); const th = U.filter((u) => u.kind === 'h').map((u) => fold(u.text)); if (dh.length || th.length) S.headings_prec = dh.length ? dh.filter((p) => th.some((t) => sim(fold(p.text), t) >= 0.85)).length / dh.length : 1; }
@@ -70,12 +73,22 @@ async function score3(D, T, meta) {
     if (eb.length) { const r = recall(eb, gb2), pr = gb2.length ? recall(gb2, eb) : 0; S.emphasis = r + pr ? 2 * r * pr / (r + pr) : 0; } }
   { const want = []; for (const b of T.blocks) if (b.runs) for (const r of b.runs) if (r.sup || r.sub) want.push({ t: r.t, va: r.sup ? 'superscript' : 'subscript' }); for (const b of T.blocks) if (b.type === 'eq') { /* displayed: not counted */ }
     if (want.length) { const pool = D.paras.flatMap((p) => p.runs).filter((r) => r.va && !r.foot); const used = new Set(); let ok = 0; for (const w of want) { const r = pool.find((x) => !used.has(x) && x.va === w.va && fold(x.text) === fold(w.t)); if (r) { used.add(r); ok++; } } S.supsub = ok / want.length; } }
+  // sup_false: words of two letters or more raised or lowered that the truth does not raise («4200 for the year» on a slide)
+  { const ok = new Set(); for (const b of T.blocks) if (b.runs) for (const r of b.runs) if (r.sup || r.sub) ok.add(fold(r.t)); const bad = D.paras.flatMap((p) => p.runs).filter((r) => r.va && !r.foot && /[a-z]{2}/i.test(r.text) && !ok.has(fold(r.text))).length; S.sup_false = clamp(1 - bad / 3); }
+  // frames_visible: a paragraph in a frame whose first line starts before the frame's edge is cut off there (its words unseen)
+  { const fr = D.paras.filter((p) => p.frame && fold(p.text)); if (fr.length) S.frames_visible = fr.filter((p) => !p.ind || (p.ind.start || 0) - Math.max(0, p.ind.hanging || 0) >= -20).length / fr.length; }
   { const notes = Object.values(T.footnotes || {}); const refs = T.blocks.flatMap((b) => (b.runs || []).filter((r) => 'fn' in r)).length;
     if (notes.length) { let sc = 0; for (const f of notes) { const ff = fold(f); if (D.footnotes.some((x) => sim(fold(x).replace(/^\d+/, ''), ff) >= 0.85)) sc += 1; else if (D.paras.some((p) => fold(p.text).includes(ff.slice(0, 20)))) sc += 0.5; } S.footnotes = sc / notes.length; }
     // notes_false: note references the .docx makes beyond the truth's (a raised affiliation mark or exponent made a note)
     if (notes.length || D.footRefs) S.notes_false = D.footRefs <= refs ? 1 : clamp(1 - (D.footRefs - refs) / Math.max(1, refs + 2)); }
   // ---- equations: the number in the paragraph (or table row) that holds the equation's letters
   { const eqs = T.blocks.filter((b) => b.type === 'eq'); if (eqs.length) { let ok = 0; for (const e of eqs) { const letters = fold(e.text).replace(/[^a-z]/g, ''); const host = [...D.paras, ...D.tables.flatMap((t) => t.rows.map((r) => ({ text: r.cells.map((c) => c.text).join(' ') })))].find((p) => p.text.includes(e.num) && (() => { const l = fold(p.text).replace(/[^a-z]/g, ''); const ex = [...letters]; let hit = 0; const pool = [...l]; for (const c of ex) { const i = pool.indexOf(c); if (i >= 0) { hit++; pool.splice(i, 1); } } return hit / ex.length >= 0.7 && l.length <= letters.length * 2.5; })()); if (host) ok++; } S.eq_num = ok / eqs.length; } }
+  // ---- eq_inline: a displayed equation's pieces in reading order on one line — its letters and digits, then its number, in one
+  // paragraph with no line break (a stacked fraction's numerator above as a paragraph of its own and its denominator fallen
+  // after the number scored 0)
+  { const eqs = T.blocks.filter((b) => b.type === 'eq'); if (eqs.length) { const an = (t) => fold(t).replace(/[^a-z0-9]/g, ''); let sc = 0; for (const e of eqs) { const want = an(e.text) + an(e.num); const p = D.paras.find((q) => an(q.text).includes(want)); if (p) sc += p.runs.some((r) => r.br) ? 0.5 : 1; } S.eq_inline = sc / eqs.length; } }
+  // ---- abstract: one paragraph, justified, set in on both sides (centred, or its last line torn off, scores less)
+  { const ab = U.filter((u) => u.b.role === 'abstract'); if (ab.length) { let sc = 0; for (const u of ab) { const p = u.p; if (!p) continue; const inset = p.ind && (p.ind.start || 0) > 200 && (p.ind.end || 0) > 200; sc += ['both', 'distribute'].includes(p.jc) && inset ? 1 : 0.5; } S.abstract = sc / ab.length; } }
   // ---- references kept whole (one paragraph each)
   { const refs = U.filter((u) => u.kind === 'ref'); if (refs.length) S.refs_whole = refs.filter((u) => u.p).length / refs.length; }
   // ---- verse: both halves in one paragraph (or one table row), first half first, apart (a tab, a run of spaces, or two cells)
@@ -84,6 +97,9 @@ async function score3(D, T, meta) {
       const p = D.paras.find((q) => { const f = fold(q.text); return f.includes(a.slice(0, 8)) && f.includes(b.slice(0, 8)); }); if (!p) continue; const t = p.text.normalize('NFKC'); const ia = fold(t).indexOf(a.slice(0, 8)), ib = fold(t).indexOf(b.slice(0, 8));
       const apart = p.runs.some((r) => r.tab) || /\S(\s{3,}|\t)\S/.test(t); sc += ia >= 0 && ib > ia ? (apart || p.runs.some((r) => r.text === ' ' && false) ? 1 : 0.5) : 0.25; }
     S.verse = sc / vs.length; } }
+  // ---- latin_order: in a right-to-left text, each Latin word of a paragraph right after the word that comes before it there
+  // («دَلِيلَ Markdown فِي», not «… ثم Markdown رَاجَعْتُ»)
+  if (T.meta.dir === 'rtl') { let ok = 0, n = 0; const ps = D.paras.map((p) => words(p.text)); for (const b of T.blocks) if (b.type === 'p') { const w = words(runsText(b.runs)); for (let i = 1; i < w.length; i++) { if (!/^[a-z]+$/.test(w[i]) || /^[a-z]+$/.test(w[i - 1])) continue; n++; if (ps.some((q) => q.some((x, j) => x === w[i] && q[j - 1] === w[i - 1]))) ok++; } } if (n) S.latin_order = ok / n; }
   // ---- running heads and feet: in the header/footer parts, not in the body
   { const m = T.meta; const heads = [m.header, ...T.blocks.filter((b) => b.chapter).map((b) => b.chapter), m.footer].filter(Boolean).map(fold);
     // (A one-page PDF shows nothing repeating: its foot is body text as much as a footer, so none of this is judged there.)
@@ -116,4 +132,13 @@ async function score3(D, T, meta) {
       for (const u of sl) { n++; const p = u.p || body.find((q) => fold(q.text).includes(fold(u.text))); if (!p) continue; const lightTxt = p.runs.filter((r) => fold(r.text)).every((r) => light(r.color)); if (!lightTxt || bg) vis++; } S.slide_visible = vis / n; } }
   return S;
 }
-module.exports = { score3, pdfInfo3, ORDER, units };
+// page_fit (with LibreOffice's rendering of the .docx, a PDF): each source page's words on the same page of the rendering — a
+// column's last line pushed over to the next column or page, a page that ends early or late. Per page 1 when at most 3 % of its
+// words are elsewhere, falling to 0 at 13 %; the mean over the pages. Only for PDFs of more than one page.
+function pageFit(srcPdf, loPdf) {
+  const { execSync } = require('child_process'); const n = (f) => +(/Pages:\s+(\d+)/.exec(execSync(`pdfinfo "${f}"`).toString()) || [0, 0])[1];
+  const pw = (f, k) => words(execSync(`pdftotext -f ${k} -l ${k} "${f}" -`).toString()); const ns = n(srcPdf), nl = n(loPdf); if (ns < 2) return undefined;
+  let tot = 0; for (let k = 1; k <= ns; k++) { const s = pw(srcPdf, k); if (!s.length) { tot++; continue; } const g = k <= nl ? pw(loPdf, k) : []; const m = new Map(); for (const w of g) m.set(w, (m.get(w) || 0) + 1); let miss = 0; for (const w of s) { const c = m.get(w) || 0; if (c) m.set(w, c - 1); else miss++; } tot += clamp(1 - Math.max(0, miss / s.length - 0.03) * 10); }
+  return tot / ns;
+}
+module.exports = { score3, pdfInfo3, pageFit, ORDER, units };

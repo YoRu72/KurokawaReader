@@ -11,7 +11,7 @@
 const { chromium } = require('playwright'); const http = require('http'); const fs = require('fs'); const path = require('path'); const os = require('os');
 const { execSync } = require('child_process');
 const { readDocx, pdfTextWords, wordRecall } = require('./pdf2docx/corpus2/score.cjs');
-const { score3, pdfInfo3, ORDER } = require('./pdf2docx/corpus3/score3.cjs');
+const { score3, pdfInfo3, pageFit, ORDER } = require('./pdf2docx/corpus3/score3.cjs');
 const ROOT = path.join(__dirname, 'pdf2docx/corpus3'); const DIST = path.resolve(process.env.KR_DIST || path.join(__dirname, '../dist'));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream' };
 const server = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.setHeader('Content-Type', MIME[path.extname(f)] || 'application/octet-stream'); fs.createReadStream(f).pipe(res); });
@@ -55,7 +55,7 @@ const f2 = (x) => (x === null || x === undefined ? '  - ' : x.toFixed(2));
       if (saveDir) fs.copyFileSync(docx, path.join(saveDir, tag + '.docx'));
       const D = await readDocx(fs.readFileSync(docx)); const S = await score3(D, truth, { id, kind, mode, pages: info.pages });
       const wr = layer && layer.length ? wordRecall(layer, D) : null; S.text_layer_recall = wr ? wr.recall : null;
-      if (haveSoffice) { const n = loPages(docx); S.lo_opens = n > 0 ? 1 : 0; if (n) S.pages = n === info.pages ? 1 : Math.abs(n - info.pages) === 1 ? 0.5 : 0; }
+      if (haveSoffice) { const n = loPages(docx); S.lo_opens = n > 0 ? 1 : 0; if (n) S.pages = n === info.pages ? 1 : Math.abs(n - info.pages) === 1 ? 0.5 : 0; if (n) { const v = pageFit(file, path.join(tmp, path.basename(docx, '.docx') + '.pdf')); if (v !== undefined) S.page_fit = v; } }
       R[mode][id] = { scores: S, secs, secsPerPage: secs / (info.pages || 1), pages: info.pages, errs, missed: wr ? wr.miss.slice(0, 30) : [] };
       const v = Object.entries(S).filter(([k, x]) => k !== 'text_layer_recall' && x !== null && x !== undefined).map(([, x]) => x);
       console.log(id.padEnd(16), mode.padEnd(5), 'ok', secs.toFixed(1) + 's', (v.reduce((a, b) => a + b, 0) / Math.max(1, v.length)).toFixed(2), wr ? 'layer ' + wr.recall.toFixed(3) + (wr.miss.length ? ' missing: ' + wr.miss.slice(0, 12).join(' ') : '') : '');

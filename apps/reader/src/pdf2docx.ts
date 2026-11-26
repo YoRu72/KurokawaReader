@@ -183,6 +183,25 @@ export function lineFactor(bytes: Uint8Array): number | null {
     return f > 0.8 && f < 3 ? f : null;
   } catch { return null; }
 }
+/** A font's ascent and descent as lineFactor reads them (ems, both positive; the hhea gap left out): a line of
+ *  several fonts is as tall as the highest ascent over the deepest descent among them. */
+export function lineSplit(bytes: Uint8Array): [number, number] | null {
+  try {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const n = dv.getUint16(4); const T: Record<string, number> = {};
+    for (let i = 0; i < n; i++) { const r = 12 + i * 16; T[String.fromCharCode(...bytes.subarray(r, r + 4))] = dv.getUint32(r + 8); }
+    if (T.head === undefined || T.hhea === undefined) return null;
+    const upm = dv.getUint16(T.head + 18) || 1000;
+    const hAsc = dv.getInt16(T.hhea + 4), hDesc = -dv.getInt16(T.hhea + 6);
+    if (T['OS/2'] === undefined) return hAsc + hDesc > 0 ? [hAsc / upm, hDesc / upm] : null;
+    const o = T['OS/2']; const sel = dv.getUint16(o + 62);
+    const tA = dv.getInt16(o + 68), tD = -dv.getInt16(o + 70), wA = dv.getUint16(o + 74), wD = dv.getUint16(o + 76);
+    const word: [number, number] = wA + wD > 0 ? [wA, wD] : [hAsc, hDesc];
+    const lo: [number, number] = sel & 128 && tA + tD > 0 ? [tA, tD] : word;
+    const a = (word[0] + lo[0]) / 2 / upm, d = (word[1] + lo[1]) / 2 / upm;
+    return a > 0 && d >= 0 && a + d > 0.8 && a + d < 2.2 ? [a, d] : null;
+  } catch { return null; }
+}
 /** The "single" line of common fonts a document names without carrying them (as their metric twins set it). */
 const NAMED_LINE: Record<string, number> = { 'Times New Roman': 1.15, Arial: 1.15, Helvetica: 1.15, 'Liberation Serif': 1.15, 'Liberation Sans': 1.15, 'Liberation Mono': 1.13, 'Courier New': 1.13, Courier: 1.13, Calibri: 1.22, Carlito: 1.22, Cambria: 1.17, Caladea: 1.17, Georgia: 1.14, Verdana: 1.22, Tahoma: 1.21, 'Segoe UI': 1.33, 'DejaVu Sans': 1.16, 'DejaVu Serif': 1.16, 'DejaVu Sans Mono': 1.16, 'Noto Sans': 1.36, 'Noto Serif': 1.36, Symbol: 1.23, 'Noto Sans CJK JP': 1.45, 'Noto Sans CJK SC': 1.45, 'Noto Sans CJK TC': 1.45, 'Noto Sans CJK KR': 1.45, 'Noto Serif CJK JP': 1.45, 'Noto Serif CJK SC': 1.45, 'MS Mincho': 1.0, SimSun: 1.0 };
 
@@ -451,10 +470,50 @@ async function renderGraphics(page: import('pdfjs-dist').PDFPageProxy, scale: nu
   return out;
 }
 
+/** For a document to edit: a fraction set stacked in a displayed formula — a short numerator line just above the
+ *  formula's line and a short denominator just below, one over the other beside (or inside a gap of) that line —
+ *  is set inline on the formula's line, «ds/dt = k (s0 − s)», its pieces in reading order; set as lines of their own,
+ *  the numerator stood above as a paragraph and the denominator fell to the next line's start, after the number. */
+function inlineFractions(lines: Line[]): Line[] {
+  const short = (l: Line) => !l.rtl && !l.spacer && !l.grid && l.pieces.length <= 4 && l.pieces.map((p) => p.text).join('').trim().length <= 12 && l.pieces.map((p) => p.text).join(' ').trim().split(/\s+/).length <= 2;
+  const out = [...lines];
+  for (let i = 1; i + 1 < out.length; i++) {
+    const a = out[i - 1], m = out[i], b = out[i + 1];
+    if (!short(a) || !short(b) || m.rtl || m.spacer || m.grid) continue;
+    const sz = Math.max(a.size, b.size, m.size), d1 = a.base - m.base, d2 = m.base - b.base;
+    if (d1 < sz * 0.3 || d1 > sz * 0.95 || d2 < sz * 0.3 || d2 > sz * 0.95) continue;
+    const ov = Math.min(a.r, b.r) - Math.max(a.l, b.l); if (ov < Math.min(a.r - a.l, b.r - b.l) * 0.5) continue;
+    const lo = Math.min(a.l, b.l), hi = Math.max(a.r, b.r);
+    // (Beside the formula's line or in a gap of it: none of its glyphs under the fraction.)
+    if (m.pieces.some((p) => p.text.trim() && p.l < hi - 0.5 && p.r > lo + 0.5) || lo > m.r + sz * 3 || hi < m.l - sz * 3) continue;
+    const at = (p: Piece, l: number): Piece => ({ ...p, l, r: l + (p.r - p.l), y: m.base });
+    const top = [...a.pieces].sort((x, y) => x.l - y.l), bot = [...b.pieces].sort((x, y) => x.l - y.l);
+    const pcs: Piece[] = []; let x = lo;
+    for (const p of top) { pcs.push(at(p, x)); x += p.r - p.l; }
+    const ref = top[top.length - 1]; const sw = ref.h * 0.3;
+    // (The slash in no font of the PDF's — a common one: the fonts carried are the PDF's subsets, which never drew it,
+    // and a math font's few letters with a sign it lacks would no longer be the font's own.)
+    pcs.push({ text: '/', l: x, r: x + sw, y: m.base, h: ref.h, font: 'kr-common', color: ref.color, bold: ref.bold });
+    x += sw; for (const p of bot) { pcs.push(at(p, x)); x += p.r - p.l; }
+    // (What follows the fraction on its line moves over by the width it gained, as far as the next wide gap — the
+    // number set at the right stays where it stands.)
+    const grow = x - hi; const after = m.pieces.filter((p) => p.l >= hi - 0.5).sort((p, q) => p.l - q.l);
+    const moved = new Set<Piece>(); let prevR = hi;
+    for (const p of after) { if (p.l - prevR > sz * 1.5) break; moved.add(p); prevR = Math.max(prevR, p.r); }
+    const rest = m.pieces.map((p) => (moved.has(p) ? { ...p, l: p.l + grow, r: p.r + grow } : p));
+    const all = [...rest, ...pcs];
+    // (Its bar, drawn between the two, goes from the page's drawing: the slash stands for it.)
+    eraseNow.push({ l: lo - 0.5, r: hi + 0.5, top: a.base - 0.1, bottom: b.base + b.size * 0.72 });
+    out.splice(i - 1, 3, { ...m, pieces: all, l: Math.min(m.l, lo), r: Math.max(m.r, ...all.map((p) => p.r)) });
+  }
+  return out;
+}
+
 /** Stacked lines closer together than any text line (a formula: fraction, sum limits, sub- and superscripts
  *  on their own levels) cannot be set as paragraphs without growing taller than the page has them. Each such
  *  stack becomes a picture of that part of the page, with an empty line of its exact height in the text. */
-function pullFormulas(lines: Line[], boxes: Box[]): Line[] {
+function pullFormulas(lines0: Line[], boxes: Box[]): Line[] {
+  const lines = p2d.edit ? inlineFractions(lines0) : lines0;
   const out: Line[] = [];
   for (let i = 0; i < lines.length;) {
     let j = i;
@@ -617,7 +676,14 @@ function ruleBorders(blocks: Block[], rules: Stroke[], L: number, R: number): vo
     }
     if (!best) continue;
     const edge = { sz: Math.max(2, Math.min(96, Math.round((s.y1 - s.y0) * 8))), color: s.color, space: Math.max(0, Math.min(31, Math.round(best.side === 'bottom' ? best.d - best.b.size * 0.25 : best.d))) };
+    const had = !!best.b.bdr?.[best.side];
     (best.b.bdr ??= {})[best.side] = edge; s.used = true;
+    if (had) { eraseNow.push({ l: s.x0 - 0.5, r: s.x1 + 0.5, top: s.y1 + 0.6, bottom: s.y0 - 0.6 }); continue; }
+    // (Word and LibreOffice set a border with its room — its space and its width — inside the paragraph: that much
+    // less space before the next block, or before this one for a border over it, keeps the lines where they were.)
+    const room = edge.space + edge.sz / 8;
+    if (best.side === 'top') best.b.before = Math.max(0, best.b.before - room);
+    else { const nx = blocks[blocks.indexOf(best.b) + 1]; if (nx) nx.before = Math.max(0, nx.before - room); }
     eraseNow.push({ l: s.x0 - 0.5, r: s.x1 + 0.5, top: s.y1 + 0.6, bottom: s.y0 - 0.6 });
   }
 }
@@ -984,7 +1050,12 @@ function buildLines(all: Piece[]): Line[] {
     if (g.length < 2) continue;
     const big = Math.max(...g.map((p) => p.h));
     const host = g.filter((p) => p.h > big * 0.9); const hb = median(host.map((p) => p.y));
-    for (const p of g) if (p.h < big * 0.85 && p.y - hb > big * 0.18 && /^[\s(\[]*[0-9\u0660-\u0669\u06F0-\u06F9*\u2020\u2021a-z]{1,3}[)\]]?\s*$/.test(p.text)) p.sup = true;
+    // (Not a short word among words of its own size on its own baseline — «4200 for the year» beside a bigger title —
+    // which is text set smaller, not a mark.)
+    const markish = (p: Piece) => /^[\s(\[]*[0-9\u0660-\u0669\u06F0-\u06F9*\u2020\u2021a-z]{1,3}[)\]]?\s*$/.test(p.text);
+    const inWords = (p: Piece) => g.some((q) => q !== p && q.text.trim() && !markish(q) && Math.abs(q.h - p.h) < p.h * 0.1 && Math.abs(q.y - p.y) < p.h * 0.1 && Math.min(Math.abs(q.l - p.r), Math.abs(p.l - q.r)) < p.h * 1.2)
+      || g.some((q) => q !== p && markish(q) && Math.abs(q.h - p.h) < p.h * 0.1 && Math.abs(q.y - p.y) < p.h * 0.1 && Math.min(Math.abs(q.l - p.r), Math.abs(p.l - q.r)) < p.h * 1.2 && g.some((z) => z !== q && z !== p && z.text.trim() && !markish(z) && Math.abs(z.h - q.h) < q.h * 0.1 && Math.abs(z.y - q.y) < q.h * 0.1 && Math.min(Math.abs(z.l - q.r), Math.abs(q.l - z.r)) < q.h * 1.2));
+    for (const p of g) if (p.h < big * 0.85 && p.y - hb > big * 0.18 && markish(p) && !(/[a-z]{2}/.test(p.text) && inWords(p))) p.sup = true;
     // (Its brackets drawn as pieces of their own go up with it.)
     for (const q of g) if (!q.sup && /^\s*[()[\]]\s*$/.test(q.text)) for (const p of g) if (p.sup && Math.abs(q.y - p.y) < p.h * 0.2 && Math.abs(q.h - p.h) < p.h * 0.15 && Math.min(Math.abs(q.l - p.r), Math.abs(p.l - q.r)) < p.h * 0.6) { q.sup = true; break; }
   }
@@ -1089,12 +1160,15 @@ function splitVerse(line: Line, L: number, R: number): [Piece[], Piece[], Piece[
   const ways = numbered ? [[tw, tmid, lw, rw], [width, mid, spanOf(ps.filter((p) => p.r <= gapMid)), spanOf(ps.filter((p) => p.r > gapMid))]] : [[width, mid, lw, rw]];
   const wideGap = ways.some(([w, m, a, b]) => bestGap >= Math.max(line.size * 1.5, w * 0.045) && Math.abs(gapMid - m) <= w * 0.18 && a >= w * 0.3 && b >= w * 0.3);
   const centred = ways.some(([w, m, a, b]) => Math.abs(gapMid - m) <= w * 0.03 && a >= w * 0.35 && b >= w * 0.35 && bestGap >= line.size * (0.75 - (/\u0640/.test(left.map((p) => p.text).join('')) && /\u0640/.test(right.map((p) => p.text).join('')) ? 0.25 : 0)));
-  if (!wideGap && !centred) return null;
+  // (Or, on a right-to-left line, two shorter halves of like length well apart, the gap at the very middle: a lone verse
+  // set with its hemistichs each centred in its half of the measure.)
+  const apartHalves = line.rtl && ways.some(([w, m, a, b]) => bestGap >= Math.max(line.size * 3, w * 0.2) && Math.abs(gapMid - m) <= w * 0.05 && a >= w * 0.15 && b >= w * 0.15 && Math.min(a, b) >= Math.max(a, b) * 0.6);
+  if (!wideGap && !centred && !apartHalves) return null;
   const all = line.pieces;
   const inLeft = (p: Piece) => p.r <= gapMid + 0.01;
   const res: [Piece[], Piece[], Piece[]] & { weak?: number; numbered?: boolean } = [all.filter((p) => !inLeft(p)), all.filter(inLeft), []];
   // Only a narrow gap: verse if a neighbouring line splits there too (a wide space after a full stop is not).
-  if (!wideGap) res.weak = gapMid;
+  if (!wideGap && !apartHalves) res.weak = gapMid;
   // (A lone verse may show itself by its number: see buildBlocks.)
   if (numbered) res.numbered = true;
   return res;
@@ -1126,6 +1200,26 @@ function runsOf(pieces: Piece[], fonts: Map<string, FontInfo>, rtlLine: boolean)
     if (!p.codes || p.codes.length < 2 || p.raw || /[\p{L}\p{N}]/u.test(p.text)) return;
     const t = [...p.codes].sort((a, b) => (rtlLine ? b[2] - a[2] : a[2] - b[2])).map((u) => u[1]).join('');
     if (t.replace(/\s/g, '') === [...p.text.replace(/\s/g, '')].sort().join('') || [...t].sort().join('') === [...p.text].sort().join('')) sorted[i] = { ...p, text: t, ordered: true };
+  });
+  // (A piece of a right-to-left line holding a Latin word among Arabic ones — one text item of the PDF's, its words in an
+  // order of their own, «في 12 يومًا، ثم Markdown» for «Markdown في 12 يومًا، ثم» — reads its words in the order its glyphs
+  // stand: the Latin words go to the places their glyphs hold, the others keep their order. Marks the item gave after a
+  // Latin word go back to the Arabic word before it.)
+  if (rtlLine) sorted.forEach((p, i) => {
+    if (!p.codes || p.codes.length < 4 || !/[a-zA-Z]/.test(p.text) || !/[\u0621-\u064a]/.test(p.text)) return;
+    const cs = [...p.codes].filter((c) => c[5] > 0 || c[1].trim()).sort((a, b) => a[2] - b[2]);
+    const vis: { latin: boolean }[] = []; let end = -Infinity, cur: { latin: boolean } | null = null;
+    for (const c of cs) { if (!cur || (c[2] - end) / c[4] > 0.12) { cur = { latin: false }; vis.push(cur); } if (/[a-zA-Z]/.test(c[1])) cur.latin = true; if (c[5] > 0) end = Math.max(end, c[2] + c[5] * c[4]); }
+    const toks = p.text.trim().split(/\s+/).map((t) => t.replace(/^([a-zA-Z][\w.\-]*?)([\u064b-\u0652\u0670]+)$/, '$1\u0000$2'));
+    if (toks.length !== vis.length) return;
+    // (Marks set apart after a Latin word: back onto the word before.)
+    for (let k = 0; k < toks.length; k++) { const m = /\u0000(.+)$/.exec(toks[k]); if (!m) continue; toks[k] = toks[k].slice(0, m.index); if (k > 0) toks[k - 1] += m[1]; }
+    const order = [...vis].reverse(); const slots: boolean[] = [];
+    for (let k = 0; k < order.length;) { if (!order[k].latin) { slots.push(false); k++; continue; } let j = k; while (j < order.length && order[j].latin) j++; for (let q = k; q < j; q++) slots.push(true); k = j; }
+    const lat = toks.filter((t) => /[a-zA-Z]/.test(t)), ara = toks.filter((t) => !/[a-zA-Z]/.test(t));
+    if (lat.length !== slots.filter(Boolean).length) return;
+    const out = slots.map((x) => (x ? lat.shift()! : ara.shift()!)).join(' ');
+    if (out !== p.text.trim()) sorted[i] = { ...p, text: out };
   });
   if ((globalThis as { krDebugLine?: string }).krDebugLine === 'mk') sorted.forEach((p) => { if (p.codes) console.warn('P2D mk', JSON.stringify([p.text, p.l, p.r, p.codes])); });
   // (Brackets drawn on their own: opening or closing by where their words are — see fixLoneBrackets.)
@@ -1343,6 +1437,9 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     // (An indented block — a list item whose lines all start inside the margin — fills its own width.)
     else if (ls.length > 2 && (() => { const rest = ls.slice(1, -1); const lo = Math.min(...ls.map((l) => l.l)), hi = Math.max(...rest.map((l) => l.r)); return endGap(first) < tolOf(first) && rest.every((l) => l.l - lo < tolOf(l) && hi - l.r < tolOf(l)); })()) align = 'both';
     else if (ls.length === 1 && full(first)) align = 'both';
+    // (A block set in on both sides, its lines all of one width, the last starting where they start and running short:
+    // an abstract or a quotation set narrower and justified — not centred.)
+    else if (ls.length >= 2 && (() => { const body = ls.slice(0, -1), z = ls[ls.length - 1]; return body.every((l) => centered(l) && Math.abs(l.l - first.l) < tolOf(l) * 0.5 && Math.abs(l.r - first.r) < tolOf(l) * 0.5) && Math.abs(z.l - first.l) < tolOf(z) * 0.5 && z.r < first.r - tolOf(z); })()) align = 'both';
     else if (ls.every((l) => startGap(l) < tolOf(l) * 1.5) || ls.some((l) => startGap(l) < tolOf(l))) align = 'start';
     // (For a document to edit: lines set in from the start and well short of the end — a list's item, a note —
     // start where they start, set in; they are not set flush to the far side.)
@@ -1388,7 +1485,10 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     if (kashida) for (const r of runs) { if (r.text.includes('\u0640')) r.kText = r.text; r.text = dropStretch(r.text); }
     // A wide gap before a run that fills the rest of the line is a stretched word space, not a tab: a tab there
     // would leave the run no room and push it onto a line of its own.
-    for (const r of runs) if (r.tab !== undefined) {
+    // (Not after a gap of several ems on a line of its own: no justified line stretches a space that far — a slide's title
+    // with a note set far over at its right.)
+    const farGap = ls.length === 1 && (() => { const ps = ls[0].pieces.filter((p) => p.text.trim()).sort((a, b) => a.l - b.l); let e = ps[0]?.r ?? 0, g = 0; for (const p of ps.slice(1)) { g = Math.max(g, p.l - e); e = Math.max(e, p.r); } return g > ls[0].size * 4; })();
+    if (!farGap) for (const r of runs) if (r.tab !== undefined) {
       const pos = rtl ? R + 3 - r.tab : r.tab - (L - 3);
       if (pos + r.text.length * r.size * 0.45 > R - L + 6) { r.tab = undefined; r.text = ` ${r.text}`; }
     }
@@ -1529,7 +1629,10 @@ function buildBlocks(lines: Line[], fonts: Map<string, FontInfo>, L: number, R: 
     // Centred lines go on together; a centred line after one that is not (or the reverse) starts anew.
     // (Save a block set in on both sides — a quotation — whose next line starts where it starts and runs short: its first
     // line only looks centred.)
-    const quoteGoesOn = centered(last) && !centered(line) && ls.length === 1 && Math.abs(line.l - last.l) < tolOf(line) * 0.5 && line.r < last.r - tolOf(line) && (line.l - L) > line.size * 1.2;
+    // (Or a block of several such lines, all with the same two edges — an abstract set narrower, justified: its last
+    // line starts at their start and runs short.)
+    const sameEdges = ls.every((l) => Math.abs(l.l - last.l) < tolOf(l) * 0.5 && Math.abs(l.r - last.r) < tolOf(l) * 0.5);
+    const quoteGoesOn = centered(last) && !centered(line) && sameEdges && Math.abs(line.l - last.l) < tolOf(line) * 0.5 && line.r < last.r - tolOf(line) && (line.l - L) > line.size * 1.2;
     if (centered(line) !== centered(last) && !quoteGoesOn) return why(9);
     // (A centred caption's label starts the next caption: «Figure 1: …» over «Table 1: …».)
     if (centered(line) && centered(last) && /^\s*(?:figure|fig\.|table|chart|plate|exhibit|\u0634\u0643\u0644|\u062c\u062f\u0648\u0644)\s*[0-9\u0660-\u0669]{1,3}\s*[:.\-\u2013]/iu.test(textOf(line))) return why(15);
@@ -3168,8 +3271,16 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     const crosses = (l: Line) => l.pieces.some((p) => p.text.trim() && p.l < g1 - 1 && p.r > g0 + 1);
     type Raw = { full?: Line[]; left?: Line[]; right?: Line[]; orig?: Line[] };
     const raw: Raw[] = [];
-    for (const l of body) {
-      if (crosses(l)) { const cur = raw[raw.length - 1]; if (cur?.full) cur.full.push(l); else raw.push({ full: [l] }); continue; }
+    // (The short last line of a full-width paragraph — an abstract's «and test it on the next.» — leaves the gutter
+    // blank but is that paragraph's: right under its lines, at their step, from their start, with more room below it.)
+    const endsFull = (l: Line, k: number): boolean => {
+      const f = raw[raw.length - 1]?.full; if (!f || f.length < 2) return false;
+      const a = f[f.length - 1], b = f[f.length - 2], step = b.base - a.base, nx = body[k + 1];
+      return Math.abs(l.size - a.size) < a.size * 0.12 && Math.abs(a.size - b.size) < a.size * 0.12 && step > 0 && Math.abs(a.base - l.base - step) < a.size * 0.25
+        && (l.rtl ? Math.abs(l.r - a.r) : Math.abs(l.l - a.l)) < a.size * 0.5 && (!nx || l.base - nx.base > step * 1.4);
+    };
+    for (const [k, l] of body.entries()) {
+      if (crosses(l) || endsFull(l, k)) { const cur = raw[raw.length - 1]; if (cur?.full) cur.full.push(l); else raw.push({ full: [l] }); continue; }
       let cur = raw[raw.length - 1]; if (!cur || cur.full) raw.push(cur = { left: [], right: [], orig: [] });
       cur.orig!.push(l);
       const lp = l.pieces.filter((p) => p.r <= g0 + 1), rp = l.pieces.filter((p) => p.l >= g1 - 1);
@@ -3179,6 +3290,17 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
     // (A stretch whose one side holds no line of running text — a table's last column of figures beside its first
     // ones, «Tide (cm) / 35 / 31» — is not in columns: its rows read across.)
     const wordy = (ls: Line[]) => ls.some((l) => l.pieces.map((p) => p.text).join(' ').trim().split(/\s+/).length >= 4);
+    // (A document to edit: lines of running text on one side only under such a stretch — a column's text going on under a
+    // table set across the page — are that column's, not the table's: apart from it.)
+    if (p2d.edit) for (let i = 0; i < raw.length; i++) {
+      const r = raw[i]; if (r.full || !r.left!.length || !r.right!.length || (wordy(r.left!) && wordy(r.right!))) continue;
+      const lo = r.orig!; let k = lo.length; const side = (l: Line) => (!l.pieces.some((p) => p.text.trim() && p.l >= g1 - 1) ? 'L' : !l.pieces.some((p) => p.text.trim() && p.r <= g0 + 1) ? 'R' : '');
+      const s0 = side(lo[lo.length - 1]); if (!s0) continue;
+      while (k > 0 && side(lo[k - 1]) === s0) k--;
+      const tail = lo.slice(k), head = lo.slice(0, k); if (tail.length < 2 || !head.length || !wordy(tail)) continue;
+      const cut = (ls: Line[]) => ({ orig: ls, left: r.left!.filter((x) => ls.some((l) => l.base === x.base)), right: r.right!.filter((x) => ls.some((l) => l.base === x.base)) });
+      raw.splice(i, 1, cut(head), cut(tail));
+    }
     for (let i = 0; i < raw.length; i++) { const r = raw[i]; if (!r.full && r.left!.length && r.right!.length && !(wordy(r.left!) && wordy(r.right!))) raw[i] = { full: r.orig }; }
     for (let i = raw.length - 1; i > 0; i--) if (raw[i].full && raw[i - 1].full) { raw[i - 1].full!.push(...raw[i].full!); raw.splice(i, 1); }
     // A line or two between full-width ones that merely leaves the gutter blank (authors set apart under a
@@ -3236,7 +3358,13 @@ export async function analysePage(pdfjs: PdfJs, page: import('pdfjs-dist').PDFPa
         const sides = [r.left!, r.right!].filter((x) => x.length);
         if (sides.length < 2) {
           const ls = sides[0] ?? []; if (!ls.length) continue;
-          regions.push({ cols: [buildBlocks(ls, fonts, pageLo, pageHi, pitchCol, prevBase)], edges: [[pageLo, pageHi]] });
+          // (A document to edit: one column's text alone under a full-width figure or table keeps its column's measure —
+          // set in from the far side — not the page's.)
+          const e = edgesOf(ls), sz = median(ls.map((l) => l.size)), isL = ls === r.left;
+          const own = p2d.edit && ls.length >= 2 && (isL ? e[1] <= g0 + 1 && e[1] > g0 - sz * 2 : e[0] >= g1 - 1 && e[0] < g1 + sz * 2);
+          const bs = buildBlocks(ls, fonts, own ? e[0] : pageLo, own ? e[1] : pageHi, pitchCol, prevBase);
+          if (own) for (const b of bs) if (b.kind === 'p') { const a = e[0] - pageLo, z = pageHi - e[1]; b.indStart += b.rtl ? z : a; b.indEnd += b.rtl ? a : z; }
+          regions.push({ cols: [bs], edges: [[pageLo, pageHi]] });
           prevBase = endOf(ls[ls.length - 1]); continue;
         }
         const ordered = rtlPage ? [r.right!, r.left!] : [r.left!, r.right!];
@@ -3754,11 +3882,15 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
   // (For a document to edit: a paragraph's lines at the page's pitch, as a multiple of the "single" line of the font its
   // text is set in — the font the file carries, known once the fonts are built, so the body's paragraphs hold a token
   // filled in then: see lineFix.)
-  const lineFix: { pitch: number; size: number; font: string }[] = [];
+  const lineFix: { pitch: number; size: number; font: string; others?: [string, number][] }[] = [];
   const domFont = (runs: Run[]) => { const w = new Map<string, number>(); for (const r of runs) if (!r.art && r.text.trim()) w.set(r.font, (w.get(r.font) ?? 0) + r.text.length); return [...w].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''; };
   const autoLine = (pitch: number, size: number, runs: Run[], part: InstanceType<typeof W_.Part>): number | string => {
     if (part !== writer.body) return Math.max(200, Math.min(720, Math.round(240 * pitch / (size * (NAMED_LINE[domFont(runs)] ?? 1.17)))));
-    lineFix.push({ pitch, size, font: domFont(runs) }); return `\u00a7${lineFix.length - 1}\u00a7`;
+    // (Word and LibreOffice set a line as tall as its tallest font: a formula's sign in a math font of tall metrics
+    // beside the text's makes the line that much taller — so each other font of the line is known too.)
+    const dom = domFont(runs); const others = new Map<string, number>();
+    for (const r of runs) if (!r.art && r.text.trim() && r.font !== dom) others.set(r.font, Math.max(others.get(r.font) ?? 0, r.size));
+    lineFix.push({ pitch, size, font: dom, others: others.size ? [...others] : undefined }); return `\u00a7${lineFix.length - 1}\u00a7`;
   };
   const paraFor = (b0: Para, footnotes: Map<number, number> | null, part: InstanceType<typeof W_.Part>, extra: { before?: number; colBreak?: boolean; frame?: import('./docxwrite').Frame } = {}): string => {
     const b1 = ownStretch(b0); const b = p2d.edit && !extra.frame ? { ...b1, runs: plainRuns(b1.runs) } : b1;
@@ -3990,7 +4122,13 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
     if (foot > 0) {
       const b0 = all[foot] as Para;
       const at = pg.h - b0.base0! - BASE * b0.pitch;
-      const frame: import('./docxwrite').Frame = { x: Math.round(pg.m.left * PT), y: Math.round(at * PT), w: Math.round((pg.w - pg.m.left - pg.m.right) * PT), h: Math.round(b0.pitch * PT), rule: 'atLeast', anchorLock: true };
+      // (A line of it that starts out in the margin — a slide's source line under a picture, left of the text beside it — has a
+      // first line set out before the frame's edge, where LibreOffice cuts it off: the frame reaches out to it instead.)
+      const tail = all.slice(foot).filter((b): b is Para => b.kind === 'p');
+      const reach = tail.some((b) => b.rtl) ? 0 : Math.min(0, ...tail.map((b) => b.indStart + Math.min(0, b.firstLine)));
+      const out = Math.min(Math.max(0, pg.m.left - 1), -reach);
+      if (out > 0) for (let i = foot; i < all.length; i++) { const b = all[i]; if (b.kind === 'p') all[i] = { ...b, indStart: b.indStart + out }; }
+      const frame: import('./docxwrite').Frame = { x: Math.round((pg.m.left - out) * PT), y: Math.round(at * PT), w: Math.round((pg.w - pg.m.left - pg.m.right + out) * PT), h: Math.round(b0.pitch * PT), rule: 'atLeast', anchorLock: true };
       const nBody = pg.body.length;
       const above = all.slice(0, foot);
       const aboveXml = blocksFor(above.slice(0, Math.min(foot, nBody)), map, body) + blocksFor(above.slice(nBody), null, body);
@@ -4165,7 +4303,13 @@ async function convertPdf(book: Book, file: Blob, progress: Progress, password: 
       // (A carried font whose metrics are its glyphs' extremes — some PDFs' CJK subsets say nearly three lines — is not
       // what a word processor sets it at: the name's own line, else 1.2.)
       f = own && own <= 1.6 ? own : NAMED_LINE[font] || (own ? Math.min(own, 1.2) : 1.2); fac.set(font, f); } return f; };
-    await writer.mapBody((xml) => xml.replace(/w:line="\u00a7(\d+)\u00a7"/g, (_m, i: string) => { const x = lineFix[+i]; return `w:line="${Math.max(120, Math.min(720, Math.round(240 * x.pitch / (x.size * factorOf(x.font)))))}"`; }), yieldNow);
+    const spl = new Map<string, [number, number] | null>();
+    const splitOf = (font: string) => { if (!spl.has(font)) { const m = faces.get(font); const bytes = m ? m.get('Regular') ?? m.values().next().value : undefined; spl.set(font, bytes ? lineSplit(bytes) : null); } return spl.get(font)!; };
+    await writer.mapBody((xml) => xml.replace(/w:line="\u00a7(\d+)\u00a7"/g, (_m, i: string) => { const x = lineFix[+i]; let tall = x.size * factorOf(x.font);
+      // (Several fonts in the line: the highest ascent over the deepest descent, where the fonts carried say them.)
+      // (A font not carried — a common one a run asks for by name — is taken at its named line, four fifths above.)
+      if (x.others) { const all: [string, number][] = [[x.font, x.size], ...x.others]; const sp = all.map(([f, sz]) => { const v = splitOf(f) ?? [factorOf(f) * 0.78, factorOf(f) * 0.22]; return [v[0] * sz, v[1] * sz]; }); tall = Math.max(tall, Math.max(...sp.map((v) => v[0])) + Math.max(...sp.map((v) => v[1]))); }
+      return `w:line="${Math.max(120, Math.min(720, Math.round(240 * x.pitch / tall)))}"`; }), yieldNow);
   }
   const tc0 = performance.now();
   const zip = await writer.pack(embedded, !sink);
