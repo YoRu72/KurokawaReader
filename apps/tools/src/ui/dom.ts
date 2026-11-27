@@ -89,6 +89,8 @@ const PATHS: Record<string, string> = {
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   pause: '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
   stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+  brightness: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  fullscreenExit: '<path d="M3 8h3a2 2 0 0 0 2-2V3"/><path d="M16 3v3a2 2 0 0 0 2 2h3"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M8 21v-3a2 2 0 0 0-2-2H3"/>',
   fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   sidebar: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',

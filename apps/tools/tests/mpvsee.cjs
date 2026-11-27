@@ -33,7 +33,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
       openWith: async (o) => { window.__calls.push(['openWith', o.path || o.url]); },
     }, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
-    if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); const st = JSON.parse(localStorage.getItem('kt.settings') || '{}'); st.playerWith = 'app'; st.subLangs = ['ar', 'en']; localStorage.setItem('kt.settings', JSON.stringify(st));
+    if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1'); const st = JSON.parse(localStorage.getItem('kt.settings') || '{}'); st.playerWith = 'app'; st.subLangs = ['ar', 'en']; localStorage.setItem('kt.settings', JSON.stringify(st)); localStorage.setItem('kt.player.hint', '1'); /* (the one-time hint is a card over the picture by design; this test is about the page painting nothing there) */
   });
   await p.goto(`http://127.0.0.1:${port}/#/`); await p.waitForSelector('.task-card'); await p.click('.task-card button[aria-label="Play"]');
   await p.waitForTimeout(300); if (await p.$('.get-card')) await p.click('.get-card .btn.primary'); // (the player is built in)

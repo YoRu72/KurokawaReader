@@ -26,6 +26,7 @@
       "hunt.cjs": 480,
       "scene.cjs": 720,
       "gesturewalk.cjs": 1800,
+      "playerwalk.cjs": 920,
       "filesclip.cjs": 480,
       "filestauri.cjs": 480,
       "perfviews.cjs": 420

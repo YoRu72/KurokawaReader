@@ -31,6 +31,7 @@ import { siblingFiles, readLocal } from './files';
 import { SoundGraph, EQ_FREQS, EQ_PRESETS, presetValues } from './audio';
 import { Picture, FILTER_PRESETS, CROPS } from './vfx';
 import { SeekPreview } from './thumbs';
+import { Track } from '../ui/drag';
 import { mpvVideo, mpvDone, type MpvControl } from './mpv';
 /** Two-letter language codes and the three-letter ones files often carry (mpv matches either). */
 const ISO3: Record<string, string> = { ar: 'ara', en: 'eng', ja: 'jpn', fr: 'fre,fra', de: 'ger,deu', es: 'spa', it: 'ita', pt: 'por', ru: 'rus', zh: 'chi,zho', ko: 'kor', tr: 'tur', fa: 'per,fas', ur: 'urd', hi: 'hin', id: 'ind', ms: 'may,msa', th: 'tha', vi: 'vie', nl: 'dut,nld', pl: 'pol', uk: 'ukr', sv: 'swe', he: 'heb' };
@@ -74,6 +75,8 @@ export function openPlayer(src: PlayerSource): void {
   const stage = h('div', { class: 'kt-stage' }, video, h('canvas', { class: 'kt-ass' }), h('div', { class: 'kt-subs' }), h('div', { class: 'kt-subs top' }));
   const assCanvas = stage.querySelector('.kt-ass') as HTMLCanvasElement; const subBox = stage.querySelector('.kt-subs:not(.top)') as HTMLElement; const subTop = stage.querySelector('.kt-subs.top') as HTMLElement;
   const mem = memoryOf(key);
+  // (Everything the player hangs on the window or the document is taken off in one place when it closes.)
+  const offs: (() => void)[] = []; const listen = <K extends string>(target: EventTarget, type: K, fn: (e: never) => void, opts?: AddEventListenerOptions) => { target.addEventListener(type, fn as EventListener, opts); offs.push(() => target.removeEventListener(type, fn as EventListener, opts)); };
   // ---- state
   let controlsOn = true; let hideTimer = 0; let locked = false; let speed = P.defaultSpeed; let zoom = 1; let panX = 0, panY = 0; let aspect = (P.rememberAspect !== false ? mem?.aspect : undefined) ?? P.aspect; let abA: number | null = null, abB: number | null = null;
   let repeat = P.repeat; let rotate = 0; let flipH = false, flipV = false; let crop = ''; let marks: Bookmark[] = mem?.marks ?? [];
@@ -104,10 +107,11 @@ export function openPlayer(src: PlayerSource): void {
   const volBox = h('div', { class: 'kt-vol' }, volIcon, volSlider);
   const paintVol = () => { const v = video.muted ? 0 : Math.min(1, video.volume * boost); volSlider.value = String(Math.round(v * 100)); volSlider.style.setProperty('--v', `${Math.round(v * 100)}%`); volIcon.replaceChildren(icon(v === 0 ? 'volumeOff' : 'volume')); };
   video.addEventListener('volumechange', paintVol); queueMicrotask(paintVol);
+  const fsBtn = iconButton('fullscreen', t('fullscreen'), () => void fullscreen());
   const bottom = h('div', { class: 'kt-bottom' },
     h('div', { class: 'kt-row' }, timeNow, bar, timeEnd),
-    h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('undo', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('rotate', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null, volBox,
-      h('span', { class: 'grow' }), customBox, toolBox, iconButton('grid', t('playerTools'), () => toolsSheet()), iconButton('fullscreen', t('fullscreen'), () => void fullscreen())));
+    h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('rewind', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('fastForward', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null, volBox,
+      h('span', { class: 'grow' }), customBox, toolBox, iconButton('grid', t('playerTools'), () => toolsSheet()), fsBtn));
   // The big round play/pause in the middle (phone and computer): shown and hidden with the controls; only its own
   // disc takes a tap — the rest of the middle stays the stage's, for taps, double-taps and swipes.
   const bigPlay = h('button', { type: 'button', class: 'kt-bigplay', 'aria-label': t('play'), title: t('play'), onclick: (e: Event) => { e.stopPropagation(); toggle(); showControls(); } }, icon('play'));
@@ -115,7 +119,11 @@ export function openPlayer(src: PlayerSource): void {
   const ripple = h('div', { class: 'kt-ripple', hidden: true });
   const unlockBtn = iconButton('lock', t('unlock'), () => lock(false)); unlockBtn.classList.add('kt-unlock'); unlockBtn.hidden = true;
   const root = h('div', { class: 'player-view kt-player', role: 'dialog', 'aria-label': src.name }, stage, centre, ripple, top, bottom, unlockBtn, skipOp);
-  document.body.append(root);
+  // (Improvements: the volume / brightness level at the side, the time bubble on the seek bar, and the one-time hint.)
+  const levelFill = h('i', { class: 'kt-level-fill' }); const levelPct = h('b', null, ''); const levelIcon = h('span', { class: 'kt-level-icon' });
+  const level = h('div', { class: 'kt-level', role: 'status', hidden: true }, levelIcon, h('span', { class: 'kt-level-track' }, levelFill), levelPct);
+  const bubble = h('b', { class: 'kt-bubble', hidden: true }); const hint = h('div', { class: 'kt-hint', role: 'note', hidden: true });
+  root.append(level, hint); document.body.append(root); let levelTimer = 0; let hintTimer = 0;
   // (On the back stack: Back with the screen locked only shows the unlock button; else the player closes. Its full
   // screen is a layer of its own above it — Back leaves the full screen first.)
   const unBackPlayer = pushLayer({ kind: 'player', name: 'player', on: () => root.isConnected, back: () => { if (locked) { unlockBtn.hidden = false; unlockBtn.classList.remove('faded'); return true; } close(); return true; } });
@@ -126,11 +134,13 @@ export function openPlayer(src: PlayerSource): void {
   const isFull = () => document.fullscreenElement === root || pseudoFull;
   const onFullChange = () => {
     const on = isFull(); root.classList.toggle('kt-full', on);
+    // (The button draws what it will do: the corners out to enter, in to leave.)
+    fsBtn.replaceChildren(icon(on ? 'fullscreenExit' : 'fullscreen')); fsBtn.title = t(on ? 'fullscreenExit' : 'fullscreen'); fsBtn.setAttribute('aria-label', fsBtn.title); fsBtn.setAttribute('aria-pressed', String(on));
     if (on && !unBackFull) unBackFull = pushLayer({ kind: 'fullscreen', name: 'player full screen', on: () => root.isConnected, back: () => { void exitFull(); return true; } });
     else if (!on && unBackFull) { unBackFull(); unBackFull = null; }
     if (wasFull && !on) afterFull(); wasFull = on;
   };
-  document.addEventListener('fullscreenchange', onFullChange);
+  listen(document, 'fullscreenchange', onFullChange);
   // ---- the phone's turn («Rotate for full screen», phones only): turned sideways while playing, the full screen;
   // turned upright again, out of it. A full screen left while sideways (Back, the button) is not opened again until the
   // phone has been upright once. The button picks the turn from the video's shape — wide: either landscape side, as
@@ -143,7 +153,7 @@ export function openPlayer(src: PlayerSource): void {
     if (!landscape.matches) { armed = true; if (autoFull && isFull()) void exitFull(); return; }
     if (armed && !isFull() && !locked) { armed = false; autoFull = true; void enterFull(); }
   };
-  landscape.addEventListener('change', onTurn);
+  listen(landscape, 'change', onTurn);
   function afterFull() {
     autoFull = false; armed = !landscape.matches;
     if (turnedByButton) { turnedByButton = false; void turnScreen(getPrefs().orientation !== 'auto' ? 'landscape' : 'auto').catch(() => undefined); }
@@ -168,7 +178,7 @@ export function openPlayer(src: PlayerSource): void {
   const firstFrame = new Promise<void>((ok) => { const done = () => { window.clearTimeout(firstFrameTimer); video.removeEventListener('playing', done); ok(); }; video.addEventListener('playing', done); firstFrameTimer = window.setTimeout(done, 4000); });
   clockTick(); let clockTimer = 0;
   const gateTimers = () => { const live = !video.paused && !document.hidden && !playerGone; window.clearInterval(clockTimer); clockTimer = 0; if (live) { clockTick(); clockTimer = window.setInterval(clockTick, 20000); ambientTick(); } else window.clearInterval(ambTimer); };
-  video.addEventListener('play', gateTimers); video.addEventListener('pause', gateTimers); document.addEventListener('visibilitychange', gateTimers);
+  video.addEventListener('play', gateTimers); video.addEventListener('pause', gateTimers); listen(document, 'visibilitychange', gateTimers);
 
   // ---- playback
   if (src.headers && Object.keys(src.headers).length) toast(t('playerHeadersNote'));
@@ -189,6 +199,11 @@ export function openPlayer(src: PlayerSource): void {
     measureFps(); void checkSound(); window.setTimeout(() => void autoSubs(), 4000);
   }, { once: true });
   video.addEventListener('timeupdate', onTime); video.addEventListener('progress', drawBuffer);
+  // (Said once, the first time a video plays: what the picture answers to — the touches on a phone, the keys on a computer.)
+  const hintSeen = () => { try { return localStorage.getItem('kt.player.hint') === '1'; } catch { return true; } };
+  const dismissHint = () => { window.clearTimeout(hintTimer); if (!hint.hidden) hint.hidden = true; };
+  if (!hintSeen()) video.addEventListener('playing', () => { if (playerGone || hintSeen() || locked) return; try { localStorage.setItem('kt.player.hint', '1'); } catch { /* none */ } hint.textContent = t(phoneUi() ? 'playerHintTouch' : 'playerHintKeys'); hint.hidden = false; hintTimer = window.setTimeout(dismissHint, 7000); }, { once: true });
+
   const paintBig = () => { const on = !video.paused; bigPlay.replaceChildren(icon(on ? 'pause' : 'play')); bigPlay.setAttribute('aria-label', on ? t('pause') : t('play')); bigPlay.title = on ? t('pause') : t('play'); bigPlay.classList.toggle('playing', on); };
   video.addEventListener('play', paintBig); video.addEventListener('pause', paintBig);
   video.addEventListener('play', () => { playBtn.replaceChildren(icon('pause')); playBtn.setAttribute('aria-label', t('pause')); scheduleHide(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
@@ -236,13 +251,13 @@ export function openPlayer(src: PlayerSource): void {
   video.addEventListener('waiting', () => { centre.classList.add('busy'); clearTimeout(waitTimer); waitTimer = window.setTimeout(() => void waitTick(), 1500); });
   const unbusy = () => { centre.classList.remove('busy'); clearTimeout(waitTimer); waitLine.hidden = true; };
   video.addEventListener('playing', unbusy); video.addEventListener('canplay', unbusy);
-  let lastPosState = 0;
+  let lastPosState = 0; let lastSavedAt = -99;
   function onTime() {
     const d = video.duration || 0, c = video.currentTime;
     if (abA !== null && abB !== null && c >= abB) video.currentTime = abA;
     timeNow.textContent = fmtTime(c); if (d) timeEnd.textContent = endsAt ? t('endsAt', { t: new Date(Date.now() + ((d - c) / (video.playbackRate || 1)) * 1000).toLocaleTimeString(document.documentElement.lang || undefined, { hour: 'numeric', minute: '2-digit' }) }) : getPrefs().showRemaining ? `−${fmtTime((d - c) / (video.playbackRate || 1))}` : fmtTime(d); skipCheck(c); if (d) (bar.querySelector('.kt-played') as HTMLElement).style.width = `${(c / d) * 100}%`; (bar.querySelector('.kt-knob') as HTMLElement).style.insetInlineStart = d ? `${(c / d) * 100}%` : '0';
-    drawSubs(c);
-    if (Math.floor(c) % 5 === 0) { void import('./returnTo').then((r) => r.touchPlayerOpen()); const m = src.task?.meta ?? src.meta; remember(key, { pos: c, duration: d, speed, sub: current?.id, subDelay, ...(m?.anilistId || m?.imdbId ? { anilistId: m.anilistId, imdbId: m.imdbId, season: m.season, episode: m.episode, show: m.title, cover: m.cover } : {}) }); }
+    drawSubs(c); if (d) { bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', String(Math.round(d))); bar.setAttribute('aria-valuenow', String(Math.round(c))); bar.setAttribute('aria-valuetext', fmtTime(c)); }
+    if (Math.abs(c - lastSavedAt) >= 5 || c < lastSavedAt) { lastSavedAt = c; void import('./returnTo').then((r) => r.touchPlayerOpen()); const m = src.task?.meta ?? src.meta; remember(key, { pos: c, duration: d, speed, sub: current?.id, subDelay, ...(m?.anilistId || m?.imdbId ? { anilistId: m.anilistId, imdbId: m.imdbId, season: m.season, episode: m.episode, show: m.title, cover: m.cover } : {}) }); }
     if (d && P.markWatched && !watchedSent && c / d * 100 >= P.watchedAt) markWatched(false);
     // (Halfway through an episode: the next one's best release starts coming — Seanime's and Hayase's preload.)
     if (d && !preloadSent && c / d >= 0.5) { preloadSent = true; const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode && getSettings().animePreloadNext !== false) void import('../anime/watch').then((w) => w.preloadNext(m.anilistId!, m.episode!)).catch(() => undefined); }
@@ -284,13 +299,16 @@ export function openPlayer(src: PlayerSource): void {
     if (src.playlist?.length) { on('previoustrack', () => neighbour(-1)); on('nexttrack', () => neighbour(1)); }
   }
   // (Away from the app: paused, unless playing on in the background was chosen or the picture floats.)
-  const onHidden = () => { if (document.visibilityState === 'hidden' && !getPrefs().backgroundPlay && !document.pictureInPictureElement && !video.paused) video.pause(); };
-  document.addEventListener('visibilitychange', onHidden);
+  const onHidden = () => { if (document.visibilityState === 'hidden') saveNow(); if (document.visibilityState === 'hidden' && !getPrefs().backgroundPlay && !document.pictureInPictureElement && !video.paused) video.pause(); };
+  listen(document, 'visibilitychange', onHidden);
 
+  // (The place kept the moment the page is hidden or going away — the app killed, the tab shut — not only every few seconds.)
+  function saveNow() { if (!playerGone && video.currentTime > 0) remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay }); }
+  listen(window, 'pagehide', saveNow);
   // ---- controls visibility
   function showControls() { controlsOn = true; root.classList.remove('hide-ui'); scheduleHide(); }
   // (The timer never hides them while paused; a tap does — `byTap`.)
-  function hideControls(byTap = false) { if ((video.paused && byTap !== true) || locked) return; controlsOn = false; root.classList.add('hide-ui'); preview?.hide(); }
+  function hideControls(byTap = false) { if ((video.paused && byTap !== true) || locked || scrubbing || handlesHeld) { if (scrubbing || handlesHeld) scheduleHide(); return; } controlsOn = false; root.classList.add('hide-ui'); hidePreview(); }
   function scheduleHide() { window.clearTimeout(hideTimer); hideTimer = window.setTimeout(hideControls, Math.max(1, getPrefs().controlsTimeout) * 1000); }
   function lock(on: boolean) { locked = on; root.classList.toggle('locked', on); unlockBtn.hidden = !on; if (on) { root.classList.add('hide-ui'); setTimeout(() => { unlockBtn.classList.add('faded'); }, 2500); } else { unlockBtn.classList.remove('faded'); showControls(); } }
   scheduleHide();
@@ -298,55 +316,67 @@ export function openPlayer(src: PlayerSource): void {
   // ---- seek bar (with previews of the time under the finger)
   // (Not for a torrent still coming: each preview would fetch pieces far from where it plays.)
   const canPreview = () => !converted && getPrefs().seekPreview && !(src.task?.kind === 'torrent' && src.task.state !== 'done') && !(src.headers && Object.keys(src.headers).length) && (!!src.localPath || /^(http:\/\/127\.0\.0\.1|blob:|file:|https?:\/\/localhost)/.test(src.url));
-  const previewAt = (clientX: number) => { if (!canPreview() || !video.duration) return; if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } const rr = bar.parentElement!.getBoundingClientRect(); const f = fracAt(clientX); preview.show(f * video.duration, clientX - rr.left, rr.width); };
+  // (No picture to show — a stream coming, one that needs headers, the setting off —: the time alone, in a bubble over the bar.)
+  function hidePreview() { preview?.hide(); bubble.hidden = true; }
+  function bubbleAt(clientX: number, t: number) { if (!video.duration) return; if (!bubble.isConnected) bar.append(bubble); const r = bar.getBoundingClientRect(); bubble.hidden = false; bubble.textContent = fmtTime(t); const w = bubble.offsetWidth || 56; bubble.style.left = `${Math.max(0, Math.min(r.width - w, clientX - r.left - w / 2))}px`; }
+  const previewAt = (clientX: number) => { if (!video.duration) return; if (!canPreview()) { bubbleAt(clientX, fracAt(clientX) * video.duration); return; } if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } const rr = bar.parentElement!.getBoundingClientRect(); const f = fracAt(clientX); preview.show(f * video.duration, clientX - rr.left, rr.width); };
   const fracAt = (clientX: number) => { const r = bar.getBoundingClientRect(); const rtl = getComputedStyle(bar).direction === 'rtl'; let f = (clientX - r.left) / r.width; if (rtl) f = 1 - f; return Math.max(0, Math.min(1, f)); };
   const seekToX = (clientX: number) => { if (video.duration) seekTo(fracAt(clientX) * video.duration); };
-  let scrubbing = false;
-  bar.addEventListener('pointerdown', (e) => { if (locked) return; scrubbing = true; bar.setPointerCapture(e.pointerId); seekToX(e.clientX); previewAt(e.clientX); e.stopPropagation(); showControls(); });
+  let scrubbing = false; let handlesHeld = 0; let scrubFrom = 0;
+  bar.addEventListener('pointerdown', (e) => { if (locked || scrubbing) return; scrubbing = true; scrubFrom = video.currentTime; bar.setPointerCapture(e.pointerId); seekToX(e.clientX); previewAt(e.clientX); e.stopPropagation(); showControls(); });
   bar.addEventListener('pointermove', (e) => { if (scrubbing) { seekToX(e.clientX); flashText(fmtTime(video.currentTime)); previewAt(e.clientX); scheduleHide(); } else if (e.pointerType === 'mouse') previewAt(e.clientX); });
-  const endScrub = () => { scrubbing = false; preview?.hide(); };
-  bar.addEventListener('pointerup', endScrub); bar.addEventListener('pointercancel', endScrub); bar.addEventListener('pointerleave', () => { if (!scrubbing) preview?.hide(); });
-  bar.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') seekBy(5); else if (e.key === 'ArrowLeft') seekBy(-5); });
+  // (A cancel — the browser took the finger — puts the video back where it was; a release leaves it where the finger was.)
+  const endScrub = (e: Event) => { if (!scrubbing) return; scrubbing = false; hidePreview(); if (e.type === 'pointercancel') seekTo(scrubFrom); scheduleHide(); };
+  bar.addEventListener('pointerup', endScrub); bar.addEventListener('pointercancel', endScrub); bar.addEventListener('pointerleave', () => { if (!scrubbing) hidePreview(); });
+  // (Arrow keys on the focused bar are the window's own — one step size everywhere, not a second seek on top of it.)
   // A and B dragged along the bar (the frame shown as they move); a long press on «A/B» opens the clip sheet.
   for (const which of ['a', 'b'] as const) {
     const mk = bar.querySelector(`.kt-mark.${which}`) as HTMLElement;
-    mk.addEventListener('pointerdown', (e) => { if (locked) return; e.stopPropagation(); e.preventDefault(); mk.setPointerCapture(e.pointerId); video.pause();
+    mk.addEventListener('pointerdown', (e) => { if (locked) return; e.stopPropagation(); e.preventDefault(); mk.setPointerCapture(e.pointerId); video.pause(); handlesHeld++; const was = [abA, abB];
       const mv = (ev: PointerEvent) => { if (!video.duration) return; const v = fracAt(ev.clientX) * video.duration; if (which === 'a' && abB !== null) abA = Math.min(v, abB - 0.2); else if (which === 'a') abA = v; else if (abA !== null) abB = Math.max(v, abA + 0.2); seekTo(which === 'a' ? abA! : abB!); flashText(`${which.toUpperCase()} ${fmtTime(which === 'a' ? abA! : abB!)}`); drawMarks(); };
-      const up = () => { mk.removeEventListener('pointermove', mv); mk.removeEventListener('pointerup', up); mk.removeEventListener('pointercancel', up); };
+      const up = (ev: Event) => { mk.removeEventListener('pointermove', mv); mk.removeEventListener('pointerup', up); mk.removeEventListener('pointercancel', up); handlesHeld = Math.max(0, handlesHeld - 1); if (ev.type === 'pointercancel') { [abA, abB] = was; drawMarks(); } scheduleHide(); };
       mk.addEventListener('pointermove', mv); mk.addEventListener('pointerup', up); mk.addEventListener('pointercancel', up); });
   }
   onLongPress(abBtn, () => void cutSheet());
 
   // ---- gestures on the stage
   const EDGE = 28; const phoneUi = (): boolean => !document.documentElement.classList.contains('pc');
-  let tapTimer = 0; let lastTap = 0; let lastTapZone = -1; let pressTimer = 0; let pressing = false; let heldSpeed = 0; let gesture: 'none' | 'seek' | 'volume' | 'bright' | 'pinch' = 'none'; let start = { x: 0, y: 0, t: 0, vol: 1, br: 1 }; const pts = new Map<number, { x: number; y: number }>(); let pinchStart = 0; let zoomStart = 1; let moved = false; let edgeStart = false;
+  let tapTimer = 0; let lastTap = 0; let lastTapZone = -1; let pressTimer = 0; let pressing = false; let heldSpeed = 0; let gesture: 'none' | 'seek' | 'volume' | 'bright' | 'pinch' = 'none'; let start = { x: 0, y: 0, t: 0, vol: 1, br: 1 }; const pts = new Map<number, { x: number; y: number }>(); let pinchStart = 0; let zoomStart = 1; let moved = false; let edgeStart = false; let track = new Track(0, 0);
   let seekAcc = { side: 0, total: 0, timer: 0 };
   stage.addEventListener('pointerdown', (e) => {
+    dismissHint();
     if (locked) { unlockBtn.classList.remove('faded'); setTimeout(() => unlockBtn.classList.add('faded'), 2500); return; }
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); stage.setPointerCapture(e.pointerId); moved = false;
     // (The screen's own edges belong to the system's Back gesture: a drag that starts there seeks nothing, changes no volume.)
     edgeStart = pts.size === 1 && (e.clientX < EDGE || e.clientX > window.innerWidth - EDGE);
     if (pts.size === 2 && P.pinchZoom) { const [a, b] = [...pts.values()]; pinchStart = Math.hypot(a.x - b.x, a.y - b.y); zoomStart = zoom; gesture = 'pinch'; window.clearTimeout(pressTimer); return; }
-    start = { x: e.clientX, y: e.clientY, t: video.currentTime, vol: video.volume * boost, br: brightness }; gesture = 'none';
+    start = { x: e.clientX, y: e.clientY, t: video.currentTime, vol: video.volume * boost, br: brightness }; gesture = 'none'; track = new Track(e.clientX, e.clientY);
     pressTimer = window.setTimeout(() => { if (moved || pts.size !== 1) return; pressing = true; heldSpeed = speed * getPrefs().longPressSpeed; video.playbackRate = heldSpeed; flashText(`${localDigits(heldSpeed)}× ${getPrefs().holdSwipeSpeed ? '⇆' : ''}`, true); root.classList.add('holding'); if (navigator.vibrate) navigator.vibrate(10); }, 450);
   });
   stage.addEventListener('pointermove', (e) => {
     if (locked) return; const p = pts.get(e.pointerId); if (!p) return; pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (gesture === 'pinch' && pts.size === 2) { const [a, b] = [...pts.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); zoom = Math.max(1, Math.min(6, zoomStart * (d / pinchStart))); applyTransform(); flashText(`${localDigits(Math.round(zoom * 100))}%`); return; }
-    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y; track.add(e.clientX, e.clientY);
     // Held for speed: a swipe sideways changes it (a quarter for each 40 px), REX Player's way.
     if (pressing) { if (getPrefs().holdSwipeSpeed && Math.abs(dx) > 20) { const v = Math.max(0.25, Math.min(8, Math.round((speed * getPrefs().longPressSpeed + Math.trunc(dx / 40) * 0.25) * 100) / 100)); if (v !== heldSpeed) { heldSpeed = v; video.playbackRate = v; flashText(`${localDigits(v)}×`, true); } } return; }
     if (!moved && Math.hypot(dx, dy) > 18) { moved = true; window.clearTimeout(pressTimer); }
     if (!moved) return;
     if (edgeStart && gesture === 'none') return;
     const r = stage.getBoundingClientRect(); const left = start.x < r.left + r.width / 2; const volSide = getPrefs().swapSides ? left : !left;
-    if (gesture === 'none') { if (zoom > 1 && e.pointerType === 'touch') gesture = 'pinch'; else if (Math.abs(dx) > Math.abs(dy) * 1.2) gesture = P.swipeSeek ? 'seek' : 'none'; else if (Math.abs(dy) > Math.abs(dx) * 1.2) gesture = !phoneUi() ? 'none' : volSide ? (P.swipeVolume ? 'volume' : 'none') : (P.swipeBrightness ? 'bright' : 'none'); else return; }
+    if (gesture === 'none') { const axis = track.read(18, 1.2); if (zoom > 1 && e.pointerType === 'touch') gesture = 'pinch'; else if (axis === 'x') gesture = P.swipeSeek ? 'seek' : 'none'; else if (axis === 'y') gesture = !phoneUi() ? 'none' : volSide ? (P.swipeVolume ? 'volume' : 'none') : (P.swipeBrightness ? 'bright' : 'none'); else return; }
     if (gesture === 'pinch' && getPrefs().panZoomed !== false) { panX += e.movementX; panY += e.movementY; applyTransform(); }
-    else if (gesture === 'seek') { const dt = (dx / r.width) * Math.min(video.duration || 600, 600) * (getPrefs().swipeSensitivity / 100); const to = Math.max(0, Math.min(video.duration || 0, start.t + dt)); flashText(`${fmtTime(to)}  (${dt >= 0 ? '+' : '−'}${fmtTime(Math.abs(dt))})`, true); (stage as HTMLElement & { _seekTo?: number })._seekTo = to; if (canPreview()) { if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } showControls(); const rr = bar.parentElement!.getBoundingClientRect(); const br = bar.getBoundingClientRect(); const f = video.duration ? to / video.duration : 0; const rtl = getComputedStyle(bar).direction === 'rtl'; preview.show(to, (br.left - rr.left) + (rtl ? 1 - f : f) * br.width, rr.width); } }
-    else if (gesture === 'volume') { const v = Math.max(0, Math.min(1 + P.volumeBoost / 100, start.vol - dy / (r.height * 0.6) * 1.5)); setVolume(v); flashText(`🔊 ${localDigits(Math.round(v * 100))}%`); }
-    else if (gesture === 'bright') { brightness = Math.max(0.2, Math.min(1.6, start.br - dy / (r.height * 0.6) * 1.2)); applyFilters(); flashText(`☀ ${localDigits(Math.round(brightness * 100))}%`); if (getPrefs().rememberBrightness) updatePrefs({ brightness }); }
+    else if (gesture === 'seek') { const dt = (dx / r.width) * Math.min(video.duration || 600, 600) * (getPrefs().swipeSensitivity / 100); const to = Math.max(0, Math.min(video.duration || 0, start.t + dt)); flashText(`${fmtTime(to)}  (${dt >= 0 ? '+' : '−'}${fmtTime(Math.abs(dt))})`, true); (stage as HTMLElement & { _seekTo?: number })._seekTo = to; if (!canPreview() && video.duration) { showControls(); const br0 = bar.getBoundingClientRect(); const f0 = to / video.duration; bubbleAt(br0.left + (getComputedStyle(bar).direction === 'rtl' ? 1 - f0 : f0) * br0.width, to); } if (canPreview()) { if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } showControls(); const rr = bar.parentElement!.getBoundingClientRect(); const br = bar.getBoundingClientRect(); const f = video.duration ? to / video.duration : 0; const rtl = getComputedStyle(bar).direction === 'rtl'; preview.show(to, (br.left - rr.left) + (rtl ? 1 - f : f) * br.width, rr.width); } }
+    else if (gesture === 'volume') { const v = Math.max(0, Math.min(1 + P.volumeBoost / 100, start.vol - dy / (r.height * 0.6) * 1.5)); setVolume(v); showLevel('vol', v, start.x >= r.left + r.width / 2); }
+    else if (gesture === 'bright') { brightness = Math.max(0.2, Math.min(1.6, start.br - dy / (r.height * 0.6) * 1.2)); applyFilters(); showLevel('bright', brightness, start.x >= r.left + r.width / 2); if (getPrefs().rememberBrightness) updatePrefs({ brightness }); }
   });
   let bigTimer = 0;
+  /** The level drawn at the side of the picture while it changes (volume past the full mark and brightness too), for a moment. */
+  function showLevel(kind: 'vol' | 'bright', v: number, right = true) {
+    const max = kind === 'vol' ? 1 + P.volumeBoost / 100 : 1.6; const shown = video.muted && kind === 'vol' ? 0 : v;
+    levelFill.style.height = `${Math.max(0, Math.min(100, (shown / max) * 100))}%`; levelPct.textContent = `${localDigits(Math.round(shown * 100))}%`;
+    levelIcon.replaceChildren(icon(kind === 'bright' ? 'brightness' : shown === 0 ? 'volumeOff' : 'volume')); level.classList.toggle('left', !right); level.classList.toggle('over', kind === 'vol' && shown > 1);
+    level.hidden = false; window.clearTimeout(levelTimer); levelTimer = window.setTimeout(() => { level.hidden = true; }, 900);
+  }
   /** The big button shown for a moment over hidden controls (a tap that played or paused). */
   const flashBig = () => { root.classList.add('big-flash'); window.clearTimeout(bigTimer); bigTimer = window.setTimeout(() => root.classList.remove('big-flash'), 700); };
   const runTap = (a: TapAction, side: number) => {
@@ -364,8 +394,8 @@ export function openPlayer(src: PlayerSource): void {
     // (A cancel — the browser took the finger, the system's Back gesture began — is not a release: no seek is made, no tap counted; a held speed goes back.)
     const cancelled = e.type === 'pointercancel'; pts.delete(e.pointerId); window.clearTimeout(pressTimer);
     if (pressing) { pressing = false; root.classList.remove('holding'); if (getPrefs().rememberHoldSpeed && heldSpeed && speed) updatePrefs({ longPressSpeed: Math.round((heldSpeed / speed) * 100) / 100 }); video.playbackRate = speed; flashText(`${localDigits(speed)}×`); return; }
-    if (cancelled) { if (gesture === 'seek') { preview?.hide(); (stage as HTMLElement & { _seekTo?: number })._seekTo = undefined; } if (gesture !== 'pinch' || pts.size === 0) gesture = 'none'; moved = false; edgeStart = false; return; }
-    if (gesture === 'seek') { const to = (stage as HTMLElement & { _seekTo?: number })._seekTo; if (to !== undefined) seekTo(to); gesture = 'none'; preview?.hide(); return; }
+    if (cancelled) { if (gesture === 'seek') { hidePreview(); (stage as HTMLElement & { _seekTo?: number })._seekTo = undefined; } if (gesture !== 'pinch' || pts.size === 0) gesture = 'none'; moved = false; edgeStart = false; return; }
+    if (gesture === 'seek') { const to = (stage as HTMLElement & { _seekTo?: number })._seekTo; if (to !== undefined) seekTo(to); gesture = 'none'; hidePreview(); return; }
     if (gesture === 'pinch') { if (pts.size === 0) gesture = 'none'; return; }
     if (gesture !== 'none') { gesture = 'none'; return; }
     if (moved || locked) return;
@@ -383,7 +413,7 @@ export function openPlayer(src: PlayerSource): void {
       if (controlsOn) hideControls(true); else showControls(); }, 280);
   };
   stage.addEventListener('pointerup', endPointer); stage.addEventListener('pointercancel', endPointer);
-  stage.addEventListener('wheel', (e) => { if (locked) return; e.preventDefault(); if (e.ctrlKey) { zoom = Math.max(1, Math.min(6, zoom - e.deltaY / 500)); applyTransform(); } else setVolume(Math.max(0, Math.min(1 + P.volumeBoost / 100, (video.volume * boost) - e.deltaY / 1000))); showControls(); }, { passive: false });
+  stage.addEventListener('wheel', (e) => { if (locked) return; e.preventDefault(); if (e.ctrlKey) { zoom = Math.max(1, Math.min(6, zoom - e.deltaY / 500)); applyTransform(); } else { setVolume(Math.max(0, Math.min(1 + P.volumeBoost / 100, (video.volume * boost) - e.deltaY / 1000))); showLevel('vol', video.volume * boost); } showControls(); }, { passive: false });
 
   // ---- picture: aspect, crop, rotation, mirroring, zoom, filters
   function applyTransform() { if (zoom <= 1.001) { zoom = 1; panX = 0; panY = 0; } assCanvas.style.transform = pic.transform({ rotate, flipH, flipV, zoom, panX, panY, crop }); remember(key, { zoom, rotate, flipH, flipV, crop }); }
@@ -399,12 +429,14 @@ export function openPlayer(src: PlayerSource): void {
   const onKey = (e: KeyboardEvent) => {
     if (!root.isConnected) return; if ((e.target as HTMLElement).closest('.sheet, input, textarea')) return;
     const k = e.key;
+    // (Locked: no key does anything, as no touch does; Escape only shows the unlock button, like Back.)
+    if (locked) { if (k === 'Escape') { e.preventDefault(); unlockBtn.hidden = false; unlockBtn.classList.remove('faded'); } return; }
     if ((e.ctrlKey || e.metaKey) && /^[zy]$/i.test(k)) return;   // (undo-redo) Ctrl+Z / Ctrl+Y: Undo and Redo (ui/undo.ts); z alone stays the subtitle delay
     if (k === ' ' || k === 'k') { e.preventDefault(); toggle(); }
     else if (e.ctrlKey && (k === 'ArrowRight' || k === 'ArrowLeft')) subLine(k === 'ArrowRight' ? 1 : -1);
     else if (k === 'ArrowRight' || k === 'l') seekBy(e.shiftKey ? 60 : P.doubleTapSeek); else if (k === 'ArrowLeft' || k === 'j') seekBy(e.shiftKey ? -60 : -P.doubleTapSeek);
-    else if (k === 'ArrowUp') setVolume(Math.min(1 + P.volumeBoost / 100, video.volume * boost + 0.05)); else if (k === 'ArrowDown') setVolume(Math.max(0, video.volume * boost - 0.05));
-    else if (k === 'f') void fullscreen(); else if (k === 'm') { video.muted = !video.muted; flashText(video.muted ? '🔇' : '🔊'); } else if (k === '.' || k === 'e') frameStep(1); else if (k === ',') frameStep(-1);
+    else if (k === 'ArrowUp') { setVolume(Math.min(1 + P.volumeBoost / 100, video.volume * boost + 0.05)); showLevel('vol', video.volume * boost); } else if (k === 'ArrowDown') { setVolume(Math.max(0, video.volume * boost - 0.05)); showLevel('vol', video.volume * boost); }
+    else if (k === 'f') void fullscreen(); else if (k === 'm') { video.muted = !video.muted; showLevel('vol', video.volume * boost); } else if (k === '.' || k === 'e') frameStep(1); else if (k === ',') frameStep(-1);
     else if (k === '>' || k === ']' || k === '+') setSpeed(speed + (k === '+' ? 0.05 : 0.1)); else if (k === '<' || k === '[' || k === '-') setSpeed(speed - (k === '-' ? 0.05 : 0.1)); else if (k === '=') setSpeed(1);
     else if (k === 'Escape') { e.preventDefault(); if (isFull()) void exitFull(); else close(); }
     else if (k === 'a') abPress(); else if (k === 's' || k === 'S') void saveFrame(); else if (k === 'v') cycleSub(); else if (k === 'b') cycleAudio(); else if (k === 'c') cycleCrop(); else if (k === 'r') { rotate = ((rotate + 90) % 360) as 0; applyTransform(); flashText(`${localDigits(rotate)}°`); }
@@ -414,7 +446,7 @@ export function openPlayer(src: PlayerSource): void {
     else return;
     showControls();
   };
-  window.addEventListener('keydown', onKey);
+  listen(window, 'keydown', onKey);
 
   // ---- A/B, aspect, screenshot, pip, fullscreen
   function abPress() { if (abA === null) { abA = video.currentTime; flashText(`A ${fmtTime(abA)}`); } else if (abB === null) { abB = Math.max(abA + 0.5, video.currentTime); flashText(`B ${fmtTime(abB)}`); abBtn.classList.add('on'); } else { abA = abB = null; abBtn.classList.remove('on'); flashText(t('abOff')); } drawMarks(); }
@@ -487,7 +519,7 @@ export function openPlayer(src: PlayerSource): void {
     try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); } catch { toast(t('pipFailed'), 'error'); }
   }
   const pipArm = (on: boolean) => { if (nativePip()) void pipPlug()!.pipAuto?.({ on: on && getPrefs().pipOnLeave !== false, ...dims() }).catch(() => undefined); };
-  const onPipChange = (e: Event) => { const on = !!(e as CustomEvent<boolean>).detail; root.classList.toggle('kt-pip', on); if (on) { controlsOn = false; root.classList.add('hide-ui'); preview?.hide(); closeSheets(); } };
+  const onPipChange = (e: Event) => { const on = !!(e as CustomEvent<boolean>).detail; root.classList.toggle('kt-pip', on); if (on) { controlsOn = false; root.classList.add('hide-ui'); hidePreview(); closeSheets(); } else showControls(); };
   window.addEventListener('ktpip', onPipChange);
   video.addEventListener('play', () => pipArm(true)); video.addEventListener('pause', () => pipArm(false));
   async function fullscreen() {
@@ -1115,7 +1147,7 @@ export function openPlayer(src: PlayerSource): void {
     topToolBox.replaceChildren(...(P2.topTools ?? []).map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x)));
     root.classList.toggle('seek-below', !!P2.seekBelowButtons); root.classList.toggle('glass', !!P2.glassControls); root.classList.toggle('reduce-motion', !!P2.reduceMotion); root.classList.toggle('always-dark', P2.alwaysDark !== false);
   }
-  window.addEventListener('resize', drawTools);
+  listen(window, 'resize', drawTools);
   // (The subtitles lifted over the control bar by its real height, whatever the layout gives it.)
   const barRo = new ResizeObserver(() => { root.style.setProperty('--kt-bottom-h', `${bottom.getBoundingClientRect().height}px`); }); barRo.observe(bottom);
   /** The grid of every tool, as REX Player's legend shows them; and the bar's layout, chosen there. */
@@ -1427,8 +1459,10 @@ export function openPlayer(src: PlayerSource): void {
 
   // ---- closing
   function close() {
-    barRo.disconnect(); pipArm(false); window.removeEventListener('ktpip', onPipChange);
-    playerGone = true; window.clearTimeout(bigTimer); stopRepeat(); if (framePad) toggleFramePad(false);
+    barRo.disconnect(); stageRo.disconnect(); pipArm(false); window.removeEventListener('ktpip', onPipChange);
+    saveNow(); playerGone = true; for (const off of offs.splice(0)) off();
+    for (const id of [levelTimer, hintTimer, bigTimer, hideTimer, tapTimer, pressTimer, waitTimer, noticeTimer, firstFrameTimer, seekAcc.timer, (flash as HTMLElement & { _t?: number })._t ?? 0]) window.clearTimeout(id);
+    window.clearTimeout(bigTimer); stopRepeat(); if (framePad) toggleFramePad(false);
     remember(key, { pos: video.currentTime, duration: video.duration, speed, sub: current?.id, subDelay });
     // (Opened by another app: the position and the length handed back to it, and the app steps aside.)
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
