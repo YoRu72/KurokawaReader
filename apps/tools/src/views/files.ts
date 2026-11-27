@@ -1441,6 +1441,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     draw();
   };
 
+  let offFades: (() => void) | null = null;
   if (pk) {
     // (The picker: who asked and for what, above; Cancel and Select below; nothing that changes files.)
     root.classList.add('picker'); fab.remove(); root.querySelector('.topbar-actions button[data-icon="more"]')?.remove();
@@ -1454,8 +1455,16 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const rec = pickRecent();
     if (rec.length) (crumbs.parentElement ?? crumbs).before(h('div', { class: 'pick-recent', role: 'group', 'aria-label': t('pickRecent') }, h('span', { class: 'label' }, t('pickRecent')), ...rec.map((d) => h('button', { type: 'button', class: 'chip', title: d, dir: 'auto', onclick: () => go(d) }, icon('folder'), h('bdi', null, d.split('/').pop() || d)))));
     // (Cancel and Add of one width: the pair in a grid whose columns share the wider one's width.)
-    root.append(pickNote, h('div', { class: 'pick-bar' + (pk.req.multiple ? '' : ' single'), role: 'toolbar' }, ...(pk.req.multiple ? [pickCount] : [h('span', { class: 'grow' })]), h('span', { class: 'pick-acts' }, h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), ...(pk.req.multiple ? [pickGo] : []))));
+    root.append(pickNote, h('div', { class: 'pick-bar' + (pk.req.multiple ? '' : ' single'), role: 'toolbar' }, ...(pk.req.multiple ? [pickCount] : [h('span', { class: 'grow' })]), h('span', { class: 'pick-acts' }, h('button', { type: 'button', class: 'btn tonal pick-cancel', onclick: () => pk.cancel() }, t('cancel')), ...(pk.req.multiple ? [pickGo] : []))));
     drawPick();
+    // (D5b: a row that scrolls sideways fades where it is cut — the storages and the recent folders.)
+    const fades = [root.querySelector<HTMLElement>('.files-strip'), root.querySelector<HTMLElement>('.pick-recent')].filter((x): x is HTMLElement => !!x);
+    const edge = () => { for (const el of fades) { const r = el.getBoundingClientRect(); const kids = [...el.querySelectorAll<HTMLElement>('.chip, button')].map((k) => k.getBoundingClientRect()).filter((k) => k.width > 0); if (!kids.length || !r.width) { el.classList.remove('cut-l', 'cut-r'); continue; } const lo = Math.min(...kids.map((k) => k.left)), hi = Math.max(...kids.map((k) => k.right)); el.classList.add('pick-fade'); el.classList.toggle('cut-l', lo < r.left - 1); el.classList.toggle('cut-r', hi > r.right + 1); } };
+    for (const el of fades) el.addEventListener('scroll', edge, { passive: true });
+    const fadeObs = new MutationObserver(() => requestAnimationFrame(edge)); for (const el of fades) fadeObs.observe(el, { childList: true, subtree: true });
+    const fadeRo = new ResizeObserver(() => edge()); for (const el of fades) fadeRo.observe(el);
+    offFades = () => { fadeObs.disconnect(); fadeRo.disconnect(); for (const el of fades) el.removeEventListener('scroll', edge); };
+    requestAnimationFrame(edge);
   }
   // ---- «Everywhere in my folders» (a computer's Tauri shell): its panel over the folder, loaded on first use
   let ew: import('./filesearch').Everywhere | null = null;
@@ -1549,7 +1558,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   const unSwipe = swipeToOpen(root, () => drawer());
   // (Pulled down at the top: the folder read again — what another app changed shows.)
   const unPull = po.embedded ? () => undefined : pullToRefresh(root, () => load(), { scroller: () => body });
-  root.dispose = () => { if (pk && pageView) { prefs.view = pageView; pageView = null; } pcCtl?.dispose(); pcCtl = null; pcObs.disconnect(); stopSub?.(); stopSub = null; window.visualViewport?.removeEventListener('resize', onVv); keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); paneWatch.delete(drawActive); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
+  root.dispose = () => { offFades?.(); offFades = null; if (pk && pageView) { prefs.view = pageView; pageView = null; } pcCtl?.dispose(); pcCtl = null; pcObs.disconnect(); stopSub?.(); stopSub = null; window.visualViewport?.removeEventListener('resize', onVv); keepScroll(); gone = true; cntReset(); dragOff?.(); document.documentElement.classList.remove('files-selecting'); offPath(); mqW.removeEventListener('change', onMqW); clearTimeout(mqT); watchSelBar(false); clipWatch.delete(drawPaste); paneWatch.delete(drawActive); for (const r of liveJobs.values()) if (r.owner === me) r.owner = null; unSwipe(); unPull(); for (const [ev, fn] of [['touchstart', onTouchStart], ['touchmove', onTouchMove], ['touchend', onTouchEnd], ['touchcancel', onTouchEnd], ['wheel', onWheel]] as const) listEl.removeEventListener(ev, fn as EventListener); fast?.dispose(); fast = null; moreIo?.disconnect(); chunkIo?.disconnect(); dropThumbs(listEl); sub?.remove(); offQ?.(); offQ = null; offUnfinished?.(); unBack(); window.removeEventListener('keydown', onKeys); window.removeEventListener('scroll', onScrollKeep); body.removeEventListener('scroll', onScrollKeep); window.removeEventListener('kt:filesearch', onEverywhere); ew?.dispose(); ew = null; void wake?.release().catch(() => undefined); };
   /** What the computer's file manager (views/filesPc.ts) may reach of this pane. */
   const pcHost = (): import('./filesPc').PcHost => ({
     root, body, listEl, side: po.side, dual: !!po.embedded, peer: () => po.peer?.() ?? null,

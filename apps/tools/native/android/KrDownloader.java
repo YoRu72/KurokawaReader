@@ -61,8 +61,12 @@ final class KrDownloader {
     }
     /** The limit over every HTTP download at once (set from the settings). */
     static final Limiter GLOBAL = new Limiter(0);
+    /** (Tests only: tests/native/DlWalkT.java's full disk — a file that runs out of room —, the same on every machine,
+     *  root or not. Never set by the app.) */
+    interface Writers { RandomAccessFile open(File out) throws IOException; }
+    static volatile Writers testWriters = null;
     /** The file a download is written to: as it is, or — a MEGA file — through its decryption. */
-    static RandomAccessFile writer(File out, Opts opt) throws IOException { return opt != null && opt.megaKey != null && opt.megaKey.length == 32 ? new CtrFile(out, opt.megaKey) : new RandomAccessFile(out, "rw"); }
+    static RandomAccessFile writer(File out, Opts opt) throws IOException { Writers t = testWriters; if (t != null) return t.open(out); return opt != null && opt.megaKey != null && opt.megaKey.length == 32 ? new CtrFile(out, opt.megaKey) : new RandomAccessFile(out, "rw"); }
     /** A file whose every write is decrypted at its own place (MEGA: AES-128-CTR, the key the two halves of the node key
      *  XORed, the counter's first half the key's third quarter, its second half the block number) — so ranges, several
      *  connections and resuming all work as for any download. */

@@ -116,7 +116,16 @@ public class DlWalkT {
       }
       // (The folder cannot be written — a path through a file —, and a disk that is full: the engine's reason.)
       case "nofolder": { File f = new File(d, "afile"); f.createNewFile(); File o = new File(f, "x.bin.part"); Run r = fetch("/f/ok", o, new File(d, "nf.state"), 4, new AtomicBoolean(), null); r.out = new File(d, "zz"); print(c, r, null); break; }
-      case "full": { File small = new File(System.getProperty("walk.full", "")); if (!small.isDirectory()) { System.out.println("WALK {\"case\":\"full\",\"state\":\"skipped\"}"); break; } File o = new File(small, "full.bin.part"); Run r = fetch("/f/ok", o, new File(small, "full.state"), 4, new AtomicBoolean(), null); print(c, r, null); o.delete(); new File(small, "full.state").delete(); break; }
+      // (A full disk: the file the engine writes to runs out of room after 1 MB and says what the system says then — the
+      // same on every machine, root or not; a 1 MB tmpfs answered «no access» on a runner whose mount was not its own.)
+      case "full": { final long room = 1L << 20;
+        KrDownloader.testWriters = (f) -> new RandomAccessFile(f, "rw") {
+          private void need(long n) throws IOException { if (getFilePointer() + n > room) throw new IOException("No space left on device"); }
+          @Override public void write(int b) throws IOException { need(1); super.write(b); }
+          @Override public void write(byte[] b) throws IOException { need(b.length); super.write(b); }
+          @Override public void write(byte[] b, int off, int len) throws IOException { need(len); super.write(b, off, len); } };
+        try { File o = new File(d, "full.bin.part"); Run r = fetch("/f/ok", o, new File(d, "full.state"), 4, new AtomicBoolean(), null); print(c, r, null); o.delete(); new File(d, "full.state").delete(); }
+        finally { KrDownloader.testWriters = null; } break; }
       // (No server at all — offline —, then back.)
       case "offline": { Run r = new Run(); long t0 = System.currentTimeMillis(); AtomicLong got = new AtomicLong(); KrDownloader.Result res = new KrDownloader.Result(); r.res = res; r.out = out;
         Thread back = new Thread(() -> { try { Thread.sleep(2500); ctl("offline", "online"); } catch (Exception ignored) {} }); ctl("offline", "offline"); back.start();

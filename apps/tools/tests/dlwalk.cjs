@@ -7,7 +7,7 @@
 //     40 %, a byte a second for 30 s, five redirects and a loop, Content-Disposition names (RTL, slashes, 300
 //     characters, reserved, trailing dot, «..», a bidi control), two downloads to one name at once, ten quick pauses,
 //     removed while running, the app killed mid-way (a child JVM), offline then back, a folder that cannot be written
-//     and a full disk (a 1 MB tmpfs when this runs as root). For each: the state and reason the engine reports, the
+//     and a full disk (the harness's file that runs out of room after 1 MB: the same on every machine). For each: the state and reason the engine reports, the
 //     bytes, the file's SHA-256 against the source, what is left in the folder, the threads still running.
 //  2. the page — the downloads list fed (a made-up phone plugin and a made-up computer bridge) with the cards those
 //     runs end in, plus queued / paused / held / retrying ones: each card's line in en and ar (numbers never NaN,
@@ -108,17 +108,11 @@ function compile() {
   execFileSync("javac", ['-nowarn', '-d', path.join(d, 'out'), ...['KtCore.java', 'KrDownloader.java', 'KtNameSafe.java', 'KtDlRules.java', 'DlWalkT.java'].map((f) => path.join(d, f))], { stdio: ['ignore', 'ignore', 'pipe'] });
   return d;
 }
-function smallDisk() {
-  if (process.getuid?.() !== 0) return '';
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-dlwalk-full-'));
-  try { execFileSync('mount', ['-t', 'tmpfs', '-o', 'size=1m', 'tmpfs', d], { stdio: 'ignore' }); return d; } catch { return ''; }
-}
 async function engine(port) {
   let jd; try { jd = compile(); } catch (e) { ok('engine: KrDownloader compiles (javac)', false, String(e.stderr || e).split('\n').filter((l) => !/^Picked up/.test(l)).join('\n').slice(0, 600)); return {}; }
-  const work = path.join(jd, 'work'); const full = smallDisk();
+  const work = path.join(jd, 'work');
   const want = (ONLY ? CASES.filter((c) => ONLY.includes(c)) : CASES);
-  const out = await new Promise((res) => { const p = spawn('java', ['-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dsun.stdout.encoding=UTF-8', `-Dwalk.full=${full}`, '-cp', path.join(jd, 'out'), 'DlWalkT', `http://127.0.0.1:${port}`, work, ...want], { stdio: ['ignore', 'pipe', 'pipe'] }); let o = ''; p.stdout.setEncoding('utf8'); p.stdout.on('data', (d) => { o += d; process.stdout.write(String(d).split('\n').filter((l) => l.startsWith('WALK ')).map((l) => `   · ${l.slice(5, 220)}\n`).join('')); }); p.stderr.on('data', () => {}); p.on('close', () => res(o)); });
-  if (full) try { execFileSync('umount', [full], { stdio: 'ignore' }); fs.rmdirSync(full); } catch { /* left */ }
+  const out = await new Promise((res) => { const p = spawn('java', ['-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dsun.stdout.encoding=UTF-8', '-cp', path.join(jd, 'out'), 'DlWalkT', `http://127.0.0.1:${port}`, work, ...want], { stdio: ['ignore', 'pipe', 'pipe'] }); let o = ''; p.stdout.setEncoding('utf8'); p.stdout.on('data', (d) => { o += d; process.stdout.write(String(d).split('\n').filter((l) => l.startsWith('WALK ')).map((l) => `   · ${l.slice(5, 220)}\n`).join('')); }); p.stderr.on('data', () => {}); p.on('close', () => res(o)); });
   const R = {}; for (const l of out.split('\n')) if (l.startsWith('WALK ')) { try { const j = JSON.parse(l.slice(5)); R[j.case] = j; } catch { /* torn */ } }
   const has = (c) => want.includes(c); const g = (c) => R[c] || {};
   const done = (c, src, extra = '') => { const r = g(c); ok(`engine ${c}: done and whole${extra}`, r.state === 'done' && r.sha === sha(src) && r.size === src.length, { state: r.state, error: r.error, got: r.got, size: r.size, shaOk: r.sha === sha(src) }); };
@@ -146,7 +140,8 @@ async function engine(port) {
   if (has('crash')) { const r = g('crash'); done('crash', V1, ' after the app was killed at ~40 %'); ok('engine crash: …gone on from the record (not from 0)', r.firstAt >= SIZE * 0.2, { firstAt: r.firstAt, killedAt: r.killedAt }); }
   if (has('offline')) { const r = g('offline'); done('offline', V1, ' (no connection for 2.5 s, then back)'); ok('engine offline: the waits told as «net»', r.retryWhy === 'net', r.retryWhy); }
   if (has('nofolder')) { const r = g('nofolder'); ok('engine nofolder: a folder that cannot be written fails with a reason', r.state === 'failed' && !!r.error, r); }
-  if (has('full')) { const r = g('full'); if (r.state === 'skipped') console.log('skip engine full: no small filesystem here (needs root for a 1 MB tmpfs)'); else ok('engine full: a full disk fails with «No space left»', r.state === 'failed' && /No space/i.test(r.error || ''), r); }
+  if (has('full')) { const r = g('full'); ok('engine full: a full disk fails with «No space left», after the bytes that fitted', r.state === 'failed' && /No space/i.test(r.error || '') && r.error !== 'noFolderAccess' && r.got > 0, r); }
+  if (has('full') && has('nofolder')) ok('engine: a full disk told apart from a folder that cannot be written', !!g('nofolder').error && !/No space/i.test(g('nofolder').error) && /No space/i.test(g('full').error || ''), [g('nofolder').error, g('full').error]);
   try { fs.rmSync(jd, { recursive: true, force: true }); } catch { /* left */ }
   return R;
 }

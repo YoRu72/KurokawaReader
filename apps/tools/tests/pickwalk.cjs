@@ -73,6 +73,13 @@ async function layoutChecks(p, L) {
     return { small, bar, over: document.documentElement.scrollWidth - window.innerWidth };
   });
   ok(`${L} targets ≥ 40 px`, !lay.small.length, lay.small.slice(0, 6));
+  // (D5b) the bar's buttons alike: each filled or tonal (no bare word), Cancel alone as wide as beside Add
+  const look = await p.evaluate(() => [...document.querySelectorAll('.pick-bar button')].map((b) => [getComputedStyle(b).backgroundColor, Math.round(b.getBoundingClientRect().width)]));
+  ok(`${L} the bar's buttons all of a button's shape, 112 px at least`, look.every(([bg, w]) => !/rgba\(0, 0, 0, 0\)|transparent/.test(bg) && w >= 112), look);
+  // (D5b) the sideways rows: at scroll 0 the first chip whole and at the content's padding; a cut edge fades
+  const rows = await p.evaluate(() => [...document.querySelectorAll('.files-view.picker .files-strip, .pick-recent')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => { const rtl = getComputedStyle(e).direction === 'rtl'; e.scrollLeft = 0; const r = e.getBoundingClientRect(); const kids = [...e.querySelectorAll('.chip')].map((k) => k.getBoundingClientRect()).filter((k) => k.width > 0); const first = kids[0]; const pad = first ? (rtl ? r.right - first.right : first.left - r.left) : 16; const over = e.scrollWidth > e.clientWidth + 1; return { cls: e.className, rtl, pad: Math.round(pad), whole: !first || (first.left >= r.left - 1 && first.right <= r.right + 1), over, cutStart: e.classList.contains(rtl ? 'cut-r' : 'cut-l'), cutEnd: e.classList.contains(rtl ? 'cut-l' : 'cut-r'), mask: getComputedStyle(e).webkitMaskImage || getComputedStyle(e).maskImage }; }));
+  ok(`${L} sideways rows start whole at the content's padding (16 px)`, rows.every((x) => x.whole && x.pad >= 12 && x.pad <= 20), rows);
+  ok(`${L} a row cut at its end fades there, not at its start`, rows.every((x) => !x.over || (x.cutEnd && !x.cutStart && x.mask && x.mask !== 'none')), rows);
   ok(`${L} the bar's buttons of equal width`, lay.bar.length < 2 || Math.max(...lay.bar) - Math.min(...lay.bar) <= 1, lay.bar);
   ok(`${L} no sideways scroll`, lay.over <= 1, lay.over);
 }
@@ -174,7 +181,7 @@ async function walk(browser, z, lang, width, height) {
     ok(`${L} two chosen: the count${ar ? ' as «العدد: 2» (said once, beside Add)' : ''}, Add${ar ? '' : ' (2)'} on`, st[2] === false && (ar ? /العدد: 2/.test(st[0]) && /إضافة/.test(st[1]) : /2 files/.test(st[0]) && /Add \(2\)/.test(st[1])), st);
     ok(`${L} the count shown whole, not cut`, await p.$eval('.pick-bar .pick-count', (e) => e.scrollWidth <= e.clientWidth + 1));
     await layoutChecks(p, L);
-    if (lang === 'ar' && width === 412) await p.screenshot({ path: path.join(SHOTS, 'D5-pick-many-ar.png') });
+    if (lang === 'ar' && width === 412) await p.screenshot({ path: path.join(SHOTS, 'D5b-pick-many-ar.png') });
     // a chosen one tapped twice quickly: chosen again, the count back where it was
     await tap(p, row(p, 'deep.txt')); await tap(p, row(p, 'deep.txt')); await p.waitForTimeout(200);
     ok(`${L} a row tapped twice quickly: still chosen, two in all`, ar ? /العدد: 2/.test(await p.textContent('.pick-bar .pick-count')) : /2 files/.test(await p.textContent('.pick-bar .pick-count')));
@@ -193,7 +200,7 @@ async function walk(browser, z, lang, width, height) {
       const { p, errors } = await openPick(browser, z, { lang, width, height, req: REQ.media }); const L = `${L0} cancel by ${how}:`;
       await p.waitForSelector('.files-view.picker .files-row', { timeout: 15000 }); await p.waitForTimeout(300);
       await intoFolder(p, 'Camera'); await tap(p, row(p, 'shot-1.jpg')); await tap(p, row(p, 'clip.mp4')); await p.waitForTimeout(150);
-      if (how === 'button') { await tap(p, '.pick-bar .btn.text'); await tap(p, '.pick-bar .btn.text').catch(() => undefined); }
+      if (how === 'button') { await tap(p, '.pick-bar .pick-cancel'); await tap(p, '.pick-bar .pick-cancel').catch(() => undefined); }
       else if (how === 'x') await tap(p, '.files-view.picker .pick-close');
       else { await p.evaluate(() => window.__back()); await p.waitForTimeout(300); await p.evaluate(() => window.__back()); }
       await p.waitForTimeout(500); const d = await done(p);
