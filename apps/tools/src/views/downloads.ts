@@ -6,7 +6,7 @@ import { swipeable } from '../ui/swipe';
 import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
 import { t, formatBytes, localDigits, countItems } from '../i18n';
-import { isStalled, phaseShort } from '../downloads/live';
+import { isStalled, phaseShort, steadyEta, retryLine } from '../downloads/live';
 import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem, retryPlatformEngine, mainFilePath } from '../engine';
 import { canShareFiles, shareFiles } from '../ui/shareMany';
 import { noteOf, countFinished, autoClean, retryFailed, exportList, importList, stats } from '../downloads/extras';
@@ -22,7 +22,7 @@ import { historyOf, sparkline } from './taskmap';
 import { torEngineBadge } from './engineInfo';
 import { offerUndo } from '../ui/undo';
 import { onBack } from '../ui/backstack';
-import { plainEngineError } from '../downloads/errors';
+import { plainEngineError, failureOf, retryWhenOnline, type Failure } from '../downloads/errors';
 import { nameNodes, setName, nameDir } from '../ui/fileName';
 // (undo-redo) Downloads taken off the list with an Undo are only held out of sight until it is over — every kind,
 // a video or a .torrent's too, which the trash cannot put back —, then removed for real; Undo shows them again as
@@ -190,7 +190,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     placeRows(nodes);
     if (!vis.length && tasks.length) list.append(h('p', { class: 'empty small' }, t('noResults')));
     else list.querySelector(':scope > p.empty')?.remove();
-    drawSelectBar(); drawStatus();
+    drawSelectBar(); drawStatus(); tickIfWaiting();
   };
   const cardFor = (x: Task): HTMLElement => { let el = cards.get(x.id); if (!el) { el = card(x); cards.set(x.id, el); } else update(el, x); return el; };
   /* ---------- several at once ---------- */
@@ -211,9 +211,12 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const bar = (x: Task) => (x.total > 0 ? Math.min(100, (x.done / x.total) * 100) : 0);
   const line2 = (x: Task): string => {
-    const show = dlPrefs().show; const parts: string[] = [x.heldBy === 'metered' ? t('heldMetered') : x.heldBy === 'battery' ? t('heldBattery') : stateLabel(x.state)];
+    // (A failure says its reason first — on a phone the line is cut at its end, where the reason was —; one waiting to ask
+    // the server again says why and counts down to it.)
+    const show = dlPrefs().show; const fail = x.state === 'failed' ? failureOf(x.error) : null; const wait = retryLine(x, fmtEta);
+    const parts: string[] = [fail ? fail.text : wait ?? (x.heldBy === 'metered' ? t('heldMetered') : x.heldBy === 'battery' ? t('heldBattery') : stateLabel(x.state))];
     if (!show.size) { /* sizes hidden */ } else if (x.total > 0) parts.push(t('bytesOf', { done: formatBytes(x.done), total: formatBytes(x.total) })); else if (x.done) parts.push(formatBytes(x.done));
-    if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); if (x.eta && show.eta) parts.push(t('etaLeft', { t: fmtEta(x.eta) })); }
+    if (x.state === 'downloading' || x.state === 'metadata') { if (x.downSpeed && show.speed) parts.push(t('speedDown', { s: t('perSecond', { n: formatBytes(x.downSpeed) }) })); const eta = steadyEta(x); if (eta !== undefined && show.eta && !wait) parts.push(t('etaLeft', { t: fmtEta(eta) })); }
     if ((x.kind === 'video' || x.meta?.hls) && (x.state === 'downloading' || x.state === 'metadata')) { const m = x.meta ?? {}; if (m.frags) parts.push(t('hlsPieces', { i: localDigits(String(m.frag ?? 0)), n: localDigits(String(m.frags)) })); if (m.phase) parts.push(phaseShort(m.phase)); }
     if (x.state === 'downloading' && isStalled(x)) parts.push(t('stalled'));
     // (A waiting video's place first after its state: on a phone the line is cut at its end.)
@@ -223,7 +226,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (x.state === 'seeding' && x.upSpeed) parts.push(t('speedUp', { s: t('perSecond', { n: formatBytes(x.upSpeed) }) }));
     if (show.peers && x.kind === 'torrent' && (x.peers !== undefined || x.seeds !== undefined) && x.state !== 'done') parts.push(t('peersSeeds', { peers: localDigits(x.peers ?? 0), seeds: localDigits(x.seeds ?? 0) }));
     { const b = torEngineBadge(x); if (b) parts.push(b); }   // (stage M3: debuggable builds only)
-    if (x.state === 'failed' && x.error) parts.push(x.error === 'page' ? t('errPageShort') : x.error === 'noFolderAccess' ? t('errNoFolderAccessShort') : (plainEngineError(x.error) ?? x.error));
+    if (x.state === 'failed' && x.error && !fail) parts.push(plainEngineError(x.error) ?? x.error);
     { const n = noteOf(x.id); if (n) parts.push(`✎ ${n}`); }
     return parts.join(' · ');
   };
@@ -246,12 +249,12 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   // (Keyed rows, each redrawn only when what it shows changed: a progress push of a long list touches the few rows that
   // moved, not every row's text and buttons — tests/rowpatch.cjs measures a list of 200 with 5 under way.)
   const seen = new WeakMap<HTMLElement, { key: string; acts: string }>();
-  const rowKey = (x: Task): string => { const m = x.meta ?? {}; const P = dlPrefs(); return [x.state, x.done, x.total, x.downSpeed, x.upSpeed, x.eta, displayName(x), x.error, x.heldBy, x.peers, x.seeds, x.readyFile, m.phase, m.frag, m.frags, m.dhtFallback, noteOf(x.id), places.get(x.id), x.state === 'downloading' && isStalled(x), JSON.stringify(P.show), P.look].join('|'); };
+  const rowKey = (x: Task): string => { const m = x.meta ?? {}; const P = dlPrefs(); return [x.state, x.done, x.total, x.downSpeed, x.upSpeed, x.eta, displayName(x), x.error, x.heldBy, x.peers, x.seeds, x.readyFile, m.phase, m.frag, m.frags, m.dhtFallback, noteOf(x.id), places.get(x.id), x.state === 'downloading' && isStalled(x), JSON.stringify(P.show), P.look, x.retryAt ? Math.ceil((x.retryAt - Date.now()) / 1000) : 0, x.retryWhy, Math.round((steadyEta(x) ?? -1) / 5)].join('|'); };
   const update = (el: HTMLElement, x: Task) => {
     const key = rowKey(x); const was = seen.get(el); if (was && was.key === key) return;
-    const actsKey = `${x.state}|${x.heldBy ?? ''}|${displayName(x)}|${x.files?.length ?? 0}`;
+    const fail = x.state === 'failed' ? failureOf(x.error) : null; const actsKey = `${x.state}|${x.heldBy ?? ''}|${displayName(x)}|${x.files?.length ?? 0}|${fail?.step ?? ''}`;
     { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
-    { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); }
+    { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); el.classList.toggle('waiting', !!retryLine(x, fmtEta)); }
     setName(el.querySelector('.task-name') as HTMLElement, displayName(x));
     (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
     // (The fill is a full-width bar scaled — eased by the compositor, not by laying out the whole list on every frame
@@ -264,11 +267,23 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (ACTIVE.includes(x.state) && eng.can.pause) acts.append(iconButton('pause', t('pause'), (e) => { e.stopPropagation(); void eng.pause(x.id).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'paused') acts.append(iconButton('play', t(x.heldBy ? 'downloadNow' : 'resume'), (e) => { e.stopPropagation(); void eng.resume(x.id, !!x.heldBy).catch((er) => toast(String(er.message ?? er), 'error')); }));
     if (x.state === 'failed') acts.append(iconButton('refresh', t('retry'), (e) => { e.stopPropagation(); void eng.resume(x.id).catch(() => eng.remove(x.id, false).then(() => eng.add({ source: x.source, dir: x.dir, name: x.name, meta: x.meta }))).catch((er) => toast(String(er.message ?? er), 'error')); }));
+    // (The step that helps this failure, on the card itself: a new link — the bytes here kept —, another folder, the page.)
+    if (x.state === 'failed' && fail) { const b = nextStep(x, fail); if (b) acts.append(b); }
     if (x.state === 'done' && isVideo(displayName(x))) acts.append(iconButton('play', t('play'), (e) => { e.stopPropagation(); void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => isVideo(f.path))?.index ?? 0)).catch((er) => toast(String(er.message ?? er), 'error')); }));
     // (Done: a video or a sound plays in the app; anything else opens in the system's viewer.)
     else if (x.state === 'done' && eng.open) { const media = x.files.some((f) => f.priority > 0 && isMedia(f.path)) || isMedia(x.name); acts.append(iconButton(media ? 'play' : 'external', t(media ? 'play' : 'open'), (e) => { e.stopPropagation(); if (media) { void import('./player').then((m) => m.playTaskFile(x, x.files.find((f) => f.priority > 0 && isMedia(f.path))?.index ?? 0)).catch((er) => toast(String((er as Error).message ?? er), 'error')); return; } void eng.open!(x.id).catch((er) => toast(String(er.message ?? er) === 'notFound' ? t('fileGone') : String(er.message ?? er), 'error')); })); }
     acts.append(iconButton('more', t('more'), (e) => { e.stopPropagation(); taskMenu(tasks.find((y) => y.id === x.id) ?? x, e); }));
   };
+  const nextStep = (x: Task, f: Failure): HTMLElement | null => {
+    const eng = getEngine(); const mark = (b: HTMLElement, act: string) => { b.dataset.act = act; return b; };
+    if (f.step === 'newUrl' && x.kind === 'http' && eng.setUrl) return mark(iconButton('link', t('newLinkShort'), (e) => { e.stopPropagation(); newUrlSheet(tasks.find((y) => y.id === x.id) ?? x); }), 'newUrl');
+    if (f.step === 'chooseFolder') return mark(iconButton('folder', t('pickFolderShort'), (e) => { e.stopPropagation(); void intoAnotherFolder(tasks.find((y) => y.id === x.id) ?? x); }), 'chooseFolder');
+    if (f.step === 'browser' && x.source.url && canBrowse()) return mark(iconButton('globe', t('openInBrowser'), (e) => { e.stopPropagation(); openBrowser(x.source.url!); }), 'browser');
+    return null;
+  };
+  // (A card counting down to its next try is redrawn each second while there is one; the clock stops with the last.)
+  let tickTimer = 0;
+  const tickIfWaiting = () => { const any = tasks.some((x) => x.state === 'downloading' && (x.retryAt ?? 0) > Date.now()); if (any && !tickTimer) tickTimer = window.setInterval(() => { if (!root.isConnected) return; if (!tasks.some((x) => x.state === 'downloading' && (x.retryAt ?? 0) > Date.now() - 1000)) { window.clearInterval(tickTimer); tickTimer = 0; } draw(); }, 1000); };
   const taskMenu = (x: Task, at?: Event) => {
     const sh = openSheet(displayName(x), t('close'), { at });
     const eng = getEngine();
@@ -322,6 +337,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   };
   const onVis = () => { if (document.visibilityState === 'visible' && root.isConnected) paintNow(); }; document.addEventListener('visibilitychange', onVis);
   let off = getEngine().onChange(got);
+  retryWhenOnline(() => getEngine().list(), (id) => getEngine().resume(id), (n) => toast(t('onlineResumed', { n: localDigits(n) })));
   const offEngine = onEngineChange((e) => { off(); off = e.onChange(got); });
   const reheld = () => { tasks = raw.filter((x) => !held.has(x.id)); for (const id of held) picked.delete(id); draw(); }; heldWatch.add(reheld);
   draw();
@@ -339,7 +355,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   window.addEventListener('keydown', onKey);
   // (Back: out of the selection first, then the search closed — before the app is left.)
   const unBack = onBack(() => { if (!root.isConnected) return false; if (selecting) setSelecting(false); else if (!searchRow.hidden) { searchIn.value = ''; query = ''; searchRow.hidden = true; draw(); } else return false; return true; }, 'selection');
-  root.dispose = () => { unBack(); document.removeEventListener('scroll', onScroll, { capture: true }); window.removeEventListener('resize', onScroll); cancelAnimationFrame(scrollFrame); document.removeEventListener('visibilitychange', onVis); cancelAnimationFrame(paintFrame); window.clearTimeout(paintTimer); heldWatch.delete(reheld); off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); };
+  root.dispose = () => { unBack(); document.removeEventListener('scroll', onScroll, { capture: true }); window.removeEventListener('resize', onScroll); cancelAnimationFrame(scrollFrame); document.removeEventListener('visibilitychange', onVis); cancelAnimationFrame(paintFrame); window.clearTimeout(paintTimer); heldWatch.delete(reheld); off(); offEngine(); offScreen(); window.removeEventListener('keydown', onKey); window.removeEventListener('kt:limits', onLimits); window.clearInterval(tickTimer); tickTimer = 0; };
   return root;
 }
 /** The next time the scheduler starts, as «HH:MM» (with the weekday when it is not today). */
@@ -366,6 +382,15 @@ export function newUrlSheet(x: Task): void {
   });
   sh.body.append(h('p', { class: 'hint' }, t('newUrlHint')), input); sh.actions.append(go);
   setTimeout(() => input.focus(), 50);
+}
+/** A download whose folder cannot be written (gone, no longer allowed, full): a folder picked, and the download begun
+ *  there — what was in the old place is deleted with it (it cannot go on from there). */
+export async function intoAnotherFolder(x: Task): Promise<void> {
+  let d: string | null = null;
+  try { if (window.kurokawaTools?.pickDir) d = await window.kurokawaTools.pickDir(); else if (ktPlugin()) d = (await ktPlugin()!.pickDir()).dir; } catch (e) { toast(String((e as Error).message ?? e), 'error'); return; }
+  if (!d) return; const eng = getEngine();
+  try { await eng.remove(x.id, true).catch(() => eng.remove(x.id, false)); await eng.add({ source: x.source, dir: d, name: x.kind === 'http' ? displayName(x) : undefined, meta: x.meta }); toast(t('movedToFolder', { folder: d.split(/[\\/]/).filter(Boolean).pop() ?? d })); }
+  catch (e) { toast(String((e as Error).message ?? e), 'error'); }
 }
 /** Prism's «remove the ones whose files are gone»: finished downloads whose file was deleted outside the app. */
 async function removeMissing(ts: Task[]): Promise<void> {

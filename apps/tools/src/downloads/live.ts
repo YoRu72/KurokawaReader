@@ -22,3 +22,21 @@ export function isStalled(x: Task): boolean {
 
 /** The short form for a list row: the phase alone. */
 export const phaseShort = phaseLabel;
+
+/** Time left that holds still (D4): the speed smoothed over some eight seconds (the engines send each moment's speed, and
+ *  the clock jumped with it), the time from what is left; none when the size or the speed is unknown, when it stalled,
+ *  or past 99 hours — a clock nobody reads, which a server trickling a byte a second made «1048:34:34». */
+const smooth = new Map<string, { v: number; at: number }>();
+export function steadyEta(x: Task): number | undefined {
+  if (x.state !== 'downloading' || !(x.total > 0) || x.done >= x.total) { smooth.delete(x.id); return undefined; }
+  const now = Date.now(); const s = smooth.get(x.id); const inst = Math.max(0, x.downSpeed || 0); let v: number;
+  if (!s) v = inst; else if (now - s.at < 200) v = s.v; else { const dt = Math.min(30, (now - s.at) / 1000); v = s.v + (inst - s.v) * (1 - Math.exp(-dt / 8)); }
+  if (!s || now - s.at >= 200) smooth.set(x.id, { v, at: now });
+  if (!(v > 0) || isStalled(x)) return undefined;
+  const eta = (x.total - x.done) / v; return Number.isFinite(eta) && eta >= 0 && eta <= 99 * 3600 ? eta : undefined;
+}
+/** A download waiting to ask again (the engine's retryAt / retryWhy): its words and the seconds left; null when not waiting. */
+export function retryLine(x: Task, fmt: (s: number) => string): string | null {
+  if (x.state !== 'downloading' || !x.retryAt) return null; const left = Math.ceil((x.retryAt - Date.now()) / 1000); if (left <= 0) return null;
+  const tm = fmt(left); return x.retryWhy === 'net' ? t('retryNetIn', { t: tm }) : /^HTTP (429|503|502|504)$/.test(x.retryWhy ?? '') ? t('retryBusyIn', { t: tm }) : t('retryIn', { t: tm });
+}

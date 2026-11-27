@@ -33,7 +33,8 @@ final class KrDownloader {
         }
         return false;
     }
-    static final class Result { volatile File out; volatile String fileName, mime; volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
+    static final class Result { volatile File out; volatile String fileName, mime; volatile long total = -1; volatile boolean ranged, refused; volatile int connections = 1; volatile URL finalUrl;
+        /** Waiting to ask again (a busy server, no connection): until when (epoch ms; 0 none) and why («HTTP 503», «net»). */ volatile long retryAt; volatile String retryWhy; final java.util.List<Seg> segs = java.util.Collections.synchronizedList(new java.util.ArrayList<>()); }
     /** One range a connection is fetching (or fetched): what the details page draws as the file map and the lanes. */
     static final class Seg { final long start, end; volatile long pos; /** where this part stops now: brought nearer when an idle connection takes its second half */ volatile long stopAt; int chunk = -1; volatile double speed; volatile boolean active; volatile int worker; long lastT, lastPos; Seg(long s, long e, int w) { start = s; end = e; stopAt = e; pos = s; worker = w; active = true; lastT = System.currentTimeMillis(); lastPos = s; }
         void advance(long p) { pos = p; long now = System.currentTimeMillis(); if (now - lastT >= 500) { double inst = (p - lastPos) / ((now - lastT) / 1000.0); speed = speed == 0 ? inst : speed * 0.6 + inst * 0.4; lastT = now; lastPos = p; } } }
@@ -83,7 +84,7 @@ final class KrDownloader {
         @Override public void write(byte[] b) throws IOException { write(b, 0, b.length); }
         @Override public void write(int x) throws IOException { write(new byte[] { (byte) x }, 0, 1); }
     }
-    static final class Opts { int retries = 5; File state; /** A MEGA file's key (32 bytes): what comes is decrypted as it is written (AES-128-CTR, any offset). */ byte[] megaKey; /** This download's own speed limit, when it has one. */ Limiter limiter; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
+    static final class Opts { int retries = 5; File state; /** A connection that brings under STALL_BYTES in this long (not held by a speed limit) is dropped and asked again. */ long stallMs = 15000; /** A MEGA file's key (32 bytes): what comes is decrypted as it is written (AES-128-CTR, any offset). */ byte[] megaKey; /** This download's own speed limit, when it has one. */ Limiter limiter; /** The cookies a site sets (DDoS-Guard, Cloudflare…), kept for its next requests. */ java.util.function.BiConsumer<URL, java.util.List<String>> cookies; /** The name the file is expected to have (to tell a web page sent in its place). */ String expectName;
         /** Told the server's name and type as soon as it answers; the .part file to use from then on (null: as it is). */ java.util.function.BiFunction<String, String, File> named;
         /** Connections added while they help (Ookla's «connection scaling»): a few first, more while the speed still
          *  rises, none once it holds — a server that limits each connection is filled, one that does not is not
@@ -192,7 +193,15 @@ final class KrDownloader {
         String s = b.toString().replaceAll("\\s+$", ""); return (s.isEmpty() ? "download" : s) + ext;
     }
     /** A file name the file system takes: what it refuses made a space, trimmed, and cut between characters to fit 255 bytes (the extension kept). */
-    static String cleanName(String n) { return clipName(n.replaceAll(KtNameSafe.PORTABLE_RUN, " ").trim(), 200); }   // (the characters from the one name table, desktop/namesafe.json)
+    static String cleanName(String n) {
+        // (The bidirectional controls taken out — «‮gpj.exe» shows as «exe.jpg» —, the trailing dots and spaces an SD card or a
+        // computer drops, a device name of Windows («CON», «nul.txt») given a «_» in front: the file goes on as it is named
+        // when copied elsewhere. «.», «..» and nothing at all are no names.)
+        String s = n.replaceAll("[\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]", "").replaceAll(KtNameSafe.PORTABLE_RUN, " ").trim().replaceAll("[. ]+$", "");
+        if (s.isEmpty() || s.matches("\\.+")) return s.isEmpty() && n.trim().isEmpty() ? "" : "download";
+        String stem = s.split("\\.", -1)[0].trim().toUpperCase(java.util.Locale.ROOT); for (String r : KtNameSafe.RESERVED_NAMES) if (r.equals(stem)) { s = "_" + s; break; }
+        return clipName(s, 200);
+    }   // (the characters from the one name table, desktop/namesafe.json)
     static String nameFromUrl(String url) {
         try {
             URL u = new URL(url); String p = u.getPath(); String n = java.net.URLDecoder.decode(p.substring(p.lastIndexOf('/') + 1).replace("+", "%2B"), "UTF-8");
@@ -205,6 +214,82 @@ final class KrDownloader {
     }
     /** An answer with an unwanted status (kept, so a refusal can be told from a fault). */
     static final class Status extends IOException { final int code; Status(int c) { super("HTTP " + c); code = c; } }
+
+    /** The stall rule: a connection that brings fewer than this many bytes in Opts.stallMs — a server trickling a byte a
+     *  second keeps a socket alive past any read timeout — is given up and asked again (from where it was, when ranged). */
+    static final int STALL_BYTES = 1024;
+    static final class Stall {
+        private final long ms; private final Limiter own; private long from, bytes;
+        Stall(long ms, Limiter own) { this.ms = ms; this.own = own; }
+        /** `n` bytes read now: each STALL_BYTES brought starts the clock again; one that runs out first is a stall. */
+        void saw(int n) throws IOException {
+            if (ms <= 0) return; long now = System.currentTimeMillis(); if (from == 0) from = now; bytes += Math.max(0, n);
+            if (bytes >= STALL_BYTES) { from = now; bytes = 0; return; }
+            if (now - from < ms) return;
+            if (GLOBAL.rate() > 0 || (own != null && own.rate() > 0)) { from = now; bytes = 0; return; }   // (held by a speed limit: not the server's doing)
+            throw new IOException("stalled");
+        }
+    }
+    /** What may pass with a wait and a new try: a busy server's answer, a connection that failed on the way (no
+     *  network, refused, timed out, cut) — not a server's refusal of the file, not a page, not a redirect loop. */
+    static boolean transientCode(int code) { return code == 429 || code == 503 || code == 502 || code == 504; }
+    static boolean transientError(IOException e) {
+        if (e instanceof Status || e instanceof WebPage) return false;
+        String m = String.valueOf(e.getMessage());
+        if (m.contains("Too many redirects") || m.contains("EPERM") || m.contains("EACCES") || m.contains("No space")) return false;
+        return m.contains("Unexpected end of file") || e instanceof java.net.UnknownHostException || e instanceof java.net.ConnectException || e instanceof java.net.SocketTimeoutException || e instanceof java.net.NoRouteToHostException || cut(e) || m.contains("stalled");
+    }
+    /** Retry-After in ms (seconds or an HTTP date), 0 when none. */
+    static long retryAfterMs(HttpURLConnection c) {
+        try { String ra = c == null ? null : c.getHeaderField("Retry-After"); if (ra == null) return 0; ra = ra.trim(); return ra.matches("\\d+") ? Long.parseLong(ra) * 1000 : Math.max(0, java.util.Date.parse(ra) - System.currentTimeMillis()); } catch (Throwable e) { return 0; }
+    }
+    /** The first request (a one-byte range): asked again while the server is busy (429/503/502/504, its Retry-After
+     *  heeded, at most two minutes) or the connection fails on the way, up to `opt.retries` times with a growing wait
+     *  (1, 2, 4, 8, 16 s…) — before, one busy answer or a moment offline failed the download at once. While it waits,
+     *  `res.retryAt`/`retryWhy` say until when and why (the card's countdown). Null: cancelled while waiting. */
+    static HttpURLConnection probe(URL url, Opener opener, URL[] at, Opts opt, Result res, AtomicBoolean cancelled, Runnable tick) throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            HttpURLConnection c = null; IOException err = null; int code = 0;
+            try { c = follow(url, opener, "bytes=0-0", at, null); code = c.getResponseCode(); }
+            catch (IOException e) { if (c != null) c.disconnect(); c = null; if (!transientError(e)) throw e; err = e; }
+            if (err == null && !transientCode(code)) { res.retryAt = 0; res.retryWhy = null; return c; }
+            if (attempt >= opt.retries || cancelled.get()) { res.retryAt = 0; res.retryWhy = null; if (err != null) throw err; return c; }
+            long wait = err == null ? Math.min(120000L, retryAfterMs(c)) : 0; if (wait <= 0) wait = Math.min(30000L, 1000L << Math.min(attempt, 5));
+            if (c != null) { drain(c); c.disconnect(); }
+            res.retryWhy = err != null ? "net" : "HTTP " + code; res.retryAt = System.currentTimeMillis() + wait;
+            while (!cancelled.get() && System.currentTimeMillis() < res.retryAt) { if (tick != null) tick.run(); try { Thread.sleep(200); } catch (InterruptedException ie) { throw new IOException("cancelled"); } }
+            if (cancelled.get()) { res.retryAt = 0; res.retryWhy = null; return null; }
+        }
+    }
+    /** A plain answer read to its end: less than its Content-Length is a cut, not a file (the engine would have called it done). */
+    static void whole(Result res, AtomicLong got, AtomicBoolean cancelled) throws IOException {
+        if (!cancelled.get() && res.total > 0 && got.get() < res.total) throw new IOException("incomplete (" + got.get() + " of " + res.total + ")");
+    }
+
+    /** What tells this version of the file from another: its strong ETag and its date, kept as «etag @date» (either
+     *  alone when the other is missing; an older record holds one of them only). */
+    static String validatorOf(String etag, String lastModified) {
+        String e = etag != null && !etag.isEmpty() && !etag.startsWith("W/") ? etag : ""; String l = lastModified == null ? "" : lastModified.trim();
+        return e.isEmpty() ? l : l.isEmpty() ? e : e + " @" + l;
+    }
+    static String[] versionParts(String v) {
+        if (v == null || v.isEmpty()) return new String[] { "", "" };
+        int i = v.indexOf(" @"); if (i >= 0) return new String[] { v.substring(0, i), v.substring(i + 2) };
+        return v.startsWith("\"") ? new String[] { v, "" } : new String[] { "", v };
+    }
+    /** The same version: the same strong ETag (a CDN's nodes may disagree on the date), or — no ETag either side — the same date. */
+    static boolean sameVersion(String before, String now) {
+        String[] a = versionParts(before), b = versionParts(now);
+        if (!a[0].isEmpty() && a[0].equals(b[0])) return true;
+        return a[0].isEmpty() && b[0].isEmpty() && !a[1].isEmpty() && a[1].equals(b[1]);
+    }
+    /** Changed for sure: both dates there and different (and no common ETag) — the file on the server is another one;
+     *  what is here is not spliced with it. An ETag alone that changes may be a CDN's (checked by the bytes instead). */
+    static boolean changedVersion(String before, String now) {
+        String[] a = versionParts(before), b = versionParts(now);
+        if (!a[0].isEmpty() && a[0].equals(b[0])) return false;
+        return !a[1].isEmpty() && !b[1].isEmpty() && !a[1].equals(b[1]);
+    }
 
     /** A connection to `url` with its redirects followed here — also from http to https, which
      *  HttpURLConnection does not follow itself. */
@@ -258,10 +343,7 @@ final class KrDownloader {
         synchronized boolean has(int i) { return done.get(i); }
     }
     /** What tells this version of the file from another: a strong ETag, or else its date. */
-    private static String validatorOf(HttpURLConnection c) {
-        String e = c.getHeaderField("ETag"); if (e != null && !e.isEmpty() && !e.startsWith("W/")) return e;
-        String m = c.getHeaderField("Last-Modified"); return m == null ? "" : m;
-    }
+    private static String validatorOf(HttpURLConnection c) { return validatorOf(c.getHeaderField("ETag"), c.getHeaderField("Last-Modified")); }
 
     static Result fetch(URL url, File out, int maxConnections, Opener opener, AtomicBoolean cancelled, AtomicLong got, Result res, Runnable tick) throws Exception { return fetch(url, out, maxConnections, opener, cancelled, got, res, tick, new Opts()); }
     /**
@@ -283,7 +365,8 @@ final class KrDownloader {
         URL[] at = { url };
         // (No If-Range: a server whose validator changes from one answer to the next — CDNs, signed links — would
         // send the whole file again, and what was downloaded was thrown away. What is here is checked instead.)
-        HttpURLConnection probe = follow(url, opener, "bytes=0-0", at, null);
+        HttpURLConnection probe = probe(url, opener, at, opt, res, cancelled, tick);
+        if (probe == null) return res;   // (paused while waiting to ask again)
         int code = probe.getResponseCode();
         res.finalUrl = at[0];
         res.fileName = dispositionName(probe.getHeaderField("Content-Disposition")); res.mime = probe.getContentType();
@@ -307,8 +390,9 @@ final class KrDownloader {
             try { res.total = Long.parseLong(probe.getHeaderField("Content-Length")); } catch (Exception ignored) {}
             got.set(0);
             try (InputStream in = probe.getInputStream(); RandomAccessFile raf = writer(out, opt)) {
-                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter);
+                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter, new Stall(opt.stallMs, opt.limiter));
             } finally { probe.disconnect(); }
+            whole(res, got, cancelled);
             if (res.total < 0) res.total = got.get();
             return res;
         }
@@ -322,8 +406,9 @@ final class KrDownloader {
             try { res.total = Long.parseLong(c.getHeaderField("Content-Length")); } catch (Exception ignored) {}
             got.set(0);
             try (InputStream in = c.getInputStream(); RandomAccessFile raf = writer(out, opt)) {
-                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter);
+                raf.setLength(0); copy(in, raf, Long.MAX_VALUE, cancelled, got, tick, new long[1], opt.limiter, new Stall(opt.stallMs, opt.limiter));
             } finally { c.disconnect(); }
+            whole(res, got, cancelled);
             if (res.total < 0) res.total = got.get();
             return res;
         }
@@ -337,8 +422,11 @@ final class KrDownloader {
         boolean resumed = false; State st0 = null;
         if (sameSize) {
             localCheck(prev, out);
-            boolean sameVersion = !prev.validator.isEmpty() && prev.validator.equals(validator);
-            if (sameVersion || matches(res.finalUrl, opener, out, prev, Math.max(1, Math.min(4, maxConnections)), 12, mega(opt))) { st0 = prev; resumed = true; }
+            // (The same version by its validator: gone on from every chunk and part here. Changed for sure — another date —:
+            // begun afresh. Not known — an ETag that changed alone, none at all —: the done chunks checked by their bytes, and
+            // the parts begun dropped, since nothing checks them: before, a file changed on the server could be spliced.)
+            if (sameVersion(prev.validator, validator)) { st0 = prev; resumed = true; }
+            else if (!changedVersion(prev.validator, validator)) { prev.partial.clear(); if (matches(res.finalUrl, opener, out, prev, Math.max(1, Math.min(4, maxConnections)), 12, mega(opt))) { st0 = prev; resumed = true; } }
         } else if (prev == null && out.exists() && out.length() > 0 && out.length() <= total) {
             // (No record kept — lost, or a download begun elsewhere under this name —: the chunks already here found
             // by their bytes, each checked against the server's before it is kept.)
@@ -419,7 +507,7 @@ final class KrDownloader {
                                 if (rc != 206) throw new Status(rc);
                                 try (InputStream in = c.getInputStream()) {
                                     final long base = pos; final long[] w = wrote;
-                                    copySeg(in, raf, seg, base, cancelled, got, () -> { seg.advance(base + w[0]); if (fromStart) st.setPartial(seg.chunk, base + w[0] - chunkStart); long now = System.currentTimeMillis(); if (now - lastSave[0] > 3000) { lastSave[0] = now; st.write(opt.state); } tick.run(); }, wrote, opt.limiter);
+                                    copySeg(in, raf, seg, base, cancelled, got, new Stall(opt.stallMs, opt.limiter), () -> { seg.advance(base + w[0]); if (fromStart) st.setPartial(seg.chunk, base + w[0] - chunkStart); long now = System.currentTimeMillis(); if (now - lastSave[0] > 3000) { lastSave[0] = now; st.write(opt.state); } tick.run(); }, wrote, opt.limiter);
                                 }
                                 pos += wrote[0]; wrote[0] = 0; if (pos > tryFrom) { servedOnce[0] = true; blanks[0] = 0; }
                                 // (An answer that ended early without an error is a failed attempt too.)
@@ -476,6 +564,8 @@ final class KrDownloader {
         }
         res.connections = Math.min(res.connections, started);
         for (int i = 0; i < started; i++) workers[i].join();
+        // (Stopped because it was removed — its file deleted under it —: its record is not written back, nothing is left.)
+        if (cancelled.get() && !out.exists()) { if (opt.state != null) opt.state.delete(); return res; }
         st.write(opt.state);
         if (fail.get() != null && !cancelled.get()) throw fail.get();
         // (A chunk given back after the others had finished: a second round, over the connections still accepted.)
@@ -549,8 +639,7 @@ final class KrDownloader {
 
     /** Copies a part's bytes until its end — which may be brought nearer while it runs (its second half taken by
      *  another connection): only what is still this part's is written and counted. */
-    private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException { copySeg(in, raf, seg, base, cancelled, got, tick, wrote, null); }
-    private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote, Limiter own) throws IOException {
+    private static void copySeg(InputStream in, RandomAccessFile raf, Seg seg, long base, AtomicBoolean cancelled, AtomicLong got, Stall stall, Runnable tick, long[] wrote, Limiter own) throws IOException {
         byte[] buf = new byte[1 << 17]; int r;
         while (!cancelled.get()) {
             long left; synchronized (seg) { left = seg.stopAt - (base + wrote[0]); } if (left <= 0) break;
@@ -558,19 +647,20 @@ final class KrDownloader {
             int want = (int) Math.min(limited ? 1 << 14 : buf.length, left);
             try { if (own != null) own.take(want); GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
             r = in.read(buf, 0, want); if (r <= 0) break;
+            if (stall != null) stall.saw(r);
             synchronized (seg) { long allow = seg.stopAt - (base + wrote[0]); int n = (int) Math.min(r, Math.max(0, allow)); if (n > 0) { raf.seek(base + wrote[0]); raf.write(buf, 0, n); wrote[0] += n; got.addAndGet(n); seg.pos = base + wrote[0]; } if (n < r) break; }
             tick.run();
         }
     }
     /** Copies up to `max` bytes, counting them in `wrote[0]` as they are written. */
-    private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote) throws IOException { copy(in, raf, max, cancelled, got, tick, wrote, null); }
-    private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote, Limiter own) throws IOException {
+    private static void copy(InputStream in, RandomAccessFile raf, long max, AtomicBoolean cancelled, AtomicLong got, Runnable tick, long[] wrote, Limiter own, Stall stall) throws IOException {
         byte[] buf = new byte[1 << 17]; int r;
         while (wrote[0] < max && !cancelled.get()) {
             boolean limited = GLOBAL.rate() > 0 || (own != null && own.rate() > 0);
             int want = (int) Math.min(limited ? 1 << 14 : buf.length, max - wrote[0]);
             try { if (own != null) own.take(want); GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
             if ((r = in.read(buf, 0, want)) <= 0) break;
+            if (stall != null) stall.saw(r);
             raf.write(buf, 0, r); wrote[0] += r; got.addAndGet(r); tick.run();
         }
     }

@@ -289,6 +289,7 @@
     "playerrotate.cjs": 12,
     "playerwalk.cjs": 311,
     "streamwalk.cjs": 806,
+    "dlwalk.cjs": 93,
     "playertr.cjs": 1,
     "prism.cjs": 3,
     "relink.cjs ar": 5,

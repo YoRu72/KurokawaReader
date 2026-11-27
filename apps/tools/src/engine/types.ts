@@ -53,6 +53,8 @@ export interface Task {
   /** Sequential piece order (so the file plays while it comes). */
   sequential?: boolean;
   error?: string;
+  /** Waiting to ask the server again (a busy answer, no connection): until when (ms since 1970), and why — «HTTP 503», «net» (D4). */
+  retryAt?: number; retryWhy?: string;
   addedAt: number;
   doneAt?: number;
   /** What added it: a search add-on, a page, the user — for the list's groups and the anime add-on's tracking. */

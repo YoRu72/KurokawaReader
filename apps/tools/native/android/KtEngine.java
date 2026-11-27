@@ -79,7 +79,7 @@ final class KtEngine {
         // torrent
         TorrentHandle th; String magnet; byte[] torrentBytes; TorrentInfo info;
         // http
-        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName; /** This download's own speed limit (HTTP), live-adjustable. */ KrDownloader.Limiter limiter;
+        AtomicBoolean cancel; Thread httpThread; AtomicLong got = new AtomicLong(); File httpOut; int wantConnections = 8; long lastT; long lastGot; boolean autoName; /** This download's own speed limit (HTTP), live-adjustable. */ KrDownloader.Limiter limiter; /** The run's result while it runs: its wait to ask again (D4: the card's countdown). */ volatile KrDownloader.Result http;
     }
 
     private final Context ctx;
@@ -369,6 +369,10 @@ final class KtEngine {
         if ("video".equals(x.kind)) { KtVideo.cancel(x.id); bg.execute(this::pumpVideo); if (deleteFiles && x.httpOut != null) { File[] kids = new File(x.dir).listFiles(); String stem = x.httpOut.getName().replaceAll("\\.[^.]+$", ""); if (kids != null) for (File k : kids) if (k.getName().startsWith(stem)) k.delete(); } }
         if (deleteFiles && x.httpOut != null && !"video".equals(x.kind)) { x.httpOut.delete(); new File(x.httpOut.getPath() + ".part").delete(); }
         new File(stateDir, id + ".http").delete(); new File(stateDir, id + ".fastresume").delete(); new File(stateDir, id + ".torrent").delete();
+        // (D4: a file download still stopping writes its record — and, removed before its first byte, makes its .part — after
+        // the deletes above: once its run has ended, they are deleted again, so nothing is left behind.)
+        final Thread run = x.httpThread; final File out0 = x.httpOut;
+        if ("http".equals(x.kind) && run != null && run.isAlive()) bg.execute(() -> { try { run.join(15000); } catch (InterruptedException ignored) {} new File(stateDir, id + ".http").delete(); if (deleteFiles && out0 != null) { new File(out0.getPath() + ".part").delete(); if (!"done".equals(x.state)) out0.delete(); } });
         persist(); tell(true); KtService.maybeStop(ctx, this);
         if ("http".equals(x.kind)) bg.execute(() -> { try { if (x.httpThread != null) x.httpThread.join(3000); } catch (InterruptedException ignored) {} pumpQueue(); });
     }
@@ -615,7 +619,7 @@ final class KtEngine {
                 x.httpOut = new File(dir, safe);
                 // (A stream's playlist — HLS — is a list of pieces, not the video: fetched piece by piece and joined here.)
                 if (KtHls.looksLike(url) || (x.meta != null && x.meta.optBoolean("hls"))) { runHls(x, url, headers, dir, safe); return; }
-                final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs;
+                final KrDownloader.Result info = new KrDownloader.Result(); x.segs = info.segs; x.http = info;
                 final String host = hostOf(url); Integer lim = hostLimit.get(host);
                 final KrDownloader.Opts opt = new KrDownloader.Opts(); opt.retries = x.meta != null && x.meta.optBoolean("noRetry") ? 0 : retries; opt.state = state; opt.expectName = safe;
                 if (x.limiter == null) x.limiter = new KrDownloader.Limiter(x.limitDown); else x.limiter.set(x.limitDown); opt.limiter = x.limiter;
@@ -933,6 +937,8 @@ final class KtEngine {
             o.put("id", x.id); o.put("kind", x.kind); o.put("name", x.name == null ? "" : x.name); o.put("source", x.source); o.put("dir", x.dir); o.put("state", x.state); if (x.heldBy != null) o.put("heldBy", x.heldBy);
             o.put("done", x.done); o.put("total", Math.max(0, x.total)); o.put("downSpeed", x.downSpeed); o.put("upSpeed", x.upSpeed);
             if (x.downSpeed > 0 && x.total > x.done) o.put("eta", (x.total - x.done) / x.downSpeed);
+            // (D4: waiting to ask the server again — busy, no connection —: until when and why, for the card's countdown.)
+            { KrDownloader.Result h = x.http; if (h != null && "downloading".equals(x.state) && h.retryAt > System.currentTimeMillis()) { o.put("retryAt", h.retryAt); o.put("retryWhy", h.retryWhy == null ? "" : h.retryWhy); } }
             if ("torrent".equals(x.kind)) { o.put("peers", x.peers); o.put("seeds", x.seeds); if (x.pieceMap != null) { o.put("pieceMap", x.pieceMap); o.put("numPieces", x.numPieces); o.put("havePieces", x.havePieces); } if (x.readyFile >= 0) o.put("readyFile", x.readyFile); if (x.infoHash != null) o.put("infoHash", x.infoHash); } else { o.put("connections", x.connections);
                 if (x.segs != null && "downloading".equals(x.state)) { JSONArray sa = new JSONArray(); synchronized (x.segs) { for (KrDownloader.Seg sg : x.segs) { JSONObject so = new JSONObject(); so.put("start", sg.start); so.put("pos", sg.pos); so.put("end", sg.end); so.put("speed", (long) sg.speed); so.put("active", sg.active); so.put("worker", sg.worker); sa.put(so); } } o.put("segments", sa); } }
             o.put("files", files(x)); o.put("sequential", x.sequential); if (x.limitDown > 0) o.put("limitDown", x.limitDown); if (x.limitUp > 0) o.put("limitUp", x.limitUp); if (x.error != null) o.put("error", x.error);

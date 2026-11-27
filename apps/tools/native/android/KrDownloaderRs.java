@@ -117,7 +117,9 @@ final class KrDownloaderRs {
             if (opt.state == null) { opt.state = File.createTempFile("kt-download-", ".state", out.getAbsoluteFile().getParentFile()); opt.state.delete(); opt.state.deleteOnExit(); }
             String prev = out.exists() ? readText(opt.state) : null;
             URL[] at = { url };
-            HttpURLConnection probe = KrDownloader.follow(url, opener, "bytes=0-0", at, null);
+            // (D4: asked again while the server is busy or the connection fails on the way — KrDownloader.probe, the same as Java's.)
+            HttpURLConnection probe = KrDownloader.probe(url, opener, at, opt, res, cancelled, tick);
+            if (probe == null) return res;
             int code = probe.getResponseCode();
             res.finalUrl = at[0];
             res.fileName = KrDownloader.dispositionName(probe.getHeaderField("Content-Disposition")); res.mime = probe.getContentType();
@@ -135,6 +137,7 @@ final class KrDownloaderRs {
                 got.set(0);
                 try (InputStream in = probe.getInputStream(); RandomAccessFile raf = writer(out, opt)) { raf.setLength(0); copy(in, raf); }
                 finally { probe.disconnect(); }
+                KrDownloader.whole(res, got, cancelled);
                 if (res.total < 0) res.total = got.get();
                 return res;
             }
@@ -150,6 +153,7 @@ final class KrDownloaderRs {
                 got.set(0);
                 try (InputStream in = c.getInputStream(); RandomAccessFile raf = writer(out, opt)) { raf.setLength(0); copy(in, raf); }
                 finally { c.disconnect(); }
+                KrDownloader.whole(res, got, cancelled);
                 if (res.total < 0) res.total = got.get();
                 return res;
             }
@@ -273,13 +277,14 @@ final class KrDownloaderRs {
         /** A part's bytes until its end — which the Rust core may bring nearer while it runs (its second half taken by
          *  another connection): only what is still this part's is written and counted. */
         private void copySeg(InputStream in, RandomAccessFile raf, long h, long sid, KrDownloader.Seg seg, long base, long[] wrote) throws IOException, KtCore.Failure {
-            byte[] buf = new byte[1 << 17]; int r;
+            byte[] buf = new byte[1 << 17]; int r; final KrDownloader.Stall stall = new KrDownloader.Stall(opt.stallMs, opt.limiter);
             while (!cancelled.get()) {
                 long left = seg.stopAt - (base + wrote[0]); if (left <= 0) break;
                 boolean limited = KrDownloader.GLOBAL.rate() > 0 || (opt.limiter != null && opt.limiter.rate() > 0);   // (each read: a limit set while it runs is felt at once)
                 int want = (int) Math.min(limited ? 1 << 14 : buf.length, left);
                 try { if (opt.limiter != null) opt.limiter.take(want); KrDownloader.GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
                 r = in.read(buf, 0, want); if (r <= 0) break;
+                stall.saw(r);
                 int n = (int) num(call("http.take", "h", h, "seg", sid, "n", r));
                 if (n > 0) { raf.seek(base + wrote[0]); raf.write(buf, 0, n); wrote[0] += n; got.addAndGet(n); mine.addAndGet(n); seg.pos = base + wrote[0]; }
                 if (n < r) break;   // (cut short by a split: its end reached, nothing more to note)
@@ -292,12 +297,13 @@ final class KrDownloaderRs {
 
         /** Copies the whole answer (no ranges), counting as it goes. */
         private void copy(InputStream in, RandomAccessFile raf) throws IOException {
-            byte[] buf = new byte[1 << 17]; int r;
+            byte[] buf = new byte[1 << 17]; int r; final KrDownloader.Stall stall = new KrDownloader.Stall(opt.stallMs, opt.limiter);
             while (!cancelled.get()) {
                 boolean limited = KrDownloader.GLOBAL.rate() > 0 || (opt.limiter != null && opt.limiter.rate() > 0);
                 int want = limited ? 1 << 14 : buf.length;
                 try { if (opt.limiter != null) opt.limiter.take(want); KrDownloader.GLOBAL.take(want); } catch (InterruptedException ie) { throw new IOException("cancelled"); }
                 if ((r = in.read(buf, 0, want)) <= 0) break;
+                stall.saw(r);
                 raf.write(buf, 0, r); got.addAndGet(r); mine.addAndGet(r); tick.run();
             }
         }

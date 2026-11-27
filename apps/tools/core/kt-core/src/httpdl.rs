@@ -182,14 +182,53 @@ pub struct Probe {
     pub validator: String,
 }
 
-/// What tells this version of the file from another: a strong ETag, or else its date.
+/// What tells this version of the file from another: its strong ETag and its date, kept as «etag @date» (either alone
+/// when the other is missing; an older record holds one of them only) — KrDownloader.validatorOf.
 pub fn validator_of(etag: Option<&str>, last_modified: Option<&str>) -> String {
-    if let Some(e) = etag {
-        if !e.is_empty() && !e.starts_with("W/") {
-            return e.to_string();
-        }
+    let e = match etag {
+        Some(e) if !e.is_empty() && !e.starts_with("W/") => e,
+        _ => "",
+    };
+    let l = jtrim(last_modified.unwrap_or(""));
+    if e.is_empty() {
+        l.to_string()
+    } else if l.is_empty() {
+        e.to_string()
+    } else {
+        format!("{} @{}", e, l)
     }
-    last_modified.unwrap_or("").to_string()
+}
+
+/// A validator's ETag and date (an older record's one value: an ETag when quoted, else a date).
+fn version_parts(v: &str) -> (&str, &str) {
+    if v.is_empty() {
+        return ("", "");
+    }
+    match v.find(" @") {
+        Some(i) => (&v[..i], &v[i + 2..]),
+        None if v.starts_with('"') => (v, ""),
+        None => ("", v),
+    }
+}
+
+/// The same version: the same strong ETag, or — no ETag either side — the same date (KrDownloader.sameVersion).
+pub fn same_version(before: &str, now: &str) -> bool {
+    let (ae, al) = version_parts(before);
+    let (be, bl) = version_parts(now);
+    if !ae.is_empty() && ae == be {
+        return true;
+    }
+    ae.is_empty() && be.is_empty() && !al.is_empty() && al == bl
+}
+
+/// Changed for sure: both dates there and different, and no common ETag (KrDownloader.changedVersion): begun afresh.
+pub fn changed_version(before: &str, now: &str) -> bool {
+    let (ae, al) = version_parts(before);
+    let (be, bl) = version_parts(now);
+    if !ae.is_empty() && ae == be {
+        return false;
+    }
+    !al.is_empty() && !bl.is_empty() && al != bl
 }
 
 fn is_line_end(c: char) -> bool {
@@ -444,10 +483,15 @@ impl Planner {
                         }
                     }
                 }
-                let same_version = !prev.validator.is_empty() && prev.validator == self.validator;
-                if same_version {
+                if same_version(&prev.validator, &self.validator) {
                     return self.resumed(prev);
                 }
+                // (D4: another date — the file changed on the server —: begun afresh; not known: the parts begun dropped,
+                // since nothing checks them, and the done chunks checked by their bytes. Before, a changed file was spliced.)
+                if changed_version(&prev.validator, &self.validator) {
+                    return self.fresh_plan();
+                }
+                prev.partial.clear();
                 // matches(): a few done chunks (the first, the last, some between) compared with the server's.
                 let done: Vec<i64> = prev.done.iter().copied().collect();
                 if done.is_empty() {
@@ -957,6 +1001,25 @@ impl Dl {
 }
 
 #[cfg(test)]
+mod d4_version_tests {
+    use super::*;
+    #[test]
+    fn validator_and_versions() {
+        assert_eq!(validator_of(Some("\"a\""), Some("Tue, 03 Nov 2026 10:00:00 GMT")), "\"a\" @Tue, 03 Nov 2026 10:00:00 GMT");
+        assert_eq!(validator_of(Some("W/\"a\""), Some("d")), "d");
+        assert_eq!(validator_of(None, None), "");
+        assert!(same_version("\"a\" @d1", "\"a\" @d2"));
+        assert!(same_version("\"a\"", "\"a\" @d1"));
+        assert!(same_version("d1", "d1"));
+        assert!(!same_version("", ""));
+        assert!(changed_version("\"a\" @d1", "\"b\" @d2"));
+        assert!(changed_version("d1", "d2"));
+        assert!(!changed_version("\"a\" @d1", "\"b\" @d1"));
+        assert!(!changed_version("\"a\"", "\"b\""));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1019,7 +1082,7 @@ mod tests {
         h.etag = Some("\"v1\"".into());
         h.last_modified = Some("Mon".into());
         let p = probe(&h, Some("f.bin"), false, -1);
-        assert_eq!((p.page, p.ask_name, p.kind.clone(), p.total, p.ranged, p.validator.as_str()), (false, false, Kind::Ranged, 20971520, true, "\"v1\""));
+        assert_eq!((p.page, p.ask_name, p.kind.clone(), p.total, p.ranged, p.validator.as_str()), (false, false, Kind::Ranged, 20971520, true, "\"v1\" @Mon"));
         h.etag = Some("W/\"weak\"".into());
         assert_eq!(probe(&h, None, true, -1).validator, "Mon");
         assert!(probe(&h, None, true, -1).ask_name);
@@ -1142,18 +1205,28 @@ mod tests {
         p.zero(&[false; 4]);
         p.checked(&[0], true);
         assert!(!p.fresh);
-        // No validator and no done chunk: nothing to lose, resumed (its begun chunks kept).
+        // No validator and no done chunk: resumed, but its begun chunks dropped — nothing can tell they are the same file
+        // (D4: a file changed on the server was spliced from them).
         let prev = rec_with(total, 1 << 20, &[], &[(0, 10000)], "");
         let (mut p, need) = Planner::new(total, "", 8, Some(prev), total, true);
         assert_eq!(need, Need::Zero(vec![10000 - 4096]));
         assert_eq!(p.zero(&[false]), Need::Go);
+        assert_eq!(p.rec.unwrap().partial_of(0), 0);
+        // The same ETag: its begun chunks kept; another date: begun afresh.
+        let prev = rec_with(total, 1 << 20, &[], &[(0, 10000)], "\"e\" @d1");
+        let (mut p, _) = Planner::new(total, "\"e\" @d2", 8, Some(prev.clone()), total, true);
+        assert_eq!(p.zero(&[false]), Need::Go);
         assert_eq!(p.rec.unwrap().partial_of(0), 10000);
+        let (mut p, _) = Planner::new(total, "\"f\" @d2", 8, Some(prev), total, true);
+        assert_eq!(p.zero(&[false]), Need::Go);
+        assert!(p.fresh);
         // Another size: fresh.
         let (p, _) = Planner::new(total, "", 8, Some(rec_with(total + 1, 1 << 20, &[0], &[], "")), total, true);
         assert!(p.fresh);
         // Twelve samples spread over many done chunks: the first, the last, some between.
         let many: Vec<i64> = (0..20).collect();
-        let (mut p, _) = Planner::new(total, "b", 8, Some(rec_with(total, 1 << 20, &many, &[], "a")), total, true);
+        // (ETags alone that differ — a CDN's —: checked by the bytes. Two different dates would be a new file, begun afresh.)
+        let (mut p, _) = Planner::new(total, "\"b\"", 8, Some(rec_with(total, 1 << 20, &many, &[], "\"a\"")), total, true);
         match p.zero(&[false; 20]) {
             Need::Check { chunks, .. } => assert_eq!(chunks, vec![0, 1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19]),
             n => panic!("{:?}", n),
