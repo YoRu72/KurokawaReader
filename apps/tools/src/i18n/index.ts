@@ -228,6 +228,11 @@ export function countFiles(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'ملف واحد', two: 'ملفان', few: 'ملفات', many: 'ملفًا', hundred: 'ملفٍ' });
   return cjkCount(n, 'file') ?? enCount(n, 'file', 'files');
 }
+/** A count where the string itself names what is counted (Arabic «… · العدد: {n}», «المحدَّد: {n}»): the bare number in
+ *  Arabic — never a number and a counted noun —, «3 items» elsewhere (D4b). */
+export function countNum(n: number): string { return current === 'ar' ? localDigits(n) : countItems(n); }
+/** A count standing alone (a list's header): «العدد: 20» in Arabic, «20 items» elsewhere. */
+export function countLabel(n: number): string { return current === 'ar' ? `العدد: ${localDigits(n)}` : countItems(n); }
 export function countItems(n: number): string {
   if (current === 'ar') return arCount(n, { one: 'عنصر واحد', two: 'عنصران', few: 'عناصر', many: 'عنصرًا', hundred: 'عنصرٍ' });
   return cjkCount(n, 'item') ?? enCount(n, 'item', 'items');

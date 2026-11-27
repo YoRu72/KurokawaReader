@@ -269,6 +269,46 @@ async function page(port, R) {
     await ctx.close();
     if (errs.length) ok(`[${tag}] no page errors`, false, errs);
   }
+  // ---- D4b: Arabic on narrow phones (320, 360, 412): the header's count as «العدد: n»; on a running / paused / held card the
+  // state, the sizes and the speed whole (wrapping, never cut or ellipsised); done-of-total read in that order (done to the right).
+  for (const width of [320, 360, 412]) {
+    const tag = `ar-${width}`; const ctx = await br.newContext({ viewport: { width, height: 800 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }); const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    await p.addInitScript(`(${FIXTURE.toString()})(${JSON.stringify({ lang: 'ar', pc: false, tasks: cardTasks(R, false) })})`);
+    await p.goto(base + '#/'); await p.waitForSelector('.task-card', { timeout: 15000 }); await sleep(900);
+    const head = await p.$eval('.downloads-view .title .count', (e) => e.textContent);
+    ok(`[${tag}] the header's count is «العدد: n» («${head}»)`, /^العدد: [0-9]+$/.test(head), head);
+    const seen = await p.evaluate(() => [...document.querySelectorAll('.task-card')].map((c) => {
+      const ln = c.querySelector('.task-line'); const box = ln.getBoundingClientRect();
+      const parts = [...ln.querySelectorAll('.lp')].map((s) => { const rs = [...s.getClientRects()]; return { text: s.textContent, cut: !rs.length || rs.some((q) => q.bottom > box.bottom + 1 || q.top < box.top - 1 || q.right > box.right + 1 || q.left < box.left - 1) }; });
+      // (Where «2.4» and «6.0» stand on screen, for the reading order.)
+      const pos = (needle) => { const w = document.createTreeWalker(ln, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { const i = n.data.indexOf(needle); if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + needle.length); return r.getBoundingClientRect().left; } } return null; };
+      return { id: c.dataset.id, line: ln.textContent, parts, ellipsis: getComputedStyle(ln).textOverflow, at24: pos('2.4'), at60: pos('6.0') };
+    }));
+    for (const id of ['running', 'trickle', 'held', 'paused', 'queued', 'netwait']) {
+      const c = seen.find((x) => x.id === id); if (!c) { ok(`[${tag}] ${id} drawn`, false); continue; }
+      const cut = c.parts.slice(0, 3).filter((q) => q.cut);
+      ok(`[${tag}] ${id}: state, sizes and speed seen whole («${c.line.slice(0, 80)}»)`, !cut.length && c.ellipsis !== 'ellipsis', { cut, line: c.line });
+    }
+    for (const id of ['running', 'paused']) {
+      const c = seen.find((x) => x.id === id); const logical = c ? c.line.indexOf('2.4') < c.line.indexOf('6.0') : false;
+      ok(`[${tag}] ${id}: «2.4 MB من 6.0 MB» — done first in reading order (right of the total on screen)`, !!c && logical && c.at24 > c.at60, c && { line: c.line, at24: c.at24, at60: c.at60 });
+    }
+    if (width === 360) { const hgt = await p.evaluate(() => Math.ceil((document.querySelector('.task-list')?.getBoundingClientRect().bottom ?? 800) + window.scrollY + 120)); await p.setViewportSize({ width, height: Math.max(800, hgt) }); await sleep(400); await p.screenshot({ path: path.join(SHOTS, 'D4b-cards-ar.png') }); }
+    if (errs.length) ok(`[${tag}] no page errors`, false, errs);
+    await ctx.close();
+  }
+  // ---- D4b: no Arabic downloads string puts a counted noun after a count: «… · العدد: {n}» / «label: {n}» instead.
+  {
+    const ar = fs.readFileSync(path.join(ROOT, 'src', 'i18n', 'ar.ts'), 'utf8'); const keys = new Set();
+    for (const f of ['views/downloads.ts', 'views/downloadsOptions.ts', 'downloads/errors.ts', 'downloads/live.ts', 'downloads/extras.ts']) for (const m of fs.readFileSync(path.join(ROOT, 'src', f), 'utf8').matchAll(/\bt\('([A-Za-z0-9_]+)'/g)) keys.add(m[1]);
+    const bad = [];
+    for (const k of keys) { const m = new RegExp(`\\b${k}: (?:"([^"]*)"|'([^']*)')`).exec(ar); const v = m ? (m[1] ?? m[2]) : ''; if (/\{(n|all|added|skipped|peers|seeds|a|q|count)\}\s*(?!من[\s]|\/|·|$)[ء-ي]/.test(v)) bad.push(`${k}: ${v}`); }
+    ok(`[strings] Arabic downloads strings: no «{n} + noun» (${keys.size} keys read)`, !bad.length, bad);
+    // (…and no count handed to them as «3 عناصر»: countItems is a number with its noun.)
+    const withNoun = ['views/downloads.ts', 'views/downloadsOptions.ts', 'downloads/extras.ts'].filter((f) => /\bcountItems\(/.test(fs.readFileSync(path.join(ROOT, 'src', f), 'utf8')));
+    ok('[strings] the downloads view hands no «number + noun» count (countItems) to its strings', !withNoun.length, withNoun);
+  }
   // ---- 20 queued with a limit of 3; pause all; resume all; a reload mid-download; back online (phone, en)
   {
     const ctx = await br.newContext({ viewport: W.phone, deviceScaleFactor: 2, isMobile: true, hasTouch: true }); const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message));

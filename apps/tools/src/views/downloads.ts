@@ -5,7 +5,7 @@ import { queuePlaces } from '../video/queue';
 import { swipeable } from '../ui/swipe';
 import { canBrowse, openBrowser } from '../browser';
 import { h, icon, iconButton, toast, openSheet } from '../ui/dom';
-import { t, formatBytes, localDigits, countItems } from '../i18n';
+import { t, formatBytes, localDigits, countNum, countLabel } from '../i18n';
 import { isStalled, phaseShort, steadyEta, retryLine } from '../downloads/live';
 import { getEngine, onEngineChange, displayName, isVideo, platformEngineProblem, retryPlatformEngine, mainFilePath } from '../engine';
 import { canShareFiles, shareFiles } from '../ui/shareMany';
@@ -60,7 +60,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
   const drawRecovery = () => {
     const cut = tasks.filter((x) => x.meta?.interrupted && x.state !== 'done' && x.state !== 'downloading');
     recovery.hidden = recoveryDismissed || !cut.length; if (recovery.hidden) return;
-    recovery.replaceChildren(icon('info'), h('span', { class: 'grow' }, t('recoveryNote', { n: countItems(cut.length) })),
+    recovery.replaceChildren(icon('info'), h('span', { class: 'grow' }, t('recoveryNote', { n: countNum(cut.length) })),
       h('button', { type: 'button', class: 'btn tonal small', onclick: async () => { recoveryDismissed = true; recovery.hidden = true; for (const x of cut) { try { await getEngine().resume(x.id); } catch { /* one at a time */ } } } }, icon('play'), t('resumeAll')),
       h('button', { type: 'button', class: 'btn text small', onclick: () => { recoveryDismissed = true; recovery.hidden = true; } }, t('dismiss')));
   };
@@ -76,10 +76,10 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     void import('../downloads/wifishare').then((m) => { if (m.canShareWifi() && tasks.some((x) => x.state === 'done')) row('wifi', t('wifiShareDone'), () => void m.shareWifiSheet(tasks)); });
     row('pause', t('pauseAll'), () => void Promise.all(tasks.filter((x) => ACTIVE.includes(x.state)).map((x) => getEngine().pause(x.id))).catch(err));
     row('play', t('resumeAll'), () => void Promise.all(tasks.filter((x) => x.state === 'paused').map((x) => getEngine().resume(x.id))).catch(err));
-    row('trash', t('clearDone'), () => { const xs = tasks.filter((x) => x.state === 'done' || x.state === 'failed'); if (!xs.length) { toast(t('nothingToClear')); return; } removeWithUndo(xs, t('tasksRemoved', { n: countItems(xs.length) })); });
+    row('trash', t('clearDone'), () => { const xs = tasks.filter((x) => x.state === 'done' || x.state === 'failed'); if (!xs.length) { toast(t('nothingToClear')); return; } removeWithUndo(xs, t('tasksRemoved', { n: countNum(xs.length) })); });
     { const mb = window.kurokawaTools as unknown as { mini?(o: { action: string }): Promise<unknown> } | undefined; if (mb?.mini) row('mini', t('miniOpen'), () => void mb.mini!({ action: 'open' })); }
     row('folder', t('removeMissing'), () => void removeMissing(tasks).catch(err));
-    if (tasks.some((x) => x.state === 'failed')) row('refresh', t('retryFailed'), () => void retryFailed(tasks).then((n) => toast(t('retriedN', { n: countItems(n) }))).catch(err));
+    if (tasks.some((x) => x.state === 'failed')) row('refresh', t('retryFailed'), () => void retryFailed(tasks).then((n) => toast(t('retriedN', { n: countNum(n) }))).catch(err));
     row('upload', t('exportList'), () => void exportListFile(tasks));
     row('download', t('importList'), () => importListSheet(tasks));
     row('chart', t('dlStats'), () => statsSheet(tasks));
@@ -171,7 +171,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     const P = dlPrefs(); const vis = shown(); lastVis = vis;
     optBtn.dataset.n = String(activeFilters(P));
     list.className = `task-list look-${P.look}`;
-    (title.querySelector('.count') as HTMLElement).textContent = tasks.length ? (vis.length !== tasks.length ? t('dlCountOf', { n: localDigits(vis.length), all: countItems(tasks.length) }) : countItems(tasks.length)) : '';
+    (title.querySelector('.count') as HTMLElement).textContent = tasks.length ? (vis.length !== tasks.length ? t('dlCountOf', { n: localDigits(vis.length), all: countNum(tasks.length) }) : countLabel(tasks.length)) : '';
     empty.hidden = tasks.length > 0;
     for (const id of [...picked]) if (!tasks.some((x) => x.id === id)) picked.delete(id);
     // The order of the list: under each group's heading when grouped (groups in the order they first come).
@@ -210,7 +210,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
       iconButton('trash', t('removeTask'), () => removeSheet(sel, () => setSelecting(false))));
   };
   const bar = (x: Task) => (x.total > 0 ? Math.min(100, (x.done / x.total) * 100) : 0);
-  const line2 = (x: Task): string => {
+  const line2 = (x: Task): string[] => {
     // (A failure says its reason first — on a phone the line is cut at its end, where the reason was —; one waiting to ask
     // the server again says why and counts down to it.)
     const show = dlPrefs().show; const fail = x.state === 'failed' ? failureOf(x.error) : null; const wait = retryLine(x, fmtEta);
@@ -228,7 +228,13 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     { const b = torEngineBadge(x); if (b) parts.push(b); }   // (stage M3: debuggable builds only)
     if (x.state === 'failed' && x.error && !fail) parts.push(plainEngineError(x.error) ?? x.error);
     { const n = noteOf(x.id); if (n) parts.push(`✎ ${n}`); }
-    return parts.join(' · ');
+    return parts;
+  };
+  // (D4b: each part of the line kept whole — the state, the sizes, the speed are never cut or eaten by an ellipsis; when
+  // they do not fit on one line the line wraps between parts. The first part of a failure — its reason — may wrap itself.)
+  const fillLine = (el: HTMLElement, x: Task) => {
+    const parts = line2(x); const why = x.state === 'failed' || el.closest('.waiting') !== null;
+    el.replaceChildren(...parts.flatMap((p, i) => [...(i ? [document.createTextNode(' · ')] : []), h('span', { class: (i === 0 && why) || p.length > 28 ? 'lp why' : 'lp' }, p)]));
   };
   const card = (x: Task): HTMLElement => {
     const el = h('article', { class: `task-card state-${x.state}`, dataset: { id: x.id } },
@@ -237,7 +243,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
         oncontextmenu: (e: Event) => { e.preventDefault(); const cur = tasks.find((y) => y.id === x.id) ?? x; // (A computer's right-click: its menu at the pointer; a phone's long press: choosing.)
           if (document.documentElement.classList.contains('pc') && !selecting) { taskMenu(cur, e); return; } if (!selecting) setSelecting(true); pick(cur); } },
         h('span', { class: 'task-kind' }, icon(x.kind === 'torrent' ? 'magnet' : catOf(x).icon)),
-        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: nameDir(displayName(x)) }, ...nameNodes(displayName(x))), h('span', { class: 'task-line' }, line2(x)), h('span', { class: 'task-bar' }, h('i')))),
+        h('span', { class: 'task-text' }, h('span', { class: 'task-name', dir: nameDir(displayName(x)) }, ...nameNodes(displayName(x))), h('span', { class: 'task-line' }), h('span', { class: 'task-bar' }, h('i')))),
       h('span', { class: 'task-actions' }));
     // (A phone: swiped to the right, its first action — pause, resume, retry —; to the left, removed (asked first).)
     swipeable(el, () => { const cur = tasks.find((y) => y.id === x.id) ?? x; const eng = getEngine();
@@ -256,7 +262,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     { const hst = historyOf(x); const old = el.querySelector('.kt-spark'); const sp = x.state === 'downloading' ? sparkline(hst) : null; if (sp) { if (old) old.replaceWith(sp); else el.querySelector('.task-text')?.append(sp); } else old?.remove(); }
     { const keep = ['swiping', 'swipe-r', 'swipe-l', 'armed'].filter((c) => el.classList.contains(c)); el.className = `task-card state-${x.state}`; el.classList.add(...keep); el.classList.toggle('waiting', !!retryLine(x, fmtEta)); }
     setName(el.querySelector('.task-name') as HTMLElement, displayName(x));
-    (el.querySelector('.task-line') as HTMLElement).textContent = line2(x);
+    fillLine(el.querySelector('.task-line') as HTMLElement, x);
     // (The fill is a full-width bar scaled — eased by the compositor, not by laying out the whole list on every frame
     // as an eased width did: tests/rowpatch.cjs.)
     { const fill = el.querySelector('.task-bar i') as HTMLElement; fill.style.transform = `scaleX(${(bar(x) / 100).toFixed(4)})`; }
@@ -322,7 +328,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if ((x.kind === 'http' && x.source.url) || (x.kind === 'torrent' && x.source.magnet)) { if (x.state === 'done' || x.state === 'failed' || x.state === 'seeding') row('refresh', t('redownload'), () => { if (!confirm(t('confirmRedownload', { name: displayName(x) }))) return; void (async () => { await eng.remove(x.id, true); await eng.add({ source: x.source, dir: x.dir, name: x.kind === 'http' ? displayName(x) : undefined, meta: x.meta }); toast(t('taskAdded', { name: displayName(x) })); })().catch((er) => toast(String(er.message ?? er), 'error')); }); }
     sh.actions.append(h('button', { type: 'button', class: 'btn tonal danger', onclick: () => { sh.close(); removeSheet([x]); } }, icon('trash'), t('removeTask')));
   };
-  let cleaned = false; const got = (ts: Task[]) => { raw = ts; tasks = ts.filter((x) => !held.has(x.id)); countFinished(ts); if (ts.some((x) => (x.meta?.megaKey || x.meta?.gdrive) && (x.state === 'failed' || x.state === 'done'))) void import('../downloads/cloud').then((c) => c.watch(getEngine(), ts)); if (!cleaned && ts.length) { cleaned = true; void autoClean(ts).then((n) => { if (n) toast(t('autoCleaned', { n: countItems(n) })); }); } paintSoon(); };
+  let cleaned = false; const got = (ts: Task[]) => { raw = ts; tasks = ts.filter((x) => !held.has(x.id)); countFinished(ts); if (ts.some((x) => (x.meta?.megaKey || x.meta?.gdrive) && (x.state === 'failed' || x.state === 'done'))) void import('../downloads/cloud').then((c) => c.watch(getEngine(), ts)); if (!cleaned && ts.length) { cleaned = true; void autoClean(ts).then((n) => { if (n) toast(t('autoCleaned', { n: countNum(n) })); }); } paintSoon(); };
   // (Pushes come several times a second with downloads under way: the list is drawn at most once a frame and four
   // times a second — text nobody reads faster —, and not at all while the page is hidden: the latest list is kept and
   // drawn when it is shown again. The first list, and a change of what is shown (a task added, gone, its state), at once.)
@@ -349,7 +355,7 @@ export function downloadsView(filter = 'all'): HTMLElement & { dispose?: () => v
     if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRow.hidden = false; searchIn.focus(); }
     else if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); if (!selecting) setSelecting(true); for (const x of shown()) picked.add(x.id); draw(); }
     else if (e.key === 'Escape' && selecting) { e.preventDefault(); setSelecting(false); }
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && selecting && picked.size) { e.preventDefault(); const xs = tasks.filter((x) => picked.has(x.id)); setSelecting(false); removeWithUndo(xs, t('tasksRemoved', { n: countItems(xs.length) })); }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && selecting && picked.size) { e.preventDefault(); const xs = tasks.filter((x) => picked.has(x.id)); setSelecting(false); removeWithUndo(xs, t('tasksRemoved', { n: countNum(xs.length) })); }
     else if (e.key === ' ' && selecting && picked.size) { e.preventDefault(); const eng = getEngine(); void Promise.all(tasks.filter((x) => picked.has(x.id)).map((x) => (x.state === 'paused' || x.state === 'failed' ? eng.resume(x.id) : ACTIVE.includes(x.state) ? eng.pause(x.id) : Promise.resolve()))); }
   };
   window.addEventListener('keydown', onKey);
@@ -401,7 +407,7 @@ async function removeMissing(ts: Task[]): Promise<void> {
   if (!there) { toast(t('notHere'), 'error'); return; }
   const gone = done.filter((_, i) => !there[i]);
   if (!gone.length) { toast(t('noneMissing')); return; }
-  removeWithUndo(gone, t('removedMissing', { n: countItems(gone.length) }));
+  removeWithUndo(gone, t('removedMissing', { n: countNum(gone.length) }));
 }
 
 
@@ -417,16 +423,16 @@ export function removeSheet(tasks: Task[], done?: () => void): void {
   sh.actions.append(h('button', { type: 'button', class: 'btn tonal', onclick: () => sh.close() }, t('cancel')), h('button', { type: 'button', class: 'btn primary danger', onclick: async () => {
     sh.close(); let n = 0;
     // (undo-redo) From the list only: held with an Undo. With the files deleted: for good — there is no Undo for that.
-    if (!box.checked) { removeWithUndo(tasks, t('tasksRemoved', { n: countItems(tasks.length) })); done?.(); return; }
+    if (!box.checked) { removeWithUndo(tasks, t('tasksRemoved', { n: countNum(tasks.length) })); done?.(); return; }
     for (const x of tasks) { try { await eng.remove(x.id, box.checked); n++; } catch (er) { toast(String((er as Error).message ?? er), 'error'); } }
-    toast(box.checked ? t('removedWithFiles', { n: localDigits(n) }) : t('tasksRemoved', { n: countItems(n) })); done?.();
+    toast(box.checked ? t('removedWithFiles', { n: localDigits(n) }) : t('tasksRemoved', { n: countNum(n) })); done?.();
   } }, icon('trash'), t('remove')));
 }
 
 /** The list as a file (links, magnets, names, folders, notes): saved where the platform saves files. */
 async function exportListFile(tasks: Task[]): Promise<void> {
   const text = JSON.stringify(exportList(tasks), null, 1); const name = `kurokawa-downloads-${new Date().toISOString().slice(0, 10)}.json`;
-  try { const { saveText } = await import('../native'); await saveText(name, text, 'application/json'); toast(t('exportedList', { n: countItems(tasks.length) })); }
+  try { const { saveText } = await import('../native'); await saveText(name, text, 'application/json'); toast(t('exportedList', { n: countNum(tasks.length) })); }
   catch { try { await navigator.clipboard.writeText(text); toast(t('copied')); } catch (e) { toast(String((e as Error).message ?? e), 'error'); } }
 }
 /** A list brought back: a file of the app's, or links pasted (one a line); those already here skipped. */
@@ -436,18 +442,18 @@ function importListSheet(tasks: Task[]): void {
   const fin = h('input', { type: 'checkbox' }) as HTMLInputElement;
   const file = h('input', { type: 'file', accept: '.json,.txt', hidden: true, onchange: async () => { const f = file.files?.[0]; if (f) area.value = await f.text(); } }) as HTMLInputElement;
   sh.body.append(area, h('div', { class: 'row-actions' }, file, h('button', { type: 'button', class: 'btn tonal small', onclick: () => file.click() }, icon('folder'), t('importFromFile'))), h('label', { class: 'row switch-row' }, h('span', null, t('importFinishedToo')), fin));
-  sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { if (!area.value.trim()) return; const r = await importList(area.value, { finishedToo: fin.checked }, tasks); sh.close(); toast(t('importedList', { added: countItems(r.added), skipped: localDigits(r.skipped) })); } }, icon('download'), t('importList')));
+  sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: async () => { if (!area.value.trim()) return; const r = await importList(area.value, { finishedToo: fin.checked }, tasks); sh.close(); toast(t('importedList', { added: countNum(r.added), skipped: localDigits(r.skipped) })); } }, icon('download'), t('importList')));
 }
 /** What the app has fetched: in the list now, and since it was installed. */
 function statsSheet(tasks: Task[]): void {
   const sh = openSheet(t('dlStats'), t('close')); const s = stats();
   const by = (f: (x: Task) => boolean) => tasks.filter(f).length; const size = tasks.reduce((n, x) => n + (x.state === 'done' || x.state === 'seeding' ? x.total || x.done : x.done), 0);
-  const rows: [string, string][] = [[t('statsAllTime'), `${countItems(s.files)} · ${formatBytes(s.bytes)}`], [t('statsSince'), new Date(s.since).toLocaleDateString(document.documentElement.lang || undefined)],
-    [t('statsInList'), countItems(tasks.length)], [t('filterDone'), localDigits(by((x) => x.state === 'done' || x.state === 'seeding'))], [t('filterActive'), localDigits(by((x) => ['downloading', 'metadata', 'checking', 'queued', 'paused'].includes(x.state)))], [t('filterFailed'), localDigits(by((x) => x.state === 'failed'))],
+  const rows: [string, string][] = [[t('statsAllTime'), `${countNum(s.files)} · ${formatBytes(s.bytes)}`], [t('statsSince'), new Date(s.since).toLocaleDateString(document.documentElement.lang || undefined)],
+    [t('statsInList'), countNum(tasks.length)], [t('filterDone'), localDigits(by((x) => x.state === 'done' || x.state === 'seeding'))], [t('filterActive'), localDigits(by((x) => ['downloading', 'metadata', 'checking', 'queued', 'paused'].includes(x.state)))], [t('filterFailed'), localDigits(by((x) => x.state === 'failed'))],
     [t('statsTorrents'), localDigits(by((x) => x.kind === 'torrent'))], [t('statsOnDisk'), formatBytes(size)]];
   const list = h('div', { class: 'info-list' }, ...rows.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v))));
   sh.body.append(list);
   // (The storage panel: what the deduplication index knows — files hashed, links made, bytes saved, what is still on disk.)
   const p = ktPlugin() as unknown as { dedupeStats?(): Promise<{ hashed: number; links: number; saved: number; present: number; bytes: number }> } | null;
-  if (p?.dedupeStats) void p.dedupeStats().then((d) => { const more: [string, string][] = [[t('statsHashed'), countItems(d.hashed)], [t('statsLinked'), `${countItems(d.links)} · ${formatBytes(d.saved)}`], [t('statsIndexed'), `${countItems(d.present)} · ${formatBytes(d.bytes)}`]]; list.append(h('div', { class: 'files-sec' }, t('statsStorage')), ...more.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v)))); if (!getSettings().dedupe) list.append(h('p', { class: 'hint' }, t('dedupeOffHint'))); }).catch(() => undefined);
+  if (p?.dedupeStats) void p.dedupeStats().then((d) => { const more: [string, string][] = [[t('statsHashed'), countNum(d.hashed)], [t('statsLinked'), `${countNum(d.links)} · ${formatBytes(d.saved)}`], [t('statsIndexed'), `${countNum(d.present)} · ${formatBytes(d.bytes)}`]]; list.append(h('div', { class: 'files-sec' }, t('statsStorage')), ...more.map(([k, v]) => h('div', { class: 'row' }, h('span', null, k), h('b', { dir: 'auto' }, v)))); if (!getSettings().dedupe) list.append(h('p', { class: 'hint' }, t('dedupeOffHint'))); }).catch(() => undefined);
 }

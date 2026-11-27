@@ -35,8 +35,11 @@ html.pc .fab { display: none; }
 .task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .task-name { font-weight: 600; font-size: 15px; color: var(--md-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-line { font-size: 12.5px; color: var(--md-on-surface-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* (D4: a failure's reason and a waiting card's countdown come first and may take two lines — cut at one, a phone showed «Link expired — giv…».) */
-.task-card.state-failed .task-line, .task-card.waiting .task-line { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+/* (D4/D4b: the line wraps between its parts instead of ending in «…» — the state, the sizes and the speed are never cut;
+   on a narrow phone it may take a third line. A failure's reason, its first part, may wrap inside itself.) */
+.task-line { white-space: normal; text-overflow: clip; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; }
+.task-line > .lp { white-space: nowrap; }
+.task-line > .lp.why { white-space: normal; }
 .task-card.state-failed .task-line { color: var(--md-error, var(--md-on-surface-dim)); }
 .task-bar { display: block; height: 5px; border-radius: 5px; background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); overflow: hidden; }
 .task-bar i { display: block; height: 100%; border-radius: inherit; background: var(--th-progress, var(--md-primary)); transition: width .4s ease; }
