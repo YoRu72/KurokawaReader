@@ -1383,7 +1383,8 @@ html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg
 .files-list[class*="ts-"] .files-section { font-size: calc(13px * var(--ts)); }
 
 /* The fast scroller (views/filesScroll.ts): a handle on the end edge, a bubble beside it. */
-.files-fast { position: fixed; inset-inline-end: 0; width: 48px; z-index: 30; pointer-events: none; opacity: 0; transition: opacity .2s; }
+/* (z-index under the top bar's 20: the wider handle must never lie over a button of the bar.) */
+.files-fast { position: fixed; inset-inline-end: 0; width: 48px; z-index: 19; pointer-events: none; opacity: 0; transition: opacity .2s; }
 .files-fast.on { opacity: 1; }
 .files-fast:not(.on):not(.pc) .files-fast-thumb { pointer-events: none; }   /* (out of sight, out of reach: a touch at the edge is not an invisible grab) */
 .files-fast-thumb { position: absolute; inset-inline-end: 0; top: 0; width: 48px; height: 56px; pointer-events: auto; touch-action: none; display: grid; place-items: center end; padding-inline-end: 6px; box-sizing: border-box; cursor: grab; outline: none; }
