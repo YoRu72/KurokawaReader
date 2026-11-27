@@ -284,6 +284,10 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
         ec.mode === 'days' ? row(t('episodesDays'), numberField(ec.days, (v) => updateSettings({ episodeCache: { ...ec, days: Math.max(1, Math.min(365, v)) } }), { min: 1, max: 365 })) : null,
         use, h('div', { class: 'row-actions wrap' }, del(true), del(false)));
     })() : null;
+    // Streaming: what becomes of an episode that was only downloaded to be watched now, once the player is left
+    // (asked each time until a choice is remembered in the question itself).
+    const streaming = s.addons.includes('anime') || s.addons.includes('tv') || s.addons.includes('player') ? card('streaming', t('streamSection'), h('p', { class: 'hint' }, t('streamKeepHint')),
+      row(t('streamKeepRow'), pickButton(t('streamKeepRow'), [['ask', t('streamKeepAsk')], ['keep', t('keepEpisodeKeep')], ['delete', t('keepEpisodeDelete')]], s.streamKeep ?? 'ask', (v) => { updateSettings({ streamKeep: v as 'ask' | 'keep' | 'delete' }); rerender(); }, t('close')))) : null;
     // Subtitle languages (with the Subtitles or Player add-on): the order they are wanted in — the first is
     // the one searched first and the one the player shows by itself; a tap puts a language first.
     const subLangs = s.addons.includes('subtitles') || s.addons.includes('player') ? (() => {
@@ -404,7 +408,7 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     const battery = plat === 'desktop' || plat === 'android' ? card('battery', t('batTitle'), h('p', { class: 'hint' }, t(plat === 'android' ? 'bphCardHint' : 'batCardHint')), h('a', { class: 'btn filled', href: '#/battery' }, icon('gauge'), t('batOpenPage'))) : null;
     // Advanced (phones that carry the Rust core): the download engine — views/engineSettings.ts.
     const advanced = advancedCard(rerender);
-    return [general, anilist, episodes, appearance, downloads, connection, sounds, player, playerPrefs, screen, battery, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
+    return [general, anilist, episodes, streaming, appearance, downloads, connection, sounds, player, playerPrefs, screen, battery, subLangs, video, models, archives, avBox, privacy, aria2, addons, anime, tvCard, storage, backup, otherApps, updates, advanced, about].filter(Boolean) as HTMLElement[];
   };
   rerender();
   // (Back: a search typed is let go first, then a tab of the bar back to «All»; then Settings is left.)
@@ -492,7 +496,7 @@ function fontRows(desktop: boolean): HTMLElement[] {
 
 
 /** Which settings cards belong to which add-on (a card may belong to two: AniList to Anime and to TV & Movies). */
-const ADDON_CARDS: Record<string, string[]> = { anime: ['anime', 'anilist', 'episodes'], tv: ['tv', 'anilist', 'episodes'], player: ['playerprefs', 'player', 'sublangs'], subtitles: ['sublangs'], video: ['video'], archives: ['archives'], screen: ['screen'] };
+const ADDON_CARDS: Record<string, string[]> = { anime: ['anime', 'anilist', 'episodes', 'streaming'], tv: ['tv', 'anilist', 'episodes', 'streaming'], player: ['playerprefs', 'player', 'sublangs', 'streaming'], subtitles: ['sublangs'], video: ['video'], archives: ['archives'], screen: ['screen'] };
 /** The installed add-ons that have something to set: their cards here, and their (and their sources') options. */
 export function addonTabs(addons: string[], index: { addons: AddonEntry[] } | null, cardIds: Set<string>): { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] {
   const out: { id: string; entry?: AddonEntry; cards: string[]; sources: AddonEntry[] }[] = [];

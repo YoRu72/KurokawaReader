@@ -289,6 +289,8 @@
     "playerrotate.cjs": 12,
     "playerwalk.cjs": 311,
     "streamwalk.cjs": 806,
+    "streamenter.cjs en": 110,
+    "streamenter.cjs ar": 110,
     "dlwalk.cjs": 93,
     "animewalk.cjs": 226,
     "browsewalk.cjs": 87,

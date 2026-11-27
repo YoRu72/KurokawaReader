@@ -80,15 +80,25 @@ export async function streamSheet(a: Anime, episode: number): Promise<void> {
       ...(subs.length ? [h('p', { class: 'hint' }, t('streamSubs', { list: [...new Set(subs.map((s) => s.language))].join('، ') }))] : []));
   }
   async function play(v: S.StreamSource, sv: S.StreamServer, ep: S.StreamEpisode, subs: S.StreamSource['subtitles']) {
-    try {
-      const { openPlayer } = await import('./player');
-      sh.close();
-      // (The site's own address and headers: another app reads them through the relay; the app's own player gets the
-      // proxy its web view needs, made only then — on a computer HLS that way needs ffmpeg, another app does not.)
-      await openPlayer('', `${titleOf(a)} - ${String(ep.number).padStart(2, '0')}`, { meta: { anilistId: a.id, title: titleOf(a), episode: n, cover: a.cover }, subtitles: subs.map((s) => ({ url: s.url, name: s.language, lang: s.language, isDefault: s.isDefault })), origin: { url: v.url, headers: sv.headers ?? {}, hls: v.type === 'm3u8' }, inAppUrl: () => S.playableUrl(v, sv.headers),
-        // (An address that expired while it played — a long pause —: the same server asked again, the same quality.)
-        renew: ((prov) => async () => { const s2 = await S.server(prov, ep, sv.server); const v2 = s2.videoSources.find((x) => x.quality === v.quality && x.type === v.type) ?? s2.videoSources[0]; return S.playableUrl(v2, s2.headers); })(p) });
-    } catch (e) { toast(String((e as Error).message ?? e), 'error'); }
+    // (The player opens at once, from here: its own screen waits for the address and the first data. The chooser is put
+    // back when it is left — Back, the end — so the user is where they were, and «Another stream» is the same sheet.)
+    const label = `${titleOf(a)} - ${String(ep.number).padStart(2, '0')}`; const meta = { anilistId: a.id, title: titleOf(a), episode: n, cover: a.cover };
+    const after = () => void streamSheet(a, n);
+    const { openStart } = await import('../player/starting');
+    sh.close();
+    const start = openStart({ title: label, meta, onCancel: () => undefined, after });
+    start.status(t('streamStarting'));
+    const attempt = async (): Promise<void> => {
+      try {
+        const { openPlayer } = await import('./player');
+        // (The site's own address and headers: another app reads them through the relay; the app's own player gets the
+        // proxy its web view needs, made only then — on a computer HLS that way needs ffmpeg, another app does not.)
+        await openPlayer('', label, { meta, subtitles: subs.map((s) => ({ url: s.url, name: s.language, lang: s.language, isDefault: s.isDefault })), origin: { url: v.url, headers: sv.headers ?? {}, hls: v.type === 'm3u8' }, inAppUrl: () => S.playableUrl(v, sv.headers), start, after, another: after, retry: () => void attempt(),
+          // (An address that expired while it played — a long pause —: the same server asked again, the same quality.)
+          renew: ((prov) => async () => { const s2 = await S.server(prov, ep, sv.server); const v2 = s2.videoSources.find((x) => x.quality === v.quality && x.type === v.type) ?? s2.videoSources[0]; return S.playableUrl(v2, s2.headers); })(p) });
+      } catch (e) { start.fail(String((e as Error).message ?? e), { retry: () => void attempt(), another: after }); }
+    };
+    await attempt();
   }
   async function download(v: S.StreamSource, sv: S.StreamServer, ep: S.StreamEpisode) {
     const name = `${titleOf(a)} - ${String(ep.number).padStart(2, '0')}${v.quality ? ` [${v.quality}]` : ''}`;

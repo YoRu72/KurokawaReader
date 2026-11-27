@@ -26,7 +26,8 @@ export function touchPlayerOpen(): void { const f = read(); if (f) { f.at = Date
 export function playerClosed(o: { watched: boolean; meta?: { anilistId?: number; episode?: number }; at?: string }): void {
   const f = read(); write(null);
   const id = o.meta?.anilistId ?? f?.anilistId; const ep = o.meta?.episode ?? f?.episode;
-  if (id && ep) try { sessionStorage.setItem('kt.anime.focusEp', JSON.stringify({ id, ep })); } catch { /* none */ }
+  // (An episode counted as watched is brought into view; one only left — Back — leaves the page exactly as it was.)
+  if (id && ep && o.watched) try { sessionStorage.setItem('kt.anime.focusEp', JSON.stringify({ id, ep })); } catch { /* none */ }
   const now = location.hash || '#/'; const moved = o.at !== undefined && now !== (o.at || '#/');
   if (f && !moved && now !== f.hash) navigate(f.hash.replace(/^#/, '') || '/');
   else if (f && now === f.hash) { const s = scroller(); if (s && f.scroll) s.scrollTop = f.scroll; }

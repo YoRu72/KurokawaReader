@@ -31,6 +31,31 @@ export function tickCountdowns(root: HTMLElement): number {
 }
 export const titleOf = (a: Anime): string => { const p = getSettings().animeTitleLang; return (p === 'romaji' ? a.titleRomaji : p === 'english' ? a.titleEnglish : p === 'native' ? a.titleNative : a.title) || a.title; };
 
+/** The season's best-rated shows, collapsible (open or closed remembered); on the phone five rows and «See all», on the
+ *  computer all ten in two columns. A show that cannot be drawn is left out. */
+const RT_KEY = 'kt.anime.rtOpen';
+function ratingTable(list: Anime[]): HTMLElement | null {
+  const top = guide.topRated(list); if (!top.length) return null;
+  const rows: HTMLElement[] = [];
+  top.forEach((a) => { try {
+    const ttl = titleOf(a) || String(a.id);
+    rows.push(h('li', null, h('button', { type: 'button', class: 'rt-row', onclick: () => navigate(`/anime/${a.id}`) },
+      h('span', { class: 'rt-rank' }, localDigits(rows.length + 1)),
+      h('span', { class: 'rt-cover' }, coverOf(a) ? h('img', { src: coverOf(a), alt: '', loading: 'lazy' }) : icon('film')),
+      h('span', { class: 'rt-main' }, h('span', { class: 'rt-title', dir: 'auto' }, ttl), h('span', { class: 'rt-bar', 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.max(0, Math.min(100, a.score ?? 0))}%` } }))),
+      a.entry?.status ? h('span', { class: `rt-mark s-${String(a.entry.status).toLowerCase()}`, dir: 'auto' }, statusName(a.entry.status)) : null,
+      h('span', { class: 'rt-score' }, `${localDigits(a.score ?? 0)}%`))));
+  } catch { /* left out */ } });
+  if (!rows.length) return null;
+  rows.forEach((li, i) => li.firstElementChild?.classList.toggle('extra', i >= 5));
+  let open = true; try { open = localStorage.getItem(RT_KEY) !== '0'; } catch { /* open */ }
+  const more = h('button', { type: 'button', class: 'btn text small rt-more', onclick: () => { wrap.classList.add('all'); } }, t('seeAll'));
+  const body = h('div', { class: 'rt-body', id: 'rt-body' }, h('ul', { class: 'rt-list' }, ...rows), rows.length > 5 ? more : null);
+  const head = h('button', { type: 'button', class: 'rt-head', 'aria-expanded': String(open), 'aria-controls': 'rt-body', onclick: () => { open = !open; wrap.classList.toggle('open', open); head.setAttribute('aria-expanded', String(open)); try { localStorage.setItem(RT_KEY, open ? '1' : '0'); } catch { /* none */ } } }, icon('star'), h('span', { class: 'grow' }, t('topRatedSeason')), icon('chevronDown'));
+  const wrap = h('section', { class: 'rt' + (open ? ' open' : ''), 'aria-label': t('topRatedSeason') }, head, body);
+  return wrap;
+}
+
 /** A show's card: cover, title, a line of facts, the next episode's countdown when airing. */
 export function animeCard(a: Anime, extra?: HTMLElement | null): HTMLElement {
   const facts = [a.format ? fmtFormat(a.format) : '', a.seasonYear ? localDigits(a.seasonYear) : '', a.episodes ? countEpisodes(a.episodes) : '', a.score ? `★ ${localDigits(a.score)}%` : ''].filter(Boolean).join(' · ');
@@ -110,13 +135,13 @@ export function animeView(tab?: AnimeTab, q?: string, preset?: Partial<al.Search
         head.replaceChildren(iconButton('chevronLeft', t('back'), () => { at = al.seasonShift(at, -1); load(); }), h('h2', null, `${seasonName(at.season)} ${localDigits(at.year)}`), iconButton('chevronRight', t('next'), () => { at = al.seasonShift(at, 1); load(); }),
           h('div', { class: 'grow' }), h('button', { type: 'button', class: 'chip' + (leftovers ? ' on' : ''), onclick: () => { leftovers = !leftovers; load(); } }, t('animeLeftovers')),
           h('button', { type: 'button', class: 'chip', onclick: () => { const order = ['POPULARITY_DESC', 'SCORE_DESC', 'START_DATE', ...(al.linked() ? ['FOR_YOU'] : [])]; sort = order[(order.indexOf(sort) + 1) % order.length]; load(); } }, icon('sort'), t(sort === 'POPULARITY_DESC' ? 'sortPopular' : sort === 'SCORE_DESC' ? 'sortScore' : sort === 'FOR_YOU' ? 'sortForYou' : 'sortDate')));
-        // «For you»: the season in the order of your taste, each card with how well it fits. Otherwise the season's top ten as
-        // tiers above the grid. (A tier strip that cannot be made leaves the grid alone.)
+        // «For you»: the season in the order of your taste, each card with how well it fits. Otherwise the season's best-rated shows as a
+        // rating table above the grid. (A table that cannot be made leaves the grid alone.)
         const render = (c: Chart, box: HTMLElement) => {
           const { r, fits } = c;
           if (fits) { box.replaceChildren(grid(r, (a) => { const f = fits[a.id] ?? 0; const pl = planBtn(a); return h('span', { class: 'anime-fit' }, h('b', null, `${localDigits(f)}%`), ' ', t('fitForYou'), pl); })); return; }
           let strip: HTMLElement | null = null;
-          if (!lo && r.length > 12) { try { const top = guide.tiers(r); strip = h('div', { class: 'tier-strip' }, ...(['S', 'A', 'B', 'C'] as const).map((tier) => h('div', { class: `tier-row t-${tier}` }, h('b', { class: 'tier-letter' }, tier), h('div', { class: 'tier-items' }, ...top.filter((x) => x.tier === tier).map(({ a }) => h('button', { type: 'button', class: 'tier-item', title: titleOf(a), onclick: () => navigate(`/anime/${a.id}`) }, coverOf(a) ? h('img', { src: coverOf(a), alt: '', loading: 'lazy' }) : icon('film')))))));  } catch { strip = null; } }
+          if (!lo) { try { strip = ratingTable(r); } catch { strip = null; } }
           box.replaceChildren(...(strip ? [strip] : []), r.length ? grid(r, planBtn) : h('p', { class: 'empty small' }, t('noResults')));
         };
         netLoad<Chart>({

@@ -30,6 +30,8 @@ export interface GuardHost {
   torrent: boolean;
   /** Back: the player closed. */
   back(): void;
+  /** Another stream to choose (the chooser again), when there is one: a third action on the failure sheet. */
+  another?: () => void;
   /** The address answers but the file cannot be played: the player's own handling of a file it cannot read. */
   fileError(): void;
   fmt(s: number): string;
@@ -109,7 +111,8 @@ export function guardStream(o: GuardHost): Guard {
     sh.body.append(h('p', { class: 'kt-problem-msg' }, ended !== undefined ? t('streamEndedEarly', { t: o.fmt(ended) }) : t('streamDead')), detail ? h('p', { class: 'hint', dir: 'ltr' }, detail) : '',
       h('div', { class: 'ext-error-actions' },
         h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); tries = 0; renewTries = 0; void (o.renew && detail && /\b(401|403|404|410)\b/.test(detail) ? o.renew().then((u) => reopen(u, 'renewing'), () => reopen(o.url(), 'asking')) : reopen(o.url(), 'asking')); } }, icon('refresh'), t('streamRetry')),
-        h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); o.back(); } }, icon('back'), t('streamBack'))));
+        h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); o.back(); } }, icon('back'), t('streamBack')),
+        ...(o.another ? [h('button', { type: 'button', class: 'btn tonal', onclick: () => { sh.close(); o.another!(); } }, icon('list'), t('streamAnother'))] : [])));
   }
 
   return {

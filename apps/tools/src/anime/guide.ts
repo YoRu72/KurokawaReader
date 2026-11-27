@@ -1,7 +1,6 @@
 // A season guide and an anime diary, in the Anime tab: a season sorted
 // «for you» (each show's genres and tags weighed by how you scored what you finished, dropped or are watching),
-// the season's top ten as S/A/B/C tiers (AniList's score weighted by how many voted, popularity early in a
-// season), and the diary — every episode you logged on AniList as a calendar heatmap, the shows you left
+// the season's ten best-rated shows as a table (the catalogue's average score), and the diary — every episode you logged on AniList as a calendar heatmap, the shows you left
 // unfinished, and the year in review.
 import * as al from '../anilist';
 import { coverFor } from './covers';
@@ -28,13 +27,12 @@ export function fit(a: al.Anime & { tags?: { name: string; rank: number }[] }, w
   let s = 0, n = 0; for (const g of a.genres) { s += w.get(`g:${g}`) ?? 0; n++; } for (const tg of a.tags ?? []) if (tg.rank >= 50) { s += (w.get(`t:${tg.name}`) ?? 0) * (tg.rank / 100); n += 0.5; }
   return Math.round(Math.max(0, Math.min(100, 50 + (n ? (s / n) * 50 : 0))));
 }
-/** The season's top ten in tiers: a Bayesian average of the score (so a few votes do not top the list), with
- *  popularity standing in while scores are still thin. */
-export function tiers(list: al.Anime[]): { tier: 'S' | 'A' | 'B' | 'C'; a: al.Anime }[] {
-  const scored = list.filter((a) => a.score || a.popularity); const mean = scored.reduce((s, a) => s + (a.score ?? 0), 0) / Math.max(1, scored.filter((a) => a.score).length) || 70;
-  const maxPop = Math.max(1, ...scored.map((a) => a.popularity ?? 0));
-  const val = (a: al.Anime) => { const votes = (a.popularity ?? 0) / 20; const bayes = a.score ? (votes * a.score + 400 * mean) / (votes + 400) : mean - 5; return bayes * 0.8 + ((a.popularity ?? 0) / maxPop) * 20; };
-  return [...scored].sort((x, y) => val(y) - val(x)).slice(0, 10).map((a, i) => ({ tier: i < 2 ? 'S' : i < 5 ? 'A' : i < 8 ? 'B' : 'C', a }));
+/** The season's best-rated shows: the catalogue's average score, ties by popularity; shows with no score yet are left
+ *  out; fewer than three scored shows make no table. At most ten. */
+export function topRated(list: al.Anime[]): al.Anime[] {
+  const scored = list.filter((a) => a && typeof a.score === 'number' && a.score > 0);
+  if (scored.length < 3) return [];
+  return [...scored].sort((x, y) => (y.score ?? 0) - (x.score ?? 0) || (y.popularity ?? 0) - (x.popularity ?? 0)).slice(0, 10);
 }
 
 /* ---------- the diary ---------- */

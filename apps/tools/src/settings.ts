@@ -175,6 +175,8 @@ export interface Settings {
   animeAskReview?: boolean;
   /** Starting a download goes to the Downloads page (default off: a small floating progress bar instead). */
   openDownloadsOnStart?: boolean;
+  /** What becomes of the data a streamed episode left on the device when the player is left: asked each time (default), kept, or deleted. */
+  streamKeep?: 'ask' | 'keep' | 'delete';
   /** Halfway through an episode, the next one starts downloading. */
   animePreloadNext?: boolean;
   /** Episodes downloaded to be watched: kept, deleted once watched, or deleted some days after. */

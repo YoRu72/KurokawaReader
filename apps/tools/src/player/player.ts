@@ -57,7 +57,11 @@ export interface PlayerSource { url: string; name: string; task?: Task; fileInde
   startAt?: number; forCaller?: boolean;
   /** A stream's fresh address when the one it has expired (an online episode's server asked again). A download's
    *  stream asks the engine again by itself. */
-  renew?: () => Promise<string> }
+  renew?: () => Promise<string>;
+  /** Called when the player is left for good (not for the next episode): the chooser the stream was picked in is put back. */
+  after?: () => void;
+  /** Another stream to choose when this one fails (the chooser again). */
+  another?: () => void }
 interface SubTrack { id: string; name: string; lang?: string; cues: Cue[]; ass?: string; fmt: string }
 
 const fmtTime = (s: number): string => { if (!isFinite(s)) return '–:––'; s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits((h ? `${h}:${String(m).padStart(2, '0')}:` : `${m}:`) + String(sec).padStart(2, '0')); };
@@ -96,6 +100,26 @@ export function openPlayer(src: PlayerSource): void {
   const clock = h('span', { class: 'kt-clock', hidden: !P.showClock });
   const topToolBox = h('span', { class: 'kt-tools kt-top-tools' });
   const top = h('div', { class: 'kt-top' }, iconButton('back', t('back'), () => close()), title, clock, topToolBox, iconButton('subtitles', t('navSubs'), () => subsSheet()), iconButton('music', t('audioSection'), () => audioSheet()), batchFiles().length > 1 ? iconButton('list', t('batchFiles'), () => batchSheet()) : null, iconButton('more', t('more'), () => moreSheet()));
+  // ---- a download coming while it plays (a stream): one slim line under the title row — percent, speed, «n of m», the
+  // peers when the engine knows them — shown with the controls (hidden with them, in the picture-in-picture too);
+  // finished: «Downloaded» for a moment, then gone. Numbers are isolated so they read the same in right-to-left.
+  const dlLine = h('div', { class: 'kt-dl', hidden: true, role: 'status', 'aria-live': 'off' }); top.append(dlLine);
+  if (src.task && !src.localPath && src.task.state !== 'done') {
+    let doneAt = 0; let doneTm = 0; const tid = src.task.id;
+    const num = (txt: string) => h('bdi', { dir: 'ltr' }, txt);
+    const paintDl = (x: Task | undefined) => {
+      if (!x || playerGone || doneAt) return;
+      const total = Number.isFinite(x.total) && x.total > 0 ? x.total : 0; const got = Number.isFinite(x.done) && x.done > 0 ? (total ? Math.min(x.done, total) : x.done) : 0;
+      if (x.state === 'done' || x.state === 'seeding') { doneAt = Date.now(); dlLine.replaceChildren(h('span', null, t('downloaded'))); dlLine.hidden = false; doneTm = window.setTimeout(() => { dlLine.hidden = true; }, 2500); return; }
+      const parts: (HTMLElement | string)[] = [];
+      if (total) parts.push(num(`${localDigits(Math.max(0, Math.min(100, Math.floor((got / total) * 100))))}%`));
+      if (Number.isFinite(x.downSpeed) && x.downSpeed > 0) parts.push(num(`${formatBytes(x.downSpeed)}/s`));
+      if (total) parts.push(h('span', null, ...t('dlOfTotal', { a: '\u0001', b: '\u0002' }).split(/(\u0001|\u0002)/).map((seg) => (seg === '\u0001' ? num(formatBytes(got)) : seg === '\u0002' ? num(formatBytes(total)) : seg))));
+      if (x.kind === 'torrent' && typeof x.peers === 'number' && Number.isFinite(x.peers)) parts.push(h('bdi', null, t('peersN', { n: localDigits(Math.max(0, x.peers)) })));
+      dlLine.replaceChildren(...parts.flatMap((el, i) => (i ? [h('span', { class: 'sep', 'aria-hidden': 'true' }, '·'), el] : [el]))); dlLine.hidden = !parts.length;
+    };
+    void import('../engine').then(({ getEngine }) => { if (playerGone) return; const eng = getEngine(); void eng.list().then((ts) => paintDl(ts.find((y) => y.id === tid))).catch(() => undefined); const un = eng.onChange((ts) => paintDl(ts.find((y) => y.id === tid))); offs.push(un, () => window.clearTimeout(doneTm)); });
+  }
   const timeNow = h('span', { class: 'kt-time' }, '0:00'); const timeEnd = h('button', { type: 'button', class: 'kt-time end', title: t('showRemaining'), onclick: () => { const p = getPrefs(); if (p.showRemaining && !endsAt) { endsAt = true; } else { endsAt = false; updatePrefs({ showRemaining: !p.showRemaining }); } onTime(); } }, '–:––'); let endsAt = false;
   const bar = h('div', { class: 'kt-seek', role: 'slider', tabindex: '0', 'aria-label': t('seekBar') }, h('div', { class: 'kt-buf' }), h('div', { class: 'kt-played' }), h('div', { class: 'kt-knob' }), h('i', { class: 'kt-mark a', hidden: true }), h('i', { class: 'kt-mark b', hidden: true }));
   const playBtn = iconButton('play', t('play'), () => toggle()); playBtn.classList.add('kt-play');
@@ -276,7 +300,7 @@ export function openPlayer(src: PlayerSource): void {
       if (playerGone) return;
       const tk = src.task;
       const renew = src.renew ?? (tk ? async () => { const { getEngine } = await import('../engine'); const e = getEngine(); if (!e.streamUrl) throw new Error('no stream'); return e.streamUrl(tk.id, src.fileIndex ?? 0); } : undefined);
-      guard = G.guardStream({ video, busy: () => centre.classList.contains('busy'), setBusy: (on) => { if (on) setBusy(); else unbusy(); }, notice, url: () => src.url, setUrl: (u) => { src.url = u; }, renew, torrent: tk?.kind === 'torrent', back: () => close(), fileError, fmt: fmtTime });
+      guard = G.guardStream({ video, busy: () => centre.classList.contains('busy'), setBusy: (on) => { if (on) setBusy(); else unbusy(); }, notice, url: () => src.url, setUrl: (u) => { src.url = u; }, renew, torrent: tk?.kind === 'torrent', back: () => close(), another: src.another || src.after ? () => { const go = src.another; const hadAfter = !!src.after; close(); if (go && !hadAfter) go(); } : undefined, fileError, fmt: fmtTime });
     });
   }
   let lastPosState = 0; let lastSavedAt = -99;
@@ -317,9 +341,9 @@ export function openPlayer(src: PlayerSource): void {
     let nx = getPrefs().shuffle && dir > 0 && list.length > 1 ? list.filter((x) => x.url !== src.url)[Math.floor(Math.random() * (list.length - 1))] : list[i + dir];
     if (!nx && repeat === 'all' && list.length) nx = dir > 0 ? list[0] : list[list.length - 1];
     if (!nx) { if (!auto) toast(t(dir > 0 ? 'noNextFile' : 'noPreviousFile')); else showControls(); return; }
-    goingOn = true; close(); openPlayer({ ...nx, playlist: list });
+    goingOn = true; close(); openPlayer({ ...nx, playlist: list, after: src.after, another: src.another });
   }
-  const playAt = (item: PlayerSource) => { goingOn = true; close(); openPlayer({ ...item, playlist: src.playlist }); };
+  const playAt = (item: PlayerSource) => { goingOn = true; close(); openPlayer({ ...item, playlist: src.playlist, after: src.after, another: src.another }); };
 
   // ---- the system's media controls (desktop keys, a notification where the browser shows one)
   if ('mediaSession' in navigator) {
@@ -1507,7 +1531,9 @@ export function openPlayer(src: PlayerSource): void {
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    guard?.stop(); guard = null; converted?.stop(); converted = null; if (src.task?.kind === 'torrent' && !handingOver) { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden); window.removeEventListener('resize', drawTools); stageRo.disconnect(); healthOff?.(); healthOff = null; window.clearTimeout(noticeTimer); dropFontUrls(); for (const u of packFonts) URL.revokeObjectURL(u); packFonts = []; window.clearTimeout(firstFrameTimer); document.removeEventListener('visibilitychange', gateTimers); if (!goingOn) { const at = location.hash; void import('./returnTo').then((r) => r.playerClosed({ watched: watchedSent, meta: src.task?.meta ?? src.meta, at })); }
+    guard?.stop(); guard = null; converted?.stop(); converted = null; if (src.task?.kind === 'torrent' && !handingOver) { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden); window.removeEventListener('resize', drawTools); stageRo.disconnect(); healthOff?.(); healthOff = null; window.clearTimeout(noticeTimer); dropFontUrls(); for (const u of packFonts) URL.revokeObjectURL(u); packFonts = []; window.clearTimeout(firstFrameTimer); document.removeEventListener('visibilitychange', gateTimers); { const at = location.hash; const tk = src.task; const after = src.after; const on = goingOn; const asked = () => import('./streamKeep').then((K) => K.left(tk, on)).catch(() => undefined);
+      // (The page and its sheet are put back first; the question about the episode comes over them.)
+      if (on) void asked(); else void import('./returnTo').then((r) => { r.playerClosed({ watched: watchedSent, meta: src.task?.meta ?? src.meta, at }); try { after?.(); } catch { /* none */ } }).then(asked); }
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void turnScreen('auto').catch(() => undefined);

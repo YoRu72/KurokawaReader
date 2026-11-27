@@ -11,11 +11,18 @@ import type { Task } from '../engine/types';
 
 type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[]; headers?: Record<string, string>; startAt?: number; forCaller?: boolean;
   /** An online source as the site gives it (its headers, HLS or not): another app gets it through the relay; the app's own player gets `inAppUrl()` (the proxy the web view needs). */ origin?: { url: string; headers: Record<string, string>; hls?: boolean }; inAppUrl?: () => Promise<string>;
-  /** The app's own player: a fresh address when the one it plays has expired (src/player/streamGuard.ts). */ renew?: () => Promise<string> };
+  /** The app's own player: a fresh address when the one it plays has expired (src/player/streamGuard.ts). */ renew?: () => Promise<string>;
+  /** The screen opened at once while the source is still being found (src/player/starting.ts): the real player takes its place. */ start?: import('../player/starting').Start;
+  /** Called when the player is left (back, the end): the chooser the stream was picked in is put back. */ after?: () => void;
+  /** The way to choose another stream when this one fails (the chooser again). */ another?: () => void;
+  /** The start asked again (Try again on the start's failure sheet). */ retry?: () => void };
 export type PlayWith = 'ask' | 'app' | 'external';
 export const canPlayExternally = (): boolean => { const p = nativePlatform(); return p === 'android' || p === 'desktop'; };
 
 export async function openPlayer(url: string, name: string, opts: PlayOpts = {}): Promise<void> {
+  try { await openPlayerNow(url, name, opts); } finally { opts.start?.handover(); }
+}
+async function openPlayerNow(url: string, name: string, opts: PlayOpts): Promise<void> {
   // (One question at most: the hand-over's own chooser — the app's own player or the outside way — asks it, with the
   // default for this kind of video; «Watch videos with» in Settings feeds that default. No second sheet before it.)
   const how: 'app' | 'external' = canPlayExternally() && getSettings().playerWith !== 'app' ? 'external' : 'app';
@@ -36,7 +43,8 @@ export async function openPlayer(url: string, name: string, opts: PlayOpts = {})
 }
 /** The app's own player (the Player add-on), with mpv on a phone when it is here. */
 async function inApp(url: string, name: string, opts: PlayOpts): Promise<void> {
-  if (!url && opts.inAppUrl) { try { url = await opts.inAppUrl(); } catch (e) { toast(String((e as Error).message ?? e), 'error'); return; } }
+  if (!url && opts.inAppUrl) { try { url = await opts.inAppUrl(); } catch (e) { const why = String((e as Error).message ?? e); if (opts.start && !opts.start.cancelled) { opts.start.fail(why, { retry: opts.retry, another: opts.another ?? opts.after }); return; } toast(why, 'error'); return; } }
+  if (opts.start?.cancelled) return;
   // (Where it goes back to — the app's own player only, not another app's, nor a video handed in by another app.)
   if (!opts.forCaller) await import('../player/returnTo').then((r) => r.notePlayerOpen(opts.task?.meta ?? opts.meta)).catch(() => undefined);
   if (!getSettings().addons.includes('player')) {
@@ -49,7 +57,9 @@ async function inApp(url: string, name: string, opts: PlayOpts): Promise<void> {
   if (nativePlatform() === 'android' && getSettings().playerEngine !== 'web') { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; }
   // (An MKV, AVI or other container the web view cannot decode — a black picture with sound at best — with no mpv here: the mpv pack offered once, the web view only if declined.)
   if (nativePlatform() === 'android' && engine === 'web' && /\.(mkv|avi|wmv|flv|ts|m2ts|mts|mpg|mpeg|ogv|rmvb)(\?|$)/i.test(opts.localPath ?? name ?? url)) { try { const { ensurePacks } = await import('../packs'); if (await ensurePacks(['mpv'], t('packWhyMpv'))) { const { mpvAvailable } = await import('../player/mpv'); if (await mpvAvailable()) engine = 'mpv'; } } catch { /* the web view then */ } }
-  const { openPlayer: full } = await import('../player/player'); full({ url, name, ...opts, engine });
+  if (opts.start?.cancelled) return;
+  const { start: _s, retry: _r, ...rest } = opts; void _s; void _r;
+  const { openPlayer: full } = await import('../player/player'); full({ url, name, ...rest, engine });
 }
 /** Handed to another app: the phone's chooser (the file itself, or the local stream while it comes), or the
  *  computer's default player for a file. False when there is no way, so the in-app player takes it. */
@@ -75,13 +85,21 @@ function bare(url: string, name: string, meta?: { anilistId?: number; episode?: 
 }
 /** A task's file in the player: streamed while it comes, or the finished file from disk; the task's other videos as the playlist. */
 import { localPathOf } from '../engine/localPath';
-export async function playTaskFile(x: Task, fileIndex: number): Promise<void> {
-  const eng = getEngine(); const f = x.files.find((g) => g.index === fileIndex) ?? x.files[0]; const name = f?.path.split('/').pop() ?? x.name;
+export async function playTaskFile(x: Task, fileIndex: number, extra: Pick<PlayOpts, 'start' | 'after' | 'another'> = {}): Promise<void> {
+  const eng = getEngine();
+  // (A download still coming, played from where the user is — a card's Stream button —: the player's own screen opens at
+  // once and waits for the stream's address and first data; Back there stops it and leaves the page as it was.)
+  if (!extra.start && x.state !== 'done' && eng.streamUrl) {
+    const { openStart } = await import('../player/starting'); const first = x.files.find((g) => g.index === fileIndex) ?? x.files[0];
+    const start = openStart({ title: first?.path.split('/').pop() ?? x.name, meta: x.meta, onCancel: () => undefined }); start.status(t('streamStarting'));
+    try { await playTaskFile(x, fileIndex, { ...extra, start }); } catch (e) { start.fail(String((e as Error).message ?? e), { retry: () => void playTaskFile(x, fileIndex, { ...extra, start }) }); }
+    return;
+  } const f = x.files.find((g) => g.index === fileIndex) ?? x.files[0]; const name = f?.path.split('/').pop() ?? x.name;
   const localOf = (g: { index: number }) => localPathOf(x, g.index);
   const { localFileUrl } = await import('../player/files');
   const urlOf = async (g: { index: number; path: string; done: number; size: number }) => { const lp = localOf(g); if (x.state === 'done' && lp) { const u = await localFileUrl(lp); if (u) return u; } if (eng.streamUrl) return eng.streamUrl(x.id, g.index); return null; };
-  const url = f ? await urlOf(f) : null; if (!url) { if (eng.open) await eng.open(x.id, fileIndex); else toast(t('playerCantPlay'), 'error'); return; }
+  const url = f ? await urlOf(f) : null; if (!url) { if (extra.start) { extra.start.fail(t('playerCantPlay'), { another: extra.another ?? extra.after }); return; } if (eng.open) await eng.open(x.id, fileIndex); else toast(t('playerCantPlay'), 'error'); return; }
   const vids = x.files.filter((g) => isVideo(g.path) && g.priority > 0);
   const playlist = vids.length > 1 ? await Promise.all(vids.map(async (g) => ({ url: (await urlOf(g)) ?? '', name: g.path.split('/').pop() ?? g.path, localPath: localOf(g), task: x, fileIndex: g.index }))) : undefined;
-  await openPlayer(url, name, { task: x, fileIndex, localPath: x.state === 'done' ? localOf(f) : undefined, playlist: playlist?.filter((p) => p.url) });
+  await openPlayer(url, name, { task: x, fileIndex, localPath: x.state === 'done' ? localOf(f) : undefined, playlist: playlist?.filter((p) => p.url), ...extra });
 }

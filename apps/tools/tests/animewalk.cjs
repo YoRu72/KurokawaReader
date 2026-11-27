@@ -130,6 +130,37 @@ async function newPage(combo, hold) {
 }
 const release = () => { for (const r of held) { try { r.destroy(); } catch { /* gone */ } } held.clear(); };
 
+// ---- the season's rating table (replaces the old S/A/B/C strip): at most 10 rows in descending score, an odd item left
+// out or drawn whole, no colour in the orange/yellow hues, rows tall enough to press, the phone's five rows and «See all»,
+// the computer's two columns, the header folding (and remembered).
+async function ratingWalk(p, check, combo, shots, label) {
+  const r = await p.evaluate(() => {
+    const parse = (c) => { const m = /rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:[,/ ]+([\d.]+))?/.exec(c); if (!m) return null; return { r: +m[1] / 255, g: +m[2] / 255, b: +m[3] / 255, a: m[4] === undefined ? 1 : +m[4] }; };
+    const hsl = ({ r, g, b }) => { const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn; if (!d) return { h: 0, s: 0 }; const s = d / (1 - Math.abs(2 * l - 1)); let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; if (h < 0) h += 360; return { h, s }; };
+    const box = document.querySelector('.rt'); if (!box) return { none: true, strip: !!document.querySelector('.tier-strip') };
+    const bad = []; for (const el of [box, ...box.querySelectorAll('*')]) { const cs = getComputedStyle(el); for (const k of ['backgroundColor', 'color', 'borderTopColor']) { const c = parse(cs[k]); if (!c || c.a < 0.05) continue; const { h, s } = hsl(c); if (h >= 25 && h <= 65 && s > 0.2) bad.push(`${el.className}:${k}:${cs[k]}`); } }
+    const rows = [...box.querySelectorAll('.rt-row')]; const vis = rows.filter((x) => x.getBoundingClientRect().height > 0);
+    const scores = rows.map((x) => Number((x.querySelector('.rt-score').textContent || '').replace(/[^0-9]/g, '')));
+    const xs = [...new Set(vis.map((x) => Math.round(x.getBoundingClientRect().left)))];
+    return { strip: !!document.querySelector('.tier-strip'), n: rows.length, vis: vis.length, scores, minH: Math.min(...vis.map((x) => x.getBoundingClientRect().height)), cols: xs.length, bad, head: box.querySelector('.rt-head').textContent, titles: rows.map((x) => x.querySelector('.rt-title').textContent), more: !!box.querySelector('.rt-more') && box.querySelector('.rt-more').getBoundingClientRect().height > 0, moreH: box.querySelector('.rt-more') ? box.querySelector('.rt-more').getBoundingClientRect().height : 0, over: document.documentElement.scrollWidth > innerWidth + 1 };
+  });
+  check(`${label}the old tier strip is gone`, !r.strip, r);
+  if (r.none) { check(`${label}a rating table is drawn`, false, r); return; }
+  check(`${label}the rating table has 1 to 10 rows (${r.n}), scores descending ${r.scores.join(',')}`, r.n >= 1 && r.n <= 10 && r.scores.every((x, i) => i === 0 || r.scores[i - 1] >= x), r);
+  check(`${label}no row without a title`, r.titles.every((x) => x.trim().length > 0), r.titles);
+  check(`${label}no colour in hue 25-65 (saturation above a fifth)`, r.bad.length === 0, r.bad.slice(0, 4));
+  check(`${label}rows at least 40 px tall (${Math.round(r.minH)})`, r.minH >= 40, r.minH);
+  check(`${label}no sideways scroll`, !r.over, r);
+  if (combo.phone) check(`${label}phone: five rows and «See all» (${r.vis} shown, ${r.n} in all)`, r.vis === Math.min(5, r.n) && (r.n <= 5 || (r.more && r.moreH >= 40)), r);
+  else check(`${label}computer: every row, two columns (${r.vis} shown, ${r.cols} columns)`, r.vis === r.n && (r.n <= 5 || r.cols === 2), r);
+  if (combo.phone && r.n > 5) { await p.click('.rt-more'); const v2 = await p.evaluate(() => [...document.querySelectorAll('.rt-row')].filter((x) => x.getBoundingClientRect().height > 0).length); check(`${label}«See all» shows all (${v2})`, v2 === r.n, v2); }
+  await p.click('.rt-head'); const closed = await p.evaluate(() => ({ open: document.querySelector('.rt').classList.contains('open'), vis: [...document.querySelectorAll('.rt-row')].some((x) => x.getBoundingClientRect().height > 0), saved: localStorage.getItem('kt.anime.rtOpen') }));
+  check(`${label}the header folds it and the choice is kept`, !closed.open && !closed.vis && closed.saved === '0', closed);
+  await p.click('.rt-head'); const opened = await p.evaluate(() => ({ open: document.querySelector('.rt').classList.contains('open'), saved: localStorage.getItem('kt.anime.rtOpen') })); check(`${label}opened again`, opened.open && opened.saved === '1', opened);
+  if (shots && (combo.phone || combo.lang === 'en')) { await p.evaluate(() => document.querySelector('.rt').scrollIntoView({ block: 'start' })); await p.waitForTimeout(150); await p.screenshot({ path: path.join(OUT, combo.phone ? `ST2-rating-${combo.lang}.png` : 'ST2-rating-pc.png') }); }
+  return r;
+}
+
 // ---- one tab, one case
 async function walk(tab, cs, combo, shots) {
   const T = TABS[tab]; const say = SAY[combo.lang]; const name = `${tab} / ${cs} / ${combo.w}x${combo.h}${combo.phone ? '' : ' pc'} ${combo.lang}`;
@@ -149,13 +180,14 @@ async function walk(tab, cs, combo, shots) {
       check('back online, the list appears', s2.content > 0 && !s2.timedOut, s2);
     } else {
       const s = cs === '429' ? await waitFor(p, tab, (x) => x.noteWait, 12000) : await settledE(p, tab);
-      if (cs === 'ok' || cs === 'firstslow') { saw.push(`${s.content} items`); check('the list appears, no failure', s.content > 0 && !s.failText && !s.noteBad && !s.timedOut, s); }
+      if (cs === 'ok' || cs === 'firstslow') { saw.push(`${s.content} items`); check('the list appears, no failure', s.content > 0 && !s.failText && !s.noteBad && !s.timedOut, s); if (tab === 'season' && cs === 'ok') { const rt = await ratingWalk(p, check, combo, shots, 'rating: '); saw.push(rt && !rt.none ? `rating table ${rt.n} rows` : 'no rating table'); } }
       else if (cs === 'empty') {
         const emptyOk = T.discover || tab === 'diary' || tab === 'entry' ? true : !!s.empty; saw.push(T.discover || tab === 'diary' ? `${s.content} items, no failure` : tab === 'entry' ? `${said(s) || s.text.slice(0, 80)}` : `"${s.empty}"`);
         check('an empty list says so (no spinner, no failure)', !s.spinner && !s.timedOut && (tab === 'entry' ? s.retry : emptyOk && !s.failText && !s.noteBad), s);
       } else if (cs === 'odd') {
         const need = tab === 'entry' ? 1 : tab === 'diary' ? 1 : tab === 'schedule' ? 10 : VALID_MIN - 2; saw.push(`${s.content} items drawn, nothing blank`);
         check('odd items: the rest kept, the list not blank', (s.content >= need || (tab === 'diary' && !s.failText)) && !s.timedOut && !s.failText && !s.noteBad, s);
+        if (tab === 'season') await ratingWalk(p, check, combo, false, 'rating (odd items): ');
         if (tab === 'season') { // (the sort chip walked on to «For you», and the leftovers chip: neither blanks the list)
           for (const pick of ['sort', 'leftovers']) { await p.evaluate((w) => { const chips = [...document.querySelectorAll('.season-head .chip')]; (w === 'sort' ? chips[chips.length - 1] : chips[0]).click(); }, pick); const s3 = await settledE(p, tab); check(`odd items after the ${pick} chip`, !s3.timedOut && s3.content >= 1 && !s3.failText, s3); }
           await p.evaluate(() => { const chips = [...document.querySelectorAll('.season-head .chip')]; chips[chips.length - 1].click(); }); const s4 = await settledE(p, tab); check('odd items under «For you» (taste ordering)', !s4.timedOut && s4.content >= 1 && !s4.failText, s4);
@@ -192,6 +224,7 @@ async function cached(tab, combo, shots) {
     S.mode = 'never'; const t0 = Date.now(); await p.reload(); const s1 = await waitFor(p, tab, (x) => x.content > 0, 3000); const ms = Date.now() - t0;
     ok(`${name}: the old list at once (${ms} ms)`, s1.content > 0 && ms < 2500, s1); ok(`${name}: marked as being refreshed`, say.refreshing.test(s1.noteText) || s1.noteWait || say.kept.test(s1.noteText), s1.noteText);
     saw.push(`${s1.content} items at once, strip «${s1.noteText}»`);
+    if (tab === 'season') await ratingWalk(p, (l, c, x) => ok(`${name}: ${l}`, c, x), combo, false, 'the cached list: rating: ');
     if (shots && tab === 'season' && combo.lang === 'en' && combo.phone && combo.w === 412) await p.screenshot({ path: path.join(OUT, 'AN-season-cached-en.png') });
     const s2 = await waitFor(p, tab, (x) => x.noteBad, 12000); saw.push(`then «${s2.noteText}»`);
     ok(`${name}: the budget over, the old list stays with the reason and Try again`, s2.content > 0 && say.kept.test(s2.noteText) && s2.retry && !s2.timedOut, s2);
