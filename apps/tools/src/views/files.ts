@@ -666,7 +666,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     // (A phone: a row swiped back toward the reading's start is deleted (asked first, as always) — the other way
     // is the drawer's.)
     if (!quiet && !ae.special && !isApps(e.path) && !isVirtual(e.path) && plug()) {
-      const del = { label: t('delete'), icon: 'trash', run: () => void confirmDelete([e.path]) }; const back = () => (getComputedStyle(document.documentElement).direction === 'rtl' ? { right: del } : { left: del });
+      const del = { label: t('delete'), icon: 'trash', run: () => void confirmDelete([e.path]) }; const back = () => ({ left: del });   // (toward the line's start: ui/swipe.ts mirrors it in Arabic)
       swipeable(el, back, icon, () => !selecting && !collection);
     }
     if (po.embedded) { el.draggable = true; el.addEventListener('dragstart', (ev) => { const ps = picked.has(e.path) ? [...picked] : [e.path]; ev.dataTransfer?.setData('text/kt-paths', JSON.stringify(ps)); ev.dataTransfer?.setData('text/plain', ps.join('\n')); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copyMove'; }); }

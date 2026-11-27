@@ -5,9 +5,10 @@
 // (Touch events: once the web view takes a finger for scrolling it cancels its pointer events; touch events keep coming.)
 
 import { claimTouch, touchTaken } from './touchOwner';
+import { Track, commits, grab, offsetNow, settle, reducedMotion } from './drag';
 const isPc = (): boolean => document.documentElement.classList.contains('pc');
 const rtl = (): boolean => getComputedStyle(document.documentElement).direction === 'rtl';
-const reduced = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const reduced = reducedMotion;
 const FIELD = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
 
 /** The nearest element between `from` and `stop` that scrolls along `axis` (has more to show and lets it scroll). */
@@ -20,41 +21,46 @@ function scroller(from: Element | null, stop: Element | null, axis: 'x' | 'y'): 
 }
 
 /** A bottom sheet dragged down by its handle, its head, or its content already scrolled to the top: it follows the
- *  finger, and goes when pulled a third of its height or flicked; otherwise it springs back. */
+ *  finger 1:1, and goes when pulled a third of its height or flicked (speed over the last ~100 ms); otherwise it springs
+ *  back. A second finger or a cancel puts it back; a new touch while it settles takes it up where it stands. */
 export function dragToClose(sheet: HTMLElement, scrim: HTMLElement | null, close: () => void): void {
-  let y0 = 0, x0 = 0, t0 = 0, dy = 0, on = false, dragging = false, inner: HTMLElement | null = null;
-  const reset = () => { sheet.style.transition = ''; sheet.style.transform = ''; if (scrim) { scrim.style.transition = ''; scrim.style.opacity = ''; } };
+  let tr: Track | null = null, dragging = false, closing = false, base = 0, inner: HTMLElement | null = null;
+  const home = () => { dragging = false; tr = null; settle(sheet, { transform: '' }); if (scrim) settle(scrim, { opacity: '' }); };
   sheet.addEventListener('touchstart', (e) => {
-    on = false; dragging = false; dy = 0;
-    if (e.touches.length !== 1 || isPc() || sheet.classList.contains('side-drawer')) return;
+    if (e.touches.length > 1) { if (dragging) home(); tr = null; return; }
+    tr = null; dragging = false; base = 0;
+    if (closing || isPc() || sheet.classList.contains('side-drawer')) return;
     const t = e.target as Element;
     if (t.closest(`${FIELD}, [data-no-drag], .files-viewer-stage, input[type=range]`)) return;
+    // (Settling after an earlier drag: taken up where it stands.)
+    const was = new DOMMatrix(getComputedStyle(sheet).transform).m42; if (was > 0.5) { base = grab(sheet, 'y'); if (scrim) scrim.style.transition = 'none'; }
     // (Only a sheet along the bottom — not one shown at the side, as the player's are when turned.)
-    const r = sheet.getBoundingClientRect(); if (r.bottom < window.innerHeight - 4 || r.top <= 0) return;
+    const r = sheet.getBoundingClientRect(); if (r.bottom - base < window.innerHeight - 4 || r.top - base <= 0) { if (base) home(); return; }
     inner = scroller(t, sheet, 'y'); if (inner && inner.scrollTop > 0) return;
     if (scroller(t, sheet, 'x')) return;
-    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; t0 = performance.now(); on = true;
+    tr = new Track(e.touches[0].clientX, e.touches[0].clientY, e.timeStamp);
   }, { passive: true });
   sheet.addEventListener('touchmove', (e) => {
-    if (!on) return; const p = e.touches[0]; dy = p.clientY - y0; const dx = Math.abs(p.clientX - x0);
+    if (!tr) return; if (e.touches.length > 1) { if (dragging) home(); tr = null; return; }
+    const p = e.touches[0]; tr.add(p.clientX, p.clientY, e.timeStamp);
     if (!dragging) {
-      if (dy < -6 || dx > 14) { on = false; return; }
-      if (dy > 8 && dy > dx * 1.2) { if (inner && inner.scrollTop > 0) { on = false; return; } dragging = true; sheet.style.transition = 'none'; if (scrim) scrim.style.transition = 'none'; } else return;
+      const ax = tr.read(8, 1.2); if (!ax) return;
+      if (ax === 'x' || tr.dy < 0 || (inner && inner.scrollTop > 0)) { if (base) home(); tr = null; return; }
+      dragging = true; sheet.style.transition = 'none'; if (scrim) scrim.style.transition = 'none';
     }
-    e.preventDefault();
-    const d = Math.max(0, dy); sheet.style.transform = `translateY(${d}px)`;
+    if (e.cancelable) e.preventDefault();
+    const d = Math.max(0, base + tr.dy); sheet.style.transform = `translateY(${d}px)`;
     if (scrim) scrim.style.opacity = String(Math.max(0, 1 - d / Math.max(1, sheet.offsetHeight)));
   }, { passive: false });
-  const end = () => {
-    if (!on) return; on = false; if (!dragging) return; dragging = false;
-    const h = sheet.offsetHeight; const v = dy / Math.max(1, performance.now() - t0);
-    if (dy > h * 0.3 || (v > 0.6 && dy > 40)) {
-      sheet.style.transition = reduced() ? 'none' : 'transform .18s ease-in'; sheet.style.transform = 'translateY(105%)';
-      if (scrim) { scrim.style.transition = 'opacity .18s'; scrim.style.opacity = '0'; }
-      setTimeout(close, reduced() ? 0 : 170);
-    } else { sheet.style.transition = 'transform .2s cubic-bezier(.2,.9,.3,1.2)'; sheet.style.transform = ''; if (scrim) { scrim.style.transition = 'opacity .2s'; scrim.style.opacity = ''; } setTimeout(reset, 220); }
+  const end = (e: TouchEvent) => {
+    const t = tr; tr = null; if (!t) return; if (!dragging) { if (base) home(); return; } dragging = false;
+    const h = sheet.offsetHeight; const d = Math.max(0, base + t.dy);
+    if (commits(d, h * 0.3, t.velocity('y', e.timeStamp))) {
+      closing = true; sheet.dataset.leaving = '1'; settle(sheet, { transform: 'translateY(105%)' }, 200); if (scrim) settle(scrim, { opacity: '0' }, 200);
+      setTimeout(close, reduced() ? 0 : 190);
+    } else home();
   };
-  sheet.addEventListener('touchend', end); sheet.addEventListener('touchcancel', () => { if (dragging) { on = true; dy = 0; end(); } on = false; });
+  sheet.addEventListener('touchend', end); sheet.addEventListener('touchcancel', () => { if (dragging || base) home(); tr = null; });
 }
 
 /** A list pulled down at its top to refresh it: a round mark follows the finger, turns as it nears the point where
@@ -65,10 +71,11 @@ export function pullToRefresh(area: HTMLElement, run: () => Promise<unknown> | u
   const GO = 72; let y0 = 0, x0 = 0, on = false, pulling = false, pull = 0, busy = false;
   const top = (): boolean => { const s = opts.scroller?.() ?? null; return window.scrollY <= 0 && (!s || s.scrollTop <= 0); };
   const place = () => { const r = area.getBoundingClientRect(); mark.style.top = `${Math.max(0, r.top) + 8}px`; mark.style.left = `${r.left + r.width / 2}px`; };
-  const show = (d: number) => { if (!mark.isConnected) { document.body.append(mark); place(); } const k = Math.min(1, d / GO); mark.style.transform = `translate(-50%, ${Math.min(d, GO + 24) - 40}px) rotate(${Math.round(k * 300)}deg)`; mark.style.opacity = String(Math.min(1, k * 1.4)); mark.classList.toggle('ready', d >= GO); };
+  const show = (d: number) => { mark.style.transition = ''; if (!mark.isConnected) { document.body.append(mark); place(); } const k = Math.min(1, d / GO); mark.style.transform = `translate(-50%, ${Math.min(d, GO + 24) - 40}px) rotate(${Math.round(k * 300)}deg)`; mark.style.opacity = String(Math.min(1, k * 1.4)); mark.classList.toggle('ready', d >= GO); };
   const hide = () => { mark.classList.remove('ready', 'spin'); mark.style.transition = 'transform .2s, opacity .2s'; mark.style.opacity = '0'; mark.style.transform = 'translate(-50%, -40px)'; setTimeout(() => { mark.style.transition = ''; if (!pulling && !busy) mark.remove(); }, 220); };
   const start = (e: TouchEvent) => {
-    on = false; pulling = false; pull = 0;
+    if (pulling) { pulling = false; hide(); }   // (a second finger landing mid pull: put it back, nothing refreshed)
+    on = false; pull = 0;
     if (busy || e.touches.length !== 1 || isPc() || document.querySelector('.sheet') || !top()) return;
     const t = e.target as Element; if (t.closest(`${FIELD}, [data-no-pull], .files-fast`)) return;
     const inner = scroller(t, area, 'y'); if (inner && inner.scrollTop > 0) return;
@@ -93,35 +100,40 @@ export function pullToRefresh(area: HTMLElement, run: () => Promise<unknown> | u
 /** The page swiped sideways to the bottom bar's next place (toward the reading's end) or its previous one: the page
  *  follows the finger a little, and the move is made when the finger travelled far enough or was flicked. */
 export function pageSwipe(o: { enabled: () => boolean; step: (dir: 1 | -1) => boolean; view: () => HTMLElement | null }): void {
-  let x0 = 0, y0 = 0, t0 = 0, dx = 0, on = false, axis: '' | 'x' | 'y' = '';
-  const along = (x: number): number => (x - x0) * (rtl() ? -1 : 1);
-  const settle = () => { const v = o.view(); if (v) { v.style.transition = 'transform .18s ease, opacity .18s ease'; v.style.transform = ''; v.style.opacity = ''; setTimeout(() => { v.style.transition = ''; }, 200); } };
+  let tr: Track | null = null, axis: '' | 'x' | 'y' = '';
+  const along = (dx: number): number => dx * (rtl() ? -1 : 1);
+  const settleBack = () => { const v = o.view(); if (v) settle(v, { transform: '', opacity: '' }, 220); };
+  const give = () => { if (axis === 'x') settleBack(); tr = null; axis = ''; };
   document.addEventListener('touchstart', (e) => {
-    on = false; axis = ''; dx = 0;
-    if (e.touches.length !== 1 || isPc() || !o.enabled() || document.querySelector('.sheet, body > .kt-player, .side-drawer')) return;
+    if (e.touches.length > 1) { give(); return; }
+    tr = null; axis = '';
+    if (isPc() || !o.enabled() || document.querySelector('.sheet, body > .kt-player, .side-drawer')) return;
     const t = e.target as Element;
     if (!t.closest('#app, .bottom-nav') || t.closest(`${FIELD}, [data-swipe], [data-no-page-swipe], video, canvas, .kt-player`)) return;
     if (scroller(t, null, 'x')) return;
     // (A page with a drawer at its start side: a swipe from that side opens the drawer, not the previous place.)
     const p = e.touches[0]; const w = window.innerWidth; const fromStart = (rtl() ? w - p.clientX : p.clientX) < w * 0.4;
     if (fromStart && t.closest('[data-edge-drawer]')) return;
-    x0 = p.clientX; y0 = p.clientY; t0 = performance.now(); on = true;
+    const v = o.view(); if (v && Math.abs(offsetNow(v, 'x')) > 0.5) grab(v, 'x');
+    tr = new Track(p.clientX, p.clientY, e.timeStamp);
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
-    if (!on) return; const p = e.touches[0]; const ax = Math.abs(p.clientX - x0), ay = Math.abs(p.clientY - y0);
-    if (touchTaken('page') || e.touches.length !== 1) { if (axis === 'x') settle(); on = false; return; }
-    if (!axis) { if (ax < 12 && ay < 12) return; axis = ax > ay * 1.6 && claimTouch('page') ? 'x' : 'y'; if (axis === 'y') { on = false; return; } if ((e.target as Element).closest?.('[data-edge-drawer]') && along(p.clientX) > 0 && (rtl() ? window.innerWidth - x0 : x0) < window.innerWidth * 0.4) { on = false; return; } }
-    e.preventDefault(); dx = along(p.clientX);
-    const v = o.view(); if (v && !reduced()) { const d = Math.sign(dx) * Math.min(80, Math.abs(dx) * 0.3); v.style.transition = 'none'; v.style.transform = `translateX(${d * (rtl() ? -1 : 1)}px)`; v.style.opacity = String(1 - Math.min(0.35, Math.abs(dx) / 900)); }
+    if (!tr) return; const p = e.touches[0];
+    if (touchTaken('page') || e.touches.length !== 1) { give(); return; }
+    tr.add(p.clientX, p.clientY, e.timeStamp);
+    if (!axis) { const ax = tr.read(12, 1.6); if (!ax) { if (Math.max(Math.abs(tr.dx), Math.abs(tr.dy)) >= 12) { tr = null; } return; } if (ax === 'y' || !claimTouch('page')) { tr = null; return; } axis = 'x'; }
+    if (e.cancelable) e.preventDefault();
+    const dx = along(tr.dx); const v = o.view();
+    if (v && !reduced()) { const d = Math.sign(dx) * Math.min(80, Math.abs(dx) * 0.3); v.style.transition = 'none'; v.style.transform = `translateX(${d * (rtl() ? -1 : 1)}px)`; v.style.opacity = String(1 - Math.min(0.35, Math.abs(dx) / 900)); }
   }, { passive: false });
-  const end = () => {
-    if (!on) return; on = false; if (axis !== 'x') return;
-    const fast = Math.abs(dx) / Math.max(1, performance.now() - t0) > 0.5 && Math.abs(dx) > 50;
-    if (Math.abs(dx) > Math.min(120, window.innerWidth * 0.28) || fast) {
-      const dir: 1 | -1 = dx < 0 ? 1 : -1; const v = o.view(); if (v) { v.style.transform = ''; v.style.opacity = ''; v.style.transition = ''; }
+  const end = (e: TouchEvent) => {
+    const t = tr; tr = null; const was = axis; axis = ''; if (!t || was !== 'x') return;
+    const dx = along(t.dx); const speed = along(t.velocity('x', e.timeStamp)) * Math.sign(dx || 1);
+    if (commits(Math.abs(dx), Math.min(120, window.innerWidth * 0.28), speed)) {
+      const dir: 1 | -1 = dx < 0 ? 1 : -1; const v = o.view(); if (v) { v.style.transition = 'none'; v.style.transform = ''; v.style.opacity = ''; }
       if (o.step(dir)) { document.documentElement.classList.remove('page-in-next', 'page-in-prev'); void document.documentElement.offsetWidth; document.documentElement.classList.add(dir > 0 ? 'page-in-next' : 'page-in-prev'); setTimeout(() => document.documentElement.classList.remove('page-in-next', 'page-in-prev'), 320); return; }
     }
-    settle();
+    const v = o.view(); if (v) settle(v, { transform: '', opacity: '' }, 220);
   };
-  document.addEventListener('touchend', end); document.addEventListener('touchcancel', () => { if (on) { on = false; settle(); } });
+  document.addEventListener('touchend', end); document.addEventListener('touchcancel', () => { give(); });
 }

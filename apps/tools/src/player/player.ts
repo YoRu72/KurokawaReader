@@ -318,11 +318,14 @@ export function openPlayer(src: PlayerSource): void {
   onLongPress(abBtn, () => void cutSheet());
 
   // ---- gestures on the stage
-  let tapTimer = 0; let lastTap = 0; let lastTapZone = -1; let pressTimer = 0; let pressing = false; let heldSpeed = 0; let gesture: 'none' | 'seek' | 'volume' | 'bright' | 'pinch' = 'none'; let start = { x: 0, y: 0, t: 0, vol: 1, br: 1 }; const pts = new Map<number, { x: number; y: number }>(); let pinchStart = 0; let zoomStart = 1; let moved = false;
+  const EDGE = 28; const phoneUi = (): boolean => !document.documentElement.classList.contains('pc');
+  let tapTimer = 0; let lastTap = 0; let lastTapZone = -1; let pressTimer = 0; let pressing = false; let heldSpeed = 0; let gesture: 'none' | 'seek' | 'volume' | 'bright' | 'pinch' = 'none'; let start = { x: 0, y: 0, t: 0, vol: 1, br: 1 }; const pts = new Map<number, { x: number; y: number }>(); let pinchStart = 0; let zoomStart = 1; let moved = false; let edgeStart = false;
   let seekAcc = { side: 0, total: 0, timer: 0 };
   stage.addEventListener('pointerdown', (e) => {
     if (locked) { unlockBtn.classList.remove('faded'); setTimeout(() => unlockBtn.classList.add('faded'), 2500); return; }
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); stage.setPointerCapture(e.pointerId); moved = false;
+    // (The screen's own edges belong to the system's Back gesture: a drag that starts there seeks nothing, changes no volume.)
+    edgeStart = pts.size === 1 && (e.clientX < EDGE || e.clientX > window.innerWidth - EDGE);
     if (pts.size === 2 && P.pinchZoom) { const [a, b] = [...pts.values()]; pinchStart = Math.hypot(a.x - b.x, a.y - b.y); zoomStart = zoom; gesture = 'pinch'; window.clearTimeout(pressTimer); return; }
     start = { x: e.clientX, y: e.clientY, t: video.currentTime, vol: video.volume * boost, br: brightness }; gesture = 'none';
     pressTimer = window.setTimeout(() => { if (moved || pts.size !== 1) return; pressing = true; heldSpeed = speed * getPrefs().longPressSpeed; video.playbackRate = heldSpeed; flashText(`${localDigits(heldSpeed)}× ${getPrefs().holdSwipeSpeed ? '⇆' : ''}`, true); root.classList.add('holding'); if (navigator.vibrate) navigator.vibrate(10); }, 450);
@@ -335,8 +338,9 @@ export function openPlayer(src: PlayerSource): void {
     if (pressing) { if (getPrefs().holdSwipeSpeed && Math.abs(dx) > 20) { const v = Math.max(0.25, Math.min(8, Math.round((speed * getPrefs().longPressSpeed + Math.trunc(dx / 40) * 0.25) * 100) / 100)); if (v !== heldSpeed) { heldSpeed = v; video.playbackRate = v; flashText(`${localDigits(v)}×`, true); } } return; }
     if (!moved && Math.hypot(dx, dy) > 18) { moved = true; window.clearTimeout(pressTimer); }
     if (!moved) return;
+    if (edgeStart && gesture === 'none') return;
     const r = stage.getBoundingClientRect(); const left = start.x < r.left + r.width / 2; const volSide = getPrefs().swapSides ? left : !left;
-    if (gesture === 'none') { if (zoom > 1 && e.pointerType === 'touch') gesture = 'pinch'; else if (Math.abs(dx) > Math.abs(dy)) gesture = P.swipeSeek ? 'seek' : 'none'; else gesture = volSide ? (P.swipeVolume ? 'volume' : 'none') : (P.swipeBrightness ? 'bright' : 'none'); }
+    if (gesture === 'none') { if (zoom > 1 && e.pointerType === 'touch') gesture = 'pinch'; else if (Math.abs(dx) > Math.abs(dy) * 1.2) gesture = P.swipeSeek ? 'seek' : 'none'; else if (Math.abs(dy) > Math.abs(dx) * 1.2) gesture = !phoneUi() ? 'none' : volSide ? (P.swipeVolume ? 'volume' : 'none') : (P.swipeBrightness ? 'bright' : 'none'); else return; }
     if (gesture === 'pinch' && getPrefs().panZoomed !== false) { panX += e.movementX; panY += e.movementY; applyTransform(); }
     else if (gesture === 'seek') { const dt = (dx / r.width) * Math.min(video.duration || 600, 600) * (getPrefs().swipeSensitivity / 100); const to = Math.max(0, Math.min(video.duration || 0, start.t + dt)); flashText(`${fmtTime(to)}  (${dt >= 0 ? '+' : '−'}${fmtTime(Math.abs(dt))})`, true); (stage as HTMLElement & { _seekTo?: number })._seekTo = to; if (canPreview()) { if (!preview) { preview = new SeekPreview(video.currentSrc || src.url, fmtTime); bar.parentElement!.append(preview.el); } showControls(); const rr = bar.parentElement!.getBoundingClientRect(); const br = bar.getBoundingClientRect(); const f = video.duration ? to / video.duration : 0; const rtl = getComputedStyle(bar).direction === 'rtl'; preview.show(to, (br.left - rr.left) + (rtl ? 1 - f : f) * br.width, rr.width); } }
     else if (gesture === 'volume') { const v = Math.max(0, Math.min(1 + P.volumeBoost / 100, start.vol - dy / (r.height * 0.6) * 1.5)); setVolume(v); flashText(`🔊 ${localDigits(Math.round(v * 100))}%`); }
@@ -357,8 +361,10 @@ export function openPlayer(src: PlayerSource): void {
     window.clearTimeout(seekAcc.timer); seekAcc.timer = window.setTimeout(() => { ripple.hidden = true; seekAcc = { side: 0, total: 0, timer: 0 }; }, 800);
   };
   const endPointer = (e: PointerEvent) => {
-    pts.delete(e.pointerId); window.clearTimeout(pressTimer);
+    // (A cancel — the browser took the finger, the system's Back gesture began — is not a release: no seek is made, no tap counted; a held speed goes back.)
+    const cancelled = e.type === 'pointercancel'; pts.delete(e.pointerId); window.clearTimeout(pressTimer);
     if (pressing) { pressing = false; root.classList.remove('holding'); if (getPrefs().rememberHoldSpeed && heldSpeed && speed) updatePrefs({ longPressSpeed: Math.round((heldSpeed / speed) * 100) / 100 }); video.playbackRate = speed; flashText(`${localDigits(speed)}×`); return; }
+    if (cancelled) { if (gesture === 'seek') { preview?.hide(); (stage as HTMLElement & { _seekTo?: number })._seekTo = undefined; } if (gesture !== 'pinch' || pts.size === 0) gesture = 'none'; moved = false; edgeStart = false; return; }
     if (gesture === 'seek') { const to = (stage as HTMLElement & { _seekTo?: number })._seekTo; if (to !== undefined) seekTo(to); gesture = 'none'; preview?.hide(); return; }
     if (gesture === 'pinch') { if (pts.size === 0) gesture = 'none'; return; }
     if (gesture !== 'none') { gesture = 'none'; return; }

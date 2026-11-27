@@ -1380,9 +1380,10 @@ html[dir='rtl'] .ow-open-settings > svg, html[dir='rtl'] .ow-open-defaults > svg
 .files-list[class*="ts-"] .files-section { font-size: calc(13px * var(--ts)); }
 
 /* The fast scroller (views/filesScroll.ts): a handle on the end edge, a bubble beside it. */
-.files-fast { position: fixed; inset-inline-end: 0; width: 22px; z-index: 30; pointer-events: none; opacity: 0; transition: opacity .2s; }
+.files-fast { position: fixed; inset-inline-end: 0; width: 48px; z-index: 30; pointer-events: none; opacity: 0; transition: opacity .2s; }
 .files-fast.on { opacity: 1; }
-.files-fast-thumb { position: absolute; inset-inline-end: 0; top: 0; width: 22px; height: 56px; pointer-events: auto; touch-action: none; display: grid; place-items: center end; cursor: grab; outline: none; }
+.files-fast:not(.on):not(.pc) .files-fast-thumb { pointer-events: none; }   /* (out of sight, out of reach: a touch at the edge is not an invisible grab) */
+.files-fast-thumb { position: absolute; inset-inline-end: 0; top: 0; width: 48px; height: 56px; pointer-events: auto; touch-action: none; display: grid; place-items: center end; padding-inline-end: 6px; box-sizing: border-box; cursor: grab; outline: none; }
 .files-fast-grip { width: 4px; height: 40px; border-radius: 3px; background: var(--md-primary); opacity: .75; transition: width .15s, height .15s, opacity .15s; }
 .files-fast.drag .files-fast-grip, .files-fast-thumb:focus-visible .files-fast-grip { width: 12px; height: 48px; border-radius: 8px; opacity: 1; }
 .files-fast-bubble { position: absolute; inset-inline-end: 96px; top: 0; min-width: 48px; max-width: 140px; height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 20px; background: var(--md-primary-container); color: var(--md-on-primary-container); font: 600 17px/40px var(--font-ui); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 6px rgb(0 0 0 / .25); opacity: 0; transform-origin: right center; transition: opacity .12s; }

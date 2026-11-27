@@ -4,6 +4,7 @@
 // renaming many at once by a pattern, properties told whole (checksums, a photo's EXIF, a recording's tags, an
 // app's name and version), the text editor and the picture viewer.
 import { h, icon, iconButton, toast, openSheet, pickButton } from '../ui/dom';
+import { Track, commits, grab, settle } from '../ui/drag';
 import { t, formatBytes, formatDate, localDigits, countItems } from '../i18n';
 import { ktPlugin } from '../native';
 import type { Entry } from './files';
@@ -213,26 +214,36 @@ export async function imageViewer(items: Entry[], index: number, urlOf: (p: stri
   // (Pointers: one drags when zoomed, swipes sideways to the next picture, or down to close; two pinch; a double tap
   // zooms in where it was tapped, and out again.)
   const pts = new Map<number, { x: number; y: number }>(); let startDist = 0, startScale = 1, sx = 0, sy = 0, stx = 0, sty = 0; let axis: '' | 'x' | 'y' = ''; let lastTap = 0, lastX = 0, lastY = 0;
-  const zoomAt = (x: number, y: number) => { if (scale > 1) { scale = 1; tx = ty = 0; } else { const r = stage.getBoundingClientRect(); scale = 2.5; tx = (r.left + r.width / 2 - x) * (scale - 1); ty = (r.top + r.height / 2 - y) * (scale - 1); } img.style.transition = 'transform .18s ease'; apply(); setTimeout(() => { img.style.transition = ''; }, 200); };
-  stage.addEventListener('pointerdown', (ev) => { if (play.contains(ev.target as Node)) return; stage.setPointerCapture(ev.pointerId); pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; startDist = Math.hypot(a.x - b.x, a.y - b.y); startScale = scale; } else { sx = ev.clientX; sy = ev.clientY; stx = tx; sty = ty; axis = ''; } });
+  let tr: Track | null = null; let abandoned = false; const rtlNow = (): boolean => getComputedStyle(document.documentElement).direction === 'rtl';
+  const zoomAt = (x: number, y: number) => { if (scale > 1) { scale = 1; tx = ty = 0; } else { const r = stage.getBoundingClientRect(); scale = 2.5; tx = (r.left + r.width / 2 - x) * (scale - 1); ty = (r.top + r.height / 2 - y) * (scale - 1); } settle(img, { transform: `translate(${tx}px, ${ty}px) scale(${scale})` }, 220); };
+  // (Put back: a cancel — the browser took the finger, the system's Back gesture began —, or a second finger that turned the drag into a pinch.)
+  const home = () => { tx = ty = 0; img.style.transition = 'none'; apply(); vid.style.transform = ''; sh.el.style.opacity = ''; axis = ''; tr = null; };
+  stage.addEventListener('pointerdown', (ev) => { if (play.contains(ev.target as Node)) return; stage.setPointerCapture(ev.pointerId); pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (pts.size === 2) { const [a, b] = [...pts.values()]; startDist = Math.hypot(a.x - b.x, a.y - b.y); startScale = scale; if (axis && scale === 1) home(); abandoned = true; } else { abandoned = false; sx = ev.clientX; sy = ev.clientY; stx = tx; sty = ty; axis = ''; tr = new Track(sx, sy, ev.timeStamp); const g = grab(img, 'x'); void g; } });
   stage.addEventListener('pointermove', (ev) => {
     if (!pts.has(ev.pointerId)) return; pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (pts.size === 2) { const [a, b] = [...pts.values()]; scale = Math.max(1, Math.min(6, startScale * Math.hypot(a.x - b.x, a.y - b.y) / Math.max(1, startDist))); apply(); return; }
+    if (abandoned) return;
     if (scale > 1) { tx = stx + (ev.clientX - sx); ty = sty + (ev.clientY - sy); apply(); return; }
-    const mx = ev.clientX - sx, my = ev.clientY - sy;
+    tr?.add(ev.clientX, ev.clientY, ev.timeStamp); const mx = ev.clientX - sx, my = ev.clientY - sy;
     if (!axis) { if (Math.abs(mx) < 10 && Math.abs(my) < 10) return; axis = my > 0 && my > Math.abs(mx) * 1.2 ? 'y' : 'x'; }
     if (axis === 'y') { ty = Math.max(0, my); tx = 0; apply(); vid.style.transform = img.style.transform; sh.el.style.opacity = String(Math.max(0.35, 1 - ty / 500)); }
     else if (items.length > 1) { tx = mx; apply(); vid.style.transform = img.style.transform; }
   });
   const up = (ev: PointerEvent) => {
-    if (!pts.has(ev.pointerId)) return; pts.delete(ev.pointerId); if (pts.size !== 0 || scale !== 1) return;
-    const dx = ev.clientX - sx, dy = ev.clientY - sy;
-    if (axis === 'y' && dy > 110) { sh.close(); return; }
-    tx = ty = 0; apply(); vid.style.transform = ''; sh.el.style.opacity = '';
-    if (axis === 'x' && Math.abs(dx) > 60 && items.length > 1) { i = (i + (dx < 0 ? 1 : -1) + items.length) % items.length; void show(); return; }
+    if (!pts.has(ev.pointerId)) return; pts.delete(ev.pointerId); if (pts.size !== 0) return;
+    // (A pinch, or a drag that a second finger joined, ends with every finger up: nothing is closed or turned.)
+    if (abandoned) { abandoned = false; if (scale < 1.12) { scale = 1; tx = ty = 0; axis = ''; tr = null; vid.style.transform = ''; sh.el.style.opacity = ''; settle(img, { transform: 'translate(0px, 0px) scale(1)' }, 200, () => apply()); } return; }
+    if (scale !== 1) return;
+    const dx = ev.clientX - sx, dy = ev.clientY - sy; const t = tr; tr = null;
+    if (axis === 'y' && commits(dy, 110, t?.velocity('y', ev.timeStamp) ?? 0, 0.5, 40)) { sh.close(); return; }
+    const flick = t?.velocity('x', ev.timeStamp) ?? 0; const next = axis === 'x' && items.length > 1 && commits(Math.abs(dx), 60, Math.abs(flick) * (Math.sign(flick) === Math.sign(dx) ? 1 : 0), 0.5, 30);
+    tx = ty = 0; settle(img, { transform: `translate(0px, 0px) scale(${scale})` }, 200, () => { apply(); }); vid.style.transform = ''; sh.el.style.opacity = '';
+    // (Toward the line's start goes back, toward its end goes on — mirrored in Arabic, as the page swipe is.)
+    if (next) { i = (i + (dx * (rtlNow() ? -1 : 1) < 0 ? 1 : -1) + items.length) % items.length; void show(); return; }
     if (!axis && ev.pointerType !== 'mouse') { const now = Date.now(); if (now - lastTap < 300 && Math.hypot(ev.clientX - lastX, ev.clientY - lastY) < 30) { lastTap = 0; zoomAt(ev.clientX, ev.clientY); } else { lastTap = now; lastX = ev.clientX; lastY = ev.clientY; } }
   };
-  stage.addEventListener('pointerup', (ev) => { const zoomed = scale > 1; up(ev); if (zoomed && pts.size === 0 && !axis && ev.pointerType !== 'mouse') { const now = Date.now(); if (now - lastTap < 300) { lastTap = 0; zoomAt(ev.clientX, ev.clientY); } else { lastTap = now; lastX = ev.clientX; lastY = ev.clientY; } } }); stage.addEventListener('pointercancel', up);
+  stage.addEventListener('pointerup', (ev) => { const zoomed = scale > 1; up(ev); if (zoomed && pts.size === 0 && !axis && ev.pointerType !== 'mouse') { const now = Date.now(); if (now - lastTap < 300) { lastTap = 0; zoomAt(ev.clientX, ev.clientY); } else { lastTap = now; lastX = ev.clientX; lastY = ev.clientY; } } });
+  stage.addEventListener('pointercancel', (ev) => { pts.delete(ev.pointerId); if (!pts.size) { abandoned = false; if (scale < 1.12) { scale = 1; home(); } } });
   stage.addEventListener('dblclick', (ev) => { if ((ev as MouseEvent).detail && matchMedia('(pointer: fine)').matches) zoomAt(ev.clientX, ev.clientY); });
   sh.body.append(stage, h('div', { class: 'row files-viewer-bar' }, iconButton('chevronLeft', t('previous'), () => { i = (i - 1 + items.length) % items.length; void show(); }), counter, iconButton('chevronRight', t('next'), () => { i = (i + 1) % items.length; void show(); })));
   const imageOnly: HTMLElement[] = []; const mark = (b: HTMLElement) => { imageOnly.push(b); return b; };
