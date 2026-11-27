@@ -15,7 +15,7 @@ catch { if (process.env.KT_REQUIRE_FFMPEG) { console.log('FAIL ffmpeg is require
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.webm': 'video/webm', '.srt': 'text/plain' };
 let fails = 0, passes = 0; const faultLog = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const WIDTHS = (process.env.WALK_WIDTHS || '360,412,1280').split(',').map(Number); const LANGS = (process.env.WALK_LANGS || 'en,ar').split(',');
+const WIDTHS = (process.env.WALK_WIDTHS || '320,360,412,1280').split(',').map(Number); const LANGS = (process.env.WALK_LANGS || 'en,ar').split(',');
 setTimeout(() => { console.log('FAIL timed out'); process.exit(1); }, 900000).unref();
 const serve = () => http.createServer((q, r) => {
   let p = decodeURIComponent(q.url.split('?')[0]); if (p === '/') p = '/index.html';
@@ -94,7 +94,7 @@ const DIGITS = (s) => String(s).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩
   const web = serve().listen(0); const port = web.address().port; const base = `http://127.0.0.1:${port}/`;
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   for (const W of WIDTHS) for (const lang of LANGS) {
-    const pc = W >= 1000; const H = pc ? 800 : W === 360 ? 800 : 915; const rtl = lang === 'ar'; const tag = `${pc ? 'pc' : 'phone'}${W}${lang}`;
+    const pc = W >= 1000; const H = pc ? 800 : W === 320 ? 640 : W === 360 ? 800 : 915; const rtl = lang === 'ar'; const tag = `${pc ? 'pc' : 'phone'}${W}${lang}`;
     const ctx = await b.newContext(pc ? { viewport: { width: W, height: H }, deviceScaleFactor: 1 } : { ...devices['Pixel 7'], viewport: { width: W, height: H }, screen: { width: W, height: H }, deviceScaleFactor: 1 });
     const p = await ctx.newPage(); const cdp = await ctx.newCDPSession(p);
     const pageErrors = []; p.on('pageerror', (e) => pageErrors.push(e.message));
@@ -131,7 +131,14 @@ const DIGITS = (s) => String(s).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩
       ok(pc ? 'first play on a computer: a hint about the keys is shown once' : 'first play on a phone: a hint about the touches is shown once', !!hintShown && (lang !== 'en' || (pc ? /Space/.test(hintShown) : /Swipe/.test(hintShown))) && !(pc && /Swipe/.test(hintShown)) && !(!pc && /Space plays/.test(hintShown)), hintShown);
       await shot('hint');
       ok('the chips read left to right whatever the language (+85, 1x)', await p.evaluate(() => [...document.querySelectorAll('.kt-chip')].filter((c) => /^[+\d.,:×]+$/.test(c.textContent.trim().replace(/[٠-٩]/g, '0'))).every((c) => { const n = c.firstChild; const r1 = document.createRange(); r1.setStart(n, 0); r1.setEnd(n, 1); const r2 = document.createRange(); r2.setStart(n, n.length - 1); r2.setEnd(n, n.length); return r1.getBoundingClientRect().left < r2.getBoundingClientRect().left; })));
-      await shot('controls-paused');
+      // playback runs left to right in every language
+      const ltrRun = await p.evaluate(() => { const q = (x) => document.querySelector(x).getBoundingClientRect(); const ic = (n) => document.querySelector(`.kt-bottom [data-icon="${n}"]`).getBoundingClientRect().x; const k = document.querySelector('.kt-knob'); return { now: q('.kt-time').x, end: q('.kt-time.end').x, seek: q('.kt-seek').x, knob: q('.kt-knob').x, rw: ic('rewind'), pl: q('.kt-play').x, ff: ic('fastForward'), pt: document.querySelector('.kt-play').parentElement.dir }; });
+      ok('seek row: elapsed label at the left, total at the right, thumb at the start (left), in every language', ltrRun.now < ltrRun.seek && ltrRun.end > ltrRun.seek && ltrRun.knob < ltrRun.seek + 30, ltrRun);
+      ok('transport row: rewind, play, forward left to right in every language', ltrRun.rw < ltrRun.pl && ltrRun.pl < ltrRun.ff, ltrRun);
+      { const kb = await p.evaluate(() => { const v = document.querySelector('.kt-video'); v.currentTime = v.duration * 0.75; v.dispatchEvent(new Event('timeupdate')); return new Promise((r) => setTimeout(() => r(document.querySelector('.kt-knob').getBoundingClientRect().x), 300)); }); ok('the thumb moves right as the film advances (75% is right of 0%)', kb > ltrRun.knob + 50, [ltrRun.knob, kb]); await p.evaluate(() => { document.querySelector('.kt-video').currentTime = 0; }); await sleep(300); }
+      const fit = await p.evaluate(() => { const row = document.querySelector('.kt-row.buttons'); const rr = row.getBoundingClientRect(); const out = [...row.querySelectorAll(':scope > *, .kt-tools > *, .kt-transport > *')].filter((c) => { const r = c.getBoundingClientRect(); return r.width && (r.right > rr.right + 0.5 || r.left < rr.left - 0.5); }).map((c) => c.getAttribute('aria-label') || c.className); const sc = [...document.querySelectorAll('.kt-tools')].filter((e) => e.scrollWidth > e.clientWidth + 1).length; return { out, sc, cs: getComputedStyle(document.querySelector('.kt-bottom .kt-tools')).overflowX }; });
+      ok('the bottom row: no child partly outside it and no sideways scroller', !fit.out.length && !fit.sc && fit.cs !== 'auto' && fit.cs !== 'scroll', fit);
+      await shot('row'); await shot('controls-paused');
       const boxes = await p.evaluate(BOXES);
       const small = boxes.filter((x) => (x.w < 40 || x.h < 40) && !x.seek && !/kt-mark|slider/.test(x.n));
       ok('every button and chip is at least 40 x 40 px', !small.length, small);
@@ -171,19 +178,19 @@ const DIGITS = (s) => String(s).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩
       await showControls(); const br = await rectOf('.kt-seek'); const d = (await st()).d;
       await tap(br.x + br.w * 0.5, br.cy); await sleep(400); s = await st();
       ok('a tap in the middle of the bar seeks to about half', Math.abs(s.t - d * 0.5) < d * 0.06, [s.t, d]);
-      const at = (f) => (rtl ? br.x + br.w * (1 - f) : br.x + br.w * f);
+      const at = (f) => br.x + br.w * f;
       const hitEl = await p.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); return e ? e.tagName + '.' + String(e.className).split(' ')[0] : null; }, [at(0.2), br.cy]);
       await tap(at(0.2), br.cy); await sleep(400); s = await st(); if (Math.abs(s.t - d * 0.2) >= d * 0.06) console.log('   (debug) element at the tap:', hitEl, 'bar rect now', JSON.stringify(await rectOf('.kt-seek')), 'first rect', JSON.stringify(br));
-      ok(`a tap at 20% of the bar (${rtl ? 'from the right' : 'from the left'}) goes to about 20%`, Math.abs(s.t - d * 0.2) < d * 0.06, [s.t, d]);
+      ok(`a tap at 20% of the bar (from the left in every language) goes to about 20%`, Math.abs(s.t - d * 0.2) < d * 0.06, [s.t, d]);
       await drag([at(0.2), br.cy], [at(0.7), br.cy], 16); await sleep(400); s = await st();
       ok('dragging along the bar lands where the finger was lifted', Math.abs(s.t - d * 0.7) < d * 0.07, [s.t, d]);
       await p.evaluate(() => document.querySelector('.kt-video').play());
       let midHidden = null; await heldAt(at(0.3), at(0.4), br.cy, async () => { await sleep(2600); midHidden = (await st()).hidden; });
       ok('the controls do not hide while the finger is on the seek bar (2 s setting, held 2.6 s)', midHidden === false, midHidden);
       await p.evaluate(() => document.querySelector('.kt-video').pause());
-      await showControls(); const br2 = await rectOf('.kt-seek'); await tap(rtl ? br2.x + br2.w - 2 : br2.x + 2, br2.cy); await sleep(300); s = await st(); ok('0:00: a tap at the very start seeks to the start', s.t >= 0 && s.t < d * 0.05, s.t);
+      await showControls(); const br2 = await rectOf('.kt-seek'); await tap(br2.x + 2, br2.cy); await sleep(300); s = await st(); ok('0:00: a tap at the very start seeks to the start', s.t >= 0 && s.t < d * 0.05, s.t);
       if (pc) { await p.keyboard.press('ArrowLeft'); await sleep(200); ok('0:00: Left stays at 0', (await st()).t === 0, (await st()).t); }
-      await showControls(); const br3 = await rectOf('.kt-seek'); await tap(rtl ? br3.x + 2 : br3.x + br3.w - 2, br3.cy); await sleep(500); s = await st(); ok('the end: a tap at the very end stays within the length', s.t <= s.d && s.t > d - 2, [s.t, s.d]);
+      await showControls(); const br3 = await rectOf('.kt-seek'); await tap(br3.x + br3.w - 2, br3.cy); await sleep(500); s = await st(); ok('the end: a tap at the very end stays within the length', s.t <= s.d && s.t > d - 2, [s.t, s.d]);
       await showControls(); await tapBtn('.kt-play'); await until(() => document.querySelector('.kt-video').ended || document.querySelector('.kt-video').paused, null, 4000); await sleep(300); s = await st();
       ok('the end: Play from the last second plays it out to the end and stops there with the Play icon', s.paused && s.t >= d - 0.5 && s.playIcon === s.bigIcon && /^(Play|تشغيل)$/.test(s.playLabel), s);
       await tapBtn('.kt-play'); await sleep(500); s = await st(); ok('the end: Play again starts from the beginning', !s.paused && s.t < d - 2, s);
@@ -215,7 +222,7 @@ const DIGITS = (s) => String(s).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩
 
       // ----- keys that meet the focused seek bar, volume keys and the drawn volume, the full screen button, a double tap
       if (pc) {
-        await showControls(); const b4 = await rectOf('.kt-seek'); await tap(b4.x + b4.w * (rtl ? 0.7 : 0.3), b4.cy); await sleep(300); const k0 = (await st()).t; await p.keyboard.press('ArrowRight'); await sleep(300); const k1 = (await st()).t;
+        await showControls(); const b4 = await rectOf('.kt-seek'); await tap(b4.x + b4.w * 0.3, b4.cy); await sleep(300); const k0 = (await st()).t; await p.keyboard.press('ArrowRight'); await sleep(300); const k1 = (await st()).t;
         ok('Right arrow after a click on the seek bar moves one step (10 s), not two', Math.abs(k1 - k0 - 10) < 0.5, [k0, k1]);
         await p.keyboard.press('ArrowDown'); await p.keyboard.press('ArrowDown'); await sleep(200); s = await st(); ok('Down arrow lowers the volume and the slider shows it', s.vol < 1 && Math.abs(s.sliderVal - Math.round(s.vol * 100)) <= 1, [s.vol, s.sliderVal]);
         const mv0 = (await st()).volIcon; await p.keyboard.press('m'); await sleep(200); s = await st(); ok('M mutes: the speaker icon and the slider change too', s.muted && s.volIcon !== mv0 && s.sliderVal === 0, [s.muted, s.sliderVal]); await p.keyboard.press('m'); await sleep(150);
@@ -246,6 +253,7 @@ const DIGITS = (s) => String(s).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩
       const lw = pc ? 900 : H, lh = pc ? 420 : W; await p.setViewportSize({ width: lw, height: lh }); await sleep(600); await showControls(); await sleep(300);
       const bx = await p.evaluate(BOXES); ok('after turning: every control inside the screen', bx.every((x) => x.x >= -0.5 && x.x + x.w <= lw + 0.5 && x.y >= -0.5 && x.y + x.h <= lh + 0.5), bx.filter((x) => x.x + x.w > lw || x.y + x.h > lh).slice(0, 4));
       const bh = await p.evaluate(() => document.querySelector('.kt-bottom').getBoundingClientRect().height + document.querySelector('.kt-top').getBoundingClientRect().height); ok('after turning: the top and bottom bars leave at least 45% of the height for the picture', bh <= lh * 0.55, [Math.round(bh), lh]);
+      const fitL = await p.evaluate(() => { const row = document.querySelector('.kt-row.buttons'); const rr = row.getBoundingClientRect(); return [...row.querySelectorAll(':scope > *, .kt-tools > *, .kt-transport > *')].filter((c) => { const r = c.getBoundingClientRect(); return r.width && (r.right > rr.right + 0.5 || r.left < rr.left - 0.5); }).map((c) => c.getAttribute('aria-label') || c.className); }); ok('after turning: the bottom row has nothing partly outside it', !fitL.length, fitL);
       await shot('landscape'); await p.setViewportSize({ width: W, height: H }); await sleep(500);
 
       // ===== 8. title of 90 characters
@@ -256,8 +264,8 @@ const DIGITS = (s) => String(s).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩
       ok('the hint is not shown a second time', await p.evaluate(() => { const h0 = document.querySelector('.kt-hint'); return !h0 || h0.hidden; }));
       // ----- the time bubble when there is no picture preview
       await p.evaluate(() => localStorage.setItem('kt.player', JSON.stringify({ controlsTimeout: 2, seekPreview: false }))); await open('v'); await showControls();
-      { const bq = await rectOf('.kt-seek'); const fx = rtl ? bq.x + bq.w * 0.7 : bq.x + bq.w * 0.3; let seen = null;
-        await heldAt(fx, rtl ? fx - 30 : fx + 30, bq.cy, async () => { await sleep(200); await shot('bubble-held'); seen = await p.evaluate(() => { const b0 = document.querySelector('.kt-bubble'); if (!b0 || b0.hidden) return null; const r = b0.getBoundingClientRect(), k = document.querySelector('.kt-seek').getBoundingClientRect(); return { txt: b0.textContent, inside: r.left >= k.left - 1 && r.right <= k.right + 1, above: r.bottom <= k.top + 2 }; }); });
+      { const bq = await rectOf('.kt-seek'); const fx = bq.x + bq.w * 0.3; let seen = null;
+        await heldAt(fx, fx + 30, bq.cy, async () => { await sleep(200); await shot('bubble-held'); seen = await p.evaluate(() => { const b0 = document.querySelector('.kt-bubble'); if (!b0 || b0.hidden) return null; const r = b0.getBoundingClientRect(), k = document.querySelector('.kt-seek').getBoundingClientRect(); return { txt: b0.textContent, inside: r.left >= k.left - 1 && r.right <= k.right + 1, above: r.bottom <= k.top + 2 }; }); });
         ok('no preview: a time bubble sits above the bar while the finger scrubs', !!seen && /\d:\d\d/.test(DIGITS(seen.txt)) && seen.inside && seen.above, seen); await sleep(200); ok('...and goes when the finger lifts', await p.evaluate(() => { const b0 = document.querySelector('.kt-bubble'); return !b0 || b0.hidden; })); await shot('bubble'); }
       // ===== 9. a broken file
       await fresh(); await p.click('.task-card[data-id="x"] .task-actions button >> nth=0'); await sleep(2500);

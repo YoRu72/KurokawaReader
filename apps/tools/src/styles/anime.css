@@ -736,3 +736,9 @@ html.pc .dl-float { bottom: 20px; inset-inline: auto 24px; width: 380px; margin:
 .kt-hint[hidden] { display: none; }
 .kt-player.kt-pip .kt-level, .kt-player.kt-pip .kt-hint { display: none; }
 .kt-player .kt-chip { unicode-bidi: plaintext; text-align: center; }
+
+.kt-transport { display: inline-flex; align-items: center; gap: 2px; }
+.kt-player .kt-tools { max-width: none; overflow: visible; }
+@media (max-width: 340px) { .kt-top { gap: 2px; padding-inline: 6px; } .kt-top .kt-title { min-width: 48px; } }
+/* A short screen (a phone turned sideways): the bars lean closer so the picture keeps its room */
+@media (max-height: 420px) { .kt-top { padding-top: calc(4px + var(--safe-top, 0px)); padding-bottom: 0; } .kt-bottom { gap: 0; padding-bottom: calc(6px + var(--safe-bottom, 0px)); } html.pc .kt-top { padding-bottom: 0; } html.pc .kt-bottom { padding-top: 0; } .kt-play { width: 44px; height: 44px; } }

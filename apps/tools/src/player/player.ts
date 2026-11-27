@@ -107,11 +107,13 @@ export function openPlayer(src: PlayerSource): void {
   const volBox = h('div', { class: 'kt-vol' }, volIcon, volSlider);
   const paintVol = () => { const v = video.muted ? 0 : Math.min(1, video.volume * boost); volSlider.value = String(Math.round(v * 100)); volSlider.style.setProperty('--v', `${Math.round(v * 100)}%`); volIcon.replaceChildren(icon(v === 0 ? 'volumeOff' : 'volume')); };
   video.addEventListener('volumechange', paintVol); queueMicrotask(paintVol);
+  const lockBtn = iconButton('lock', t('lockScreen'), () => lock(true)); const gridBtn = iconButton('grid', t('playerTools'), () => toolsSheet());
   const fsBtn = iconButton('fullscreen', t('fullscreen'), () => void fullscreen());
   const bottom = h('div', { class: 'kt-bottom' },
-    h('div', { class: 'kt-row' }, timeNow, bar, timeEnd),
-    h('div', { class: 'kt-row buttons' }, iconButton('lock', t('lockScreen'), () => lock(true)), src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('rewind', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('fastForward', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null, volBox,
-      h('span', { class: 'grow' }), customBox, toolBox, iconButton('grid', t('playerTools'), () => toolsSheet()), fsBtn));
+    // (Playback runs left to right in every language, as on every player: elapsed at the left, the thumb moving right, rewind · play · forward in that order.)
+    h('div', { class: 'kt-row', dir: 'ltr' }, timeNow, bar, timeEnd),
+    h('div', { class: 'kt-row buttons' }, lockBtn, h('span', { class: 'kt-transport', dir: 'ltr' }, src.playlist?.length ? iconButton('chevronLeft', t('previous'), () => neighbour(-1)) : null, iconButton('rewind', t('frameBack'), () => frameStep(-1)), playBtn, iconButton('fastForward', t('frameForward'), () => frameStep(1)), src.playlist?.length ? iconButton('chevronRight', t('next'), () => neighbour(1)) : null), volBox,
+      h('span', { class: 'grow' }), customBox, toolBox, gridBtn, fsBtn));
   // The big round play/pause in the middle (phone and computer): shown and hidden with the controls; only its own
   // disc takes a tap — the rest of the middle stays the stage's, for taps, double-taps and swipes.
   const bigPlay = h('button', { type: 'button', class: 'kt-bigplay', 'aria-label': t('play'), title: t('play'), onclick: (e: Event) => { e.stopPropagation(); toggle(); showControls(); } }, icon('play'));
@@ -1145,9 +1147,17 @@ export function openPlayer(src: PlayerSource): void {
     const P2 = getPrefs(); const portrait = window.innerHeight > window.innerWidth; const ids = [...P2.bar, ...(portrait ? (P2.portraitTools ?? []) : [])];
     toolBox.replaceChildren(...ids.map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x)));
     topToolBox.replaceChildren(...(P2.topTools ?? []).map((id) => toolsHere().find((x) => x.id === id)).filter((x): x is Tool => !!x).map((x) => toolButton(x)));
+    // (No sideways scroller in the bar: the tools that do not fit in the line are left to the tools grid, never half shown.)
+    // (The strip — tools, grid, full screen — is one line: beside the transport buttons in a short landscape screen, else a line of its own.)
+    if (root.isConnected) for (let n = 0; n < 24 && toolBox.lastElementChild; n++) {
+      const strip = [...toolBox.children, gridBtn, fsBtn]; const ts = strip.map((c) => c.getBoundingClientRect().top); const lo = Math.min(...ts), hi = Math.max(...ts);
+      const rr = toolBox.parentElement!.getBoundingClientRect(); const out = strip.some((c) => { const r = c.getBoundingClientRect(); return r.width > 0 && (r.right > rr.right + 0.5 || r.left < rr.left - 0.5); });
+      if (!out && hi - lo <= 8 && (window.innerHeight >= 420 || Math.abs(lockBtn.getBoundingClientRect().top - lo) <= 8)) break;
+      toolBox.lastElementChild.remove();
+    }
     root.classList.toggle('seek-below', !!P2.seekBelowButtons); root.classList.toggle('glass', !!P2.glassControls); root.classList.toggle('reduce-motion', !!P2.reduceMotion); root.classList.toggle('always-dark', P2.alwaysDark !== false);
   }
-  listen(window, 'resize', drawTools);
+  listen(window, 'resize', drawTools); requestAnimationFrame(() => { if (!playerGone) drawTools(); });
   // (The subtitles lifted over the control bar by its real height, whatever the layout gives it.)
   const barRo = new ResizeObserver(() => { root.style.setProperty('--kt-bottom-h', `${bottom.getBoundingClientRect().height}px`); }); barRo.observe(bottom);
   /** The grid of every tool, as REX Player's legend shows them; and the bar's layout, chosen there. */
