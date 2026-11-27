@@ -142,6 +142,9 @@ public class MainActivity extends BridgeActivity {
         setResult(RESULT_OK, r); runOnUiThread(this::finish);
     }
     private boolean isAppFile(Intent intent, Uri d) {
+        // (Only a real file can be an app to install: the app's own links — kurokawatools://pick, files, open,
+        // screen — have no name, and a nameless link must never be read as «app.apk».)
+        String sc = d.getScheme(); if (!"content".equals(sc) && !"file".equals(sc)) return false;
         String type = intent.getType(); if (type == null) try { type = getContentResolver().getType(d); } catch (Throwable ignored) {}
         if ("application/vnd.android.package-archive".equals(type)) return true;
         if (intent.getComponent() != null && intent.getComponent().getClassName().endsWith("KtInstaller")) return true;

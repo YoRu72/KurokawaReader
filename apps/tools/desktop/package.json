@@ -1,6 +1,6 @@
 {
   "name": "kurokawa-tools-desktop",
-  "version": "0.23.1",
+  "version": "0.23.2",
   "description": "Kurokawa Tools for Windows, macOS and Linux \u2014 no Electron here any more: this file keeps the version the release gate reads (scripts/release-check.mjs), 7zip-bin (the Rust build bundles its 7za), ffmpeg-static (the computer ffmpeg pack, ffmpeg-pack.cjs) and webtorrent (tests/webstream.cjs, the web-stream check).",
   "private": true,
   "author": "Kurokawa",

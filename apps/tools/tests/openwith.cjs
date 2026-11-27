@@ -44,6 +44,7 @@ function table() {
   ok('the Java twin (KtOpenActivity.KINDS) the same', JSON.stringify(kinds) === JSON.stringify(gen.map((e) => `${e.alias}=${e.id}`)), kinds);
   const main = fs.readFileSync(path.join(A, 'MainActivity.java'), 'utf8');
   ok('MainActivity: kurokawatools://open → #/open?…, and «.ts» read before it is called a video', /"open"\.equals\(d\.getHost\(\)\)/.test(main) && /#\/open\?/.test(main) && /return isMpegTs\(d\)/.test(main) && !/\|ts\|m2ts/.test(main));
+  ok('MainActivity.isAppFile: the app\'s own links (pick, files, open, screen) are never taken for an app to install', /private boolean isAppFile\(Intent intent, Uri d\) \{[\s\S]{0,400}?if \(!"content"\.equals\(sc\) && !"file"\.equals\(sc\)\) return false;/.test(main));
   ok('MainActivity.looksMpegTs: the same packet test as the page\'s sniffTs', /b\[0\] == 0x47 && b\[188\] == 0x47/.test(main) && /b\[4\] == 0x47 && b\[196\] == 0x47/.test(main));
   const plugin = fs.readFileSync(path.join(A, 'KtPlugin.java'), 'utf8');
   ok('the plugin: request, fetch, done, bytes, switches, apps', ['openRequest', 'openFetch', 'openFetchCancel', 'openDone', 'uriRead', 'uriWrite', 'contentUrl', 'openWithStates', 'openWithSet', 'appsFor', 'openIn'].every((m) => new RegExp(`@PluginMethod public void ${m}\\(`).test(plugin)));
