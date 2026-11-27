@@ -316,6 +316,37 @@ pub fn proxy(s: &mut TcpStream, query: &str, req: &sl::Head, head_only: bool, st
         remux(s, &final_url, &headers, head_only, stop);
         return;
     }
+    // (A source that ignored the player's range and sent everything: the part asked for cut from it — kt-core's
+    // range_from_whole —, so a seek gets its own bytes and not the file's start.)
+    let length = resp.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
+    if let Some(part) = sl::range_from_whole(req.header("range"), resp.status().as_u16(), length) {
+        let ct = if ctype.is_empty() { "application/octet-stream" } else { ctype.as_str() };
+        let (code, h) = sl::range_headers(&part, ct);
+        if write_head(s, code, h).is_err() || head_only {
+            return;
+        }
+        let (mut skip, mut left) = part.bytes();
+        while left > 0 && !stop.load(Ordering::SeqCst) {
+            match tauri::async_runtime::block_on(resp.chunk()) {
+                Ok(Some(b)) => {
+                    let n = b.len() as u64;
+                    if skip >= n {
+                        skip -= n;
+                        continue;
+                    }
+                    let take = (n - skip).min(left);
+                    let from = skip as usize;
+                    skip = 0;
+                    if s.write_all(&b[from..from + take as usize]).is_err() {
+                        break;
+                    }
+                    left -= take;
+                }
+                _ => break,
+            }
+        }
+        return;
+    }
     let mut pass: Vec<(String, String)> = Vec::new();
     for k in sl::PASS_HEADERS.iter() {
         if let Some(v) = resp.headers().get(*k).and_then(|v| v.to_str().ok()) {

@@ -10,7 +10,8 @@ import { getEngine, isVideo } from '../engine';
 import type { Task } from '../engine/types';
 
 type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[]; headers?: Record<string, string>; startAt?: number; forCaller?: boolean;
-  /** An online source as the site gives it (its headers, HLS or not): another app gets it through the relay; the app's own player gets `inAppUrl()` (the proxy the web view needs). */ origin?: { url: string; headers: Record<string, string>; hls?: boolean }; inAppUrl?: () => Promise<string> };
+  /** An online source as the site gives it (its headers, HLS or not): another app gets it through the relay; the app's own player gets `inAppUrl()` (the proxy the web view needs). */ origin?: { url: string; headers: Record<string, string>; hls?: boolean }; inAppUrl?: () => Promise<string>;
+  /** The app's own player: a fresh address when the one it plays has expired (src/player/streamGuard.ts). */ renew?: () => Promise<string> };
 export type PlayWith = 'ask' | 'app' | 'external';
 export const canPlayExternally = (): boolean => { const p = nativePlatform(); return p === 'android' || p === 'desktop'; };
 

@@ -67,6 +67,20 @@ final class KtStream {
     /** CORS for the app's own page only (Capacitor's https://localhost), never «*». */
     private static final String APP_CORS = "Access-Control-Allow-Origin: https://localhost\r\nVary: Origin\r\n";
     private static String param(String q, String k) throws IOException { for (String kv : q.split("&")) { int i = kv.indexOf('='); if (i > 0 && kv.substring(0, i).equals(k)) return java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8"); } return null; }
+    /** streamlogic.rs's range_from_whole: a 200 with the whole body (its length known) to a player that asked for a
+     *  range → {from, to} to send as a 206, {-1, -1} for a 416 (past the end); null: pass the answer as it is. */
+    static long[] rangeFromWhole(String range, int code, long len) {
+        if (range == null || code != 200 || len <= 0) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("bytes=(\\d*)-(\\d*)").matcher(range); if (!m.find()) return null;
+        long from, to;
+        try {
+            if (m.group(1).isEmpty()) { if (m.group(2).isEmpty()) return null; long k = Long.parseLong(m.group(2)); if (k == 0) return new long[] { -1, -1 }; from = Math.max(0, len - k); to = len - 1; }
+            else { from = Long.parseLong(m.group(1)); to = m.group(2).isEmpty() ? len - 1 : Math.min(len - 1, Long.parseLong(m.group(2))); }
+        } catch (NumberFormatException e) { return null; }
+        if (from >= len || from > to) return new long[] { -1, -1 };
+        if (from == 0 && to == len - 1) return null;
+        return new long[] { from, to };
+    }
     private void proxy(String path, String method, String range, OutputStream out) throws Exception {
         String q = path.substring(path.indexOf('?') + 1); String u = param(q, "u"); String hj = param(q, "h"); if (hj == null) hj = "{}";
         java.util.Map<String, String> qm = query(path);
@@ -97,6 +111,20 @@ final class KtStream {
             byte[] body = sb.toString().getBytes(StandardCharsets.UTF_8);
             out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: " + body.length + "\r\nConnection: close\r\n" + APP_CORS + "\r\n").getBytes(StandardCharsets.US_ASCII));
             if (!"HEAD".equals(method)) out.write(body); out.flush(); return;
+        }
+        // (A source that ignored the player's range and sent everything: the part asked for cut from it — kt-core's
+        // streamlogic.rs range_from_whole, the same rule —, so a seek gets its own bytes and not the file's start.)
+        long[] part = rangeFromWhole(range, code, c.getContentLengthLong());
+        if (part != null) {
+            long total = c.getContentLengthLong();
+            if (part[0] < 0) { if (in != null) in.close(); out.write(("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + total + "\r\nContent-Length: 0\r\nConnection: close\r\n" + APP_CORS + "\r\n").getBytes(StandardCharsets.US_ASCII)); out.flush(); c.disconnect(); return; }
+            out.write(("HTTP/1.1 206 Partial Content\r\nContent-Type: " + (type.isEmpty() ? "application/octet-stream" : type) + "\r\nAccept-Ranges: bytes\r\nContent-Length: " + (part[1] - part[0] + 1) + "\r\nContent-Range: bytes " + part[0] + "-" + part[1] + "/" + total + "\r\nConnection: close\r\n" + APP_CORS + "\r\n").getBytes(StandardCharsets.US_ASCII));
+            if (in != null && !"HEAD".equals(method)) {
+                long skip = part[0]; while (skip > 0) { long k = in.skip(skip); if (k <= 0) { if (in.read() < 0) break; k = 1; } skip -= k; }
+                long left = part[1] - part[0] + 1; byte[] buf = new byte[1 << 16]; int n;
+                while (left > 0 && (n = in.read(buf, 0, (int) Math.min(buf.length, left))) > 0) { out.write(buf, 0, n); left -= n; }
+            }
+            if (in != null) in.close(); out.flush(); c.disconnect(); return;
         }
         StringBuilder head = new StringBuilder("HTTP/1.1 " + code + " " + (c.getResponseMessage() == null ? "" : c.getResponseMessage()) + "\r\n");
         for (String k : new String[] { "Content-Type", "Content-Length", "Content-Range", "Accept-Ranges" }) { String v = c.getHeaderField(k); if (v != null) head.append(k).append(": ").append(v).append("\r\n"); }

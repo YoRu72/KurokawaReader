@@ -66,7 +66,7 @@ async function serve(req, out) {
 /** An HLS stream copied into fragmented MP4 by ffmpeg, its headers handed to every request ffmpeg makes. */
 function remux(u, headers, req, out) {
   const ua = headers['user-agent']; const rest = Object.entries(headers).filter(([k]) => k !== 'user-agent' && k !== 'range').map(([k, v]) => `${k}: ${v}\r\n`).join('');
-  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-user_agent', ua, ...(rest ? ['-headers', rest] : []), '-i', u, '-map', '0:v:0?', '-map', '0:a:0?', '-c', 'copy', '-bsf:a', 'aac_adtstoasc', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'pipe:1'];
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-user_agent', ua, ...(rest ? ['-headers', rest] : []), '-rw_timeout', '5000000', '-i', u, '-map', '0:v:0?', '-map', '0:a:0?', '-c', 'copy', '-bsf:a', 'aac_adtstoasc', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'pipe:1'];
   const p = spawn(Ffmpeg.binary(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); let err = '';
   p.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
   out.writeHead(200, { 'content-type': 'video/mp4', ...appOrigin(req), 'cache-control': 'no-store' });

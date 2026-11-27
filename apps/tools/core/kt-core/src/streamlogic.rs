@@ -105,6 +105,24 @@ pub fn span(header: Option<&str>, size: u64) -> Span {
     Span::Part { from, to, size }
 }
 
+/// The proxy's answer when the source ignored the player's `Range` and sent everything (a 200 with the whole body,
+/// its length known): the part the player asked for, made from it — the first bytes skipped, a 206 with its
+/// Content-Range —, so the player gets the bytes it asked for at the place it asked for them, or a 416 when the range
+/// is past the end. None when there is nothing to do: no range asked, any other status, the length unknown, or a
+/// range that is the whole body anyway (the 200 then goes as it is).
+pub fn range_from_whole(asked: Option<&str>, status: u16, length: Option<u64>) -> Option<Span> {
+    let h = asked?;
+    let len = length?;
+    if status != 200 || len == 0 {
+        return None;
+    }
+    match span(Some(h), len) {
+        Span::Part { from: 0, to, .. } if to + 1 == len => None,
+        Span::Whole { .. } => None,
+        s => Some(s),
+    }
+}
+
 /* ---------- types ---------- */
 
 fn ext_of(name: &str) -> String {
@@ -467,7 +485,10 @@ fn strs(v: &[&str]) -> Vec<String> {
 }
 
 /// streamproxy.cjs's remux(): an HLS stream copied into fragmented MP4, its headers handed to every request ffmpeg
-/// makes (the user agent on its own, the rest as «k: v\r\n» lines; range left out).
+/// makes (the user agent on its own, the rest as «k: v\r\n» lines; range left out). A read that brings nothing for
+/// 5 s is given up (`-rw_timeout`, in microseconds, handed by the HLS reader to every segment it opens): a segment
+/// that never comes is asked again a few times and then skipped (about 25 s), the rest of the stream going on, instead
+/// of a reader waiting for ever.
 pub fn remux_args(url: &str, headers: &[(String, String)]) -> Vec<String> {
     let ua = headers.iter().find(|(k, _)| k == "user-agent").map(|(_, v)| v.clone()).unwrap_or_else(|| PROXY_UA.to_string());
     let rest: String = headers
@@ -481,6 +502,7 @@ pub fn remux_args(url: &str, headers: &[(String, String)]) -> Vec<String> {
         v.push("-headers".into());
         v.push(rest);
     }
+    v.extend(strs(&["-rw_timeout", "5000000"]));
     v.push("-i".into());
     v.push(url.to_string());
     v.extend(strs(&[
@@ -816,7 +838,26 @@ mod tests {
         assert_eq!(r[5], PROXY_UA);
         assert_eq!(r[6], "-headers");
         assert_eq!(r[7], "referer: https://h/\r\n");
+        assert_eq!(&r[8..11], &["-rw_timeout".to_string(), "5000000".to_string(), "-i".to_string()]);
         assert_eq!(r[r.len() - 1], "pipe:1");
+    }
+
+    #[test]
+    fn range_answered_whole() {
+        // (The source sent everything to «bytes=1000-»: the relay skips 1000 bytes and answers 206.)
+        assert_eq!(range_from_whole(Some("bytes=1000-"), 200, Some(5000)), Some(Span::Part { from: 1000, to: 4999, size: 5000 }));
+        assert_eq!(range_from_whole(Some("bytes=10-19"), 200, Some(5000)), Some(Span::Part { from: 10, to: 19, size: 5000 }));
+        assert_eq!(range_from_whole(Some("bytes=-100"), 200, Some(5000)), Some(Span::Part { from: 4900, to: 4999, size: 5000 }));
+        assert_eq!(range_from_whole(Some("bytes=9000-"), 200, Some(5000)), Some(Span::Unsatisfiable { size: 5000 }));
+        // (Nothing to do: the whole body asked, no range, a 206 already, an error, the length unknown or 0, garbage.)
+        assert_eq!(range_from_whole(Some("bytes=0-"), 200, Some(5000)), None);
+        assert_eq!(range_from_whole(Some("bytes=0-4999"), 200, Some(5000)), None);
+        assert_eq!(range_from_whole(None, 200, Some(5000)), None);
+        assert_eq!(range_from_whole(Some("bytes=1000-"), 206, Some(4000)), None);
+        assert_eq!(range_from_whole(Some("bytes=1000-"), 403, Some(10)), None);
+        assert_eq!(range_from_whole(Some("bytes=1000-"), 200, None), None);
+        assert_eq!(range_from_whole(Some("bytes=1000-"), 200, Some(0)), None);
+        assert_eq!(range_from_whole(Some("items=1-2"), 200, Some(5000)), None);
     }
 
     #[test]

@@ -54,7 +54,10 @@ export interface PlayerSource { url: string; name: string; task?: Task; fileInde
   /** Subtitles that come with an online source. */
   subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[];
   /** Opened by another app (Android's «Kurokawa Player»): where it asked to start, and whether it wants the position back when the player closes. */
-  startAt?: number; forCaller?: boolean }
+  startAt?: number; forCaller?: boolean;
+  /** A stream's fresh address when the one it has expired (an online episode's server asked again). A download's
+   *  stream asks the engine again by itself. */
+  renew?: () => Promise<string> }
 interface SubTrack { id: string; name: string; lang?: string; cues: Cue[]; ass?: string; fmt: string }
 
 const fmtTime = (s: number): string => { if (!isFinite(s)) return '–:––'; s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return localDigits((h ? `${h}:${String(m).padStart(2, '0')}:` : `${m}:`) + String(sec).padStart(2, '0')); };
@@ -67,14 +70,20 @@ export function parseTime(s: string): number | null {
 }
 
 export function openPlayer(src: PlayerSource): void {
-  const P = getPrefs(); const key = src.localPath ?? src.url.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
+  const P = getPrefs(); const urlKey = src.url.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
+  // (A stream's place is kept by what it is, not by its address — the computer's stream server puts a new session in
+  // the address each open, an online source's proxy address is signed with an expiry: a download watched while it
+  // comes is «stream:/<task>/<file>» (the phone's address had that form already), an online episode its show and
+  // episode; the address's memory still read when there is none under the new name.)
+  const sm = src.task?.meta ?? src.meta;
+  const key = src.localPath ?? (src.task ? `stream:/${src.task.id}/${src.fileIndex ?? 0}` : sm && (sm.anilistId || sm.imdbId) ? `online:${sm.anilistId ?? sm.imdbId}:${sm.season ?? ''}:${sm.episode ?? ''}` : urlKey);
   // (mpv when it is here — every codec, the file's own subtitles —, else the web view's <video>; the player is the same.)
   const slang = (getSettings().subLangs ?? []).flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(',');
   const video = (src.engine === 'mpv' ? mpvVideo(src.localPath ?? src.url, { start: src.startAt ? src.startAt : memoryOf(key)?.pos && P.resume === 'always' ? memoryOf(key)!.pos : 0, slang, alang: P.audioLangs.flatMap((l) => [l, ISO3[l] ?? '']).filter(Boolean).join(','), speed: P.defaultSpeed, headers: src.headers, extra: mpvExtra(P) }) : h('video', { playsinline: true, preload: 'auto', class: 'kt-video', crossorigin: 'anonymous' })) as HTMLVideoElement;
   const mpv: MpvControl | null = (video as HTMLVideoElement & { _mpv?: MpvControl })._mpv ?? null;
   const stage = h('div', { class: 'kt-stage' }, video, h('canvas', { class: 'kt-ass' }), h('div', { class: 'kt-subs' }), h('div', { class: 'kt-subs top' }));
   const assCanvas = stage.querySelector('.kt-ass') as HTMLCanvasElement; const subBox = stage.querySelector('.kt-subs:not(.top)') as HTMLElement; const subTop = stage.querySelector('.kt-subs.top') as HTMLElement;
-  const mem = memoryOf(key);
+  const mem = memoryOf(key) ?? (key !== urlKey ? memoryOf(urlKey) : undefined);
   // (Everything the player hangs on the window or the document is taken off in one place when it closes.)
   const offs: (() => void)[] = []; const listen = <K extends string>(target: EventTarget, type: K, fn: (e: never) => void, opts?: AddEventListenerOptions) => { target.addEventListener(type, fn as EventListener, opts); offs.push(() => target.removeEventListener(type, fn as EventListener, opts)); };
   // ---- state
@@ -211,6 +220,8 @@ export function openPlayer(src: PlayerSource): void {
   video.addEventListener('play', () => { playBtn.replaceChildren(icon('pause')); playBtn.setAttribute('aria-label', t('pause')); scheduleHide(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   video.addEventListener('pause', () => { playBtn.replaceChildren(icon('play')); playBtn.setAttribute('aria-label', t('play')); showControls(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
   video.addEventListener('ended', () => {
+    // (A stream that stopped short — the time jumped to the end with no seek — is not the end: streamGuard.ts.)
+    if (guard?.earlyEnd()) return;
     if (sleepAtEnd) { sleepAtEnd = false; toast(t('sleepTimerDone')); close(); return; }
     if (repeat === 'one') { video.currentTime = 0; void video.play(); return; }
     markWatched(true);
@@ -219,8 +230,11 @@ export function openPlayer(src: PlayerSource): void {
     if (getPrefs().closeAtEnd) { close(); return; }
     showControls();
   });
-  video.addEventListener('error', () => { const err = video.error; if (!mpv && !converted && !pictureTried && (err?.code === 4 || err?.code === 3)) { void import('./transcode').then(async (T) => { if (T.canConvert()) { const c = await import('./compat'); const pr = await c.probe(src.url).catch(() => null); if (pr) tracksFound = pr; if (await startPicture(T.pictureProblem(pr?.video) ?? (pr?.video?.codec ?? '?').toUpperCase(), Math.max(0, pr?.audio.findIndex((a) => a.isDefault) ?? 0), pr?.duration)) return; } const why = await fetch(src.url, { method: 'HEAD' }).then((r) => (r.ok ? '' : `HTTP ${r.status}`), (e2: unknown) => String((e2 as Error).message ?? e2)).catch(() => '');
-        if (why) toast(t('playerSourceFailed', { why }), 'error', 8000); else problem(err?.code === 3 ? 'damaged' : 'format', err?.message); showControls(); }); return; } if (err?.code === 4 || err?.code === 3) problem(err.code === 3 ? 'damaged' : 'format', err.message); else toast(t('stateFailed'), 'error', 7000); showControls(); });
+  // (A stream's network trouble — a dropped connection, an expired address, offline — is streamGuard.ts's; what is
+  // left is the file's.)
+  video.addEventListener('error', () => { if (guard?.onError()) return; fileError(); });
+  function fileError() { const err = video.error; if (!mpv && !converted && !pictureTried && (err?.code === 4 || err?.code === 3)) { void import('./transcode').then(async (T) => { if (T.canConvert()) { const c = await import('./compat'); const pr = await c.probe(src.url).catch(() => null); if (pr) tracksFound = pr; if (await startPicture(T.pictureProblem(pr?.video) ?? (pr?.video?.codec ?? '?').toUpperCase(), Math.max(0, pr?.audio.findIndex((a) => a.isDefault) ?? 0), pr?.duration)) return; } const why = await fetch(src.url, { method: 'HEAD' }).then((r) => (r.ok ? '' : `HTTP ${r.status}`), (e2: unknown) => String((e2 as Error).message ?? e2)).catch(() => '');
+        if (why) toast(t('playerSourceFailed', { why }), 'error', 8000); else problem(err?.code === 3 ? 'damaged' : 'format', err?.message); showControls(); }); return; } if (err?.code === 4 || err?.code === 3) problem(err.code === 3 ? 'damaged' : 'format', err.message); else toast(t('stateFailed'), 'error', 7000); showControls(); }
   // (Never a silent black screen: a file with no audio track, or whose picture does not decode, is said plainly —
   // health.ts, loaded after the first frame.)
   let healthOff: (() => void) | null = null;
@@ -246,21 +260,36 @@ export function openPlayer(src: PlayerSource): void {
       const d = window.kurokawaTools as unknown as { streamStats?(o: { id: string }): Promise<{ down: number; peers: number } | null> } | undefined;
       const st = await d?.streamStats?.({ id: tk.id }).catch(() => null);
       if (st) { down = st.down; peers = st.peers; } else { const { getEngine } = await import('../engine'); const x = (await getEngine().list().catch(() => [] as Task[])).find((y) => y.id === tk.id); if (x) { down = x.downSpeed; peers = x.peers; } }
-      waitLine.textContent = peers === 0 ? t('waitNoPeers') : t('waitSwarm', { speed: `${formatBytes(down)}/s`, n: localDigits(peers ?? 0) });
-    } else waitLine.textContent = t('waitBuffering');
+      waitLine.textContent = guard?.line() ?? (peers === 0 ? t('waitNoPeers') : t('waitSwarm', { speed: `${formatBytes(down)}/s`, n: localDigits(peers ?? 0) }));
+    } else waitLine.textContent = guard?.line() ?? t('waitBuffering');
     waitLine.hidden = false; waitTimer = window.setTimeout(() => void waitTick(), 1000);
   };
-  video.addEventListener('waiting', () => { centre.classList.add('busy'); clearTimeout(waitTimer); waitTimer = window.setTimeout(() => void waitTick(), 1500); });
+  const setBusy = () => { if (centre.classList.contains('busy')) return; centre.classList.add('busy'); clearTimeout(waitTimer); waitTimer = window.setTimeout(() => void waitTick(), 1500); };
+  video.addEventListener('waiting', setBusy);
   const unbusy = () => { centre.classList.remove('busy'); clearTimeout(waitTimer); waitLine.hidden = true; };
   video.addEventListener('playing', unbusy); video.addEventListener('canplay', unbusy);
+  // (A stream — not a file on this device, not mpv's —: the spinner from the first moment, its trouble watched.)
+  let guard: import('./streamGuard').Guard | null = null;
+  if (!mpv && !src.localPath && /^https?:/i.test(src.url)) {
+    setBusy();
+    void import('./streamGuard').then((G) => {
+      if (playerGone) return;
+      const tk = src.task;
+      const renew = src.renew ?? (tk ? async () => { const { getEngine } = await import('../engine'); const e = getEngine(); if (!e.streamUrl) throw new Error('no stream'); return e.streamUrl(tk.id, src.fileIndex ?? 0); } : undefined);
+      guard = G.guardStream({ video, busy: () => centre.classList.contains('busy'), setBusy: (on) => { if (on) setBusy(); else unbusy(); }, notice, url: () => src.url, setUrl: (u) => { src.url = u; }, renew, torrent: tk?.kind === 'torrent', back: () => close(), fileError, fmt: fmtTime });
+    });
+  }
   let lastPosState = 0; let lastSavedAt = -99;
   function onTime() {
+    // (Nothing read while there is no video — the close's or a stream's new request emptied it: its 0 is not a place.)
+    if (playerGone || video.readyState < 1) return;
     const d = video.duration || 0, c = video.currentTime;
     if (abA !== null && abB !== null && c >= abB) video.currentTime = abA;
     timeNow.textContent = fmtTime(c); if (d) timeEnd.textContent = endsAt ? t('endsAt', { t: new Date(Date.now() + ((d - c) / (video.playbackRate || 1)) * 1000).toLocaleTimeString(document.documentElement.lang || undefined, { hour: 'numeric', minute: '2-digit' }) }) : getPrefs().showRemaining ? `−${fmtTime((d - c) / (video.playbackRate || 1))}` : fmtTime(d); skipCheck(c); if (d) (bar.querySelector('.kt-played') as HTMLElement).style.width = `${(c / d) * 100}%`; (bar.querySelector('.kt-knob') as HTMLElement).style.insetInlineStart = d ? `${(c / d) * 100}%` : '0';
     drawSubs(c); if (d) { bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', String(Math.round(d))); bar.setAttribute('aria-valuenow', String(Math.round(c))); bar.setAttribute('aria-valuetext', fmtTime(c)); }
     if (Math.abs(c - lastSavedAt) >= 5 || c < lastSavedAt) { lastSavedAt = c; void import('./returnTo').then((r) => r.touchPlayerOpen()); const m = src.task?.meta ?? src.meta; remember(key, { pos: c, duration: d, speed, sub: current?.id, subDelay, ...(m?.anilistId || m?.imdbId ? { anilistId: m.anilistId, imdbId: m.imdbId, season: m.season, episode: m.episode, show: m.title, cover: m.cover } : {}) }); }
-    if (d && P.markWatched && !watchedSent && c / d * 100 >= P.watchedAt) markWatched(false);
+    // (A stream's place as played — not a jump to the end where its data stopped short.)
+    if (d && P.markWatched && !watchedSent && (guard ? guard.played() : c) / d * 100 >= P.watchedAt) markWatched(false);
     // (Halfway through an episode: the next one's best release starts coming — Seanime's and Hayase's preload.)
     if (d && !preloadSent && c / d >= 0.5) { preloadSent = true; const m = src.task?.meta ?? src.meta; if (m?.anilistId && m.episode && getSettings().animePreloadNext !== false) void import('../anime/watch').then((w) => w.preloadNext(m.anilistId!, m.episode!)).catch(() => undefined); }
     if (sleepAt && Date.now() >= sleepAt) { video.pause(); sleepAt = 0; toast(t('sleepTimerDone')); }
@@ -1478,7 +1507,7 @@ export function openPlayer(src: PlayerSource): void {
     if (src.forCaller) void import('../native').then(({ ktPlugin }) => (ktPlugin() as unknown as { playerDone?(o: { position: number; duration: number; endBy: string }): Promise<void> } | null)?.playerDone?.({ position: Math.round(video.currentTime * 1000), duration: Math.round((video.duration || 0) * 1000), endBy: video.ended ? 'playback_completion' : 'user' })).catch(() => undefined);
     // (A watched episode let go now, when that is the choice — once the player has let go of its file.)
     if (watchedSent && src.task) { const tk = src.task; setTimeout(() => void import('../downloads/episodeCache').then((c) => c.afterPlayback(tk)).then((gone) => { if (gone) toast(t('episodeDeletedWatched')); }), 800); }
-    converted?.stop(); converted = null; if (src.task?.kind === 'torrent' && !handingOver) { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden); window.removeEventListener('resize', drawTools); stageRo.disconnect(); healthOff?.(); healthOff = null; window.clearTimeout(noticeTimer); dropFontUrls(); for (const u of packFonts) URL.revokeObjectURL(u); packFonts = []; window.clearTimeout(firstFrameTimer); document.removeEventListener('visibilitychange', gateTimers); if (!goingOn) { const at = location.hash; void import('./returnTo').then((r) => r.playerClosed({ watched: watchedSent, meta: src.task?.meta ?? src.meta, at })); }
+    guard?.stop(); guard = null; converted?.stop(); converted = null; if (src.task?.kind === 'torrent' && !handingOver) { const d = window.kurokawaTools as unknown as { streamDone?(o: { id: string }): Promise<unknown> } | undefined; void d?.streamDone?.({ id: src.task.id }).catch(() => undefined); } window.clearInterval(ambTimer); window.clearInterval(clockTimer); video.pause(); window.clearInterval(statsTimer); beside?.stop(); ass?.free(); sound?.close(); if (mpv) { mpv.close(); mpvDone(); } preview?.dispose(); pic.dispose(); video.removeAttribute('src'); video.load(); root.remove(); unBackPlayer(); unBackFull?.(); unBackFull = null; document.removeEventListener('fullscreenchange', onFullChange); landscape.removeEventListener('change', onTurn); window.removeEventListener('keydown', onKey); document.removeEventListener('visibilitychange', onHidden); window.removeEventListener('resize', drawTools); stageRo.disconnect(); healthOff?.(); healthOff = null; window.clearTimeout(noticeTimer); dropFontUrls(); for (const u of packFonts) URL.revokeObjectURL(u); packFonts = []; window.clearTimeout(firstFrameTimer); document.removeEventListener('visibilitychange', gateTimers); if (!goingOn) { const at = location.hash; void import('./returnTo').then((r) => r.playerClosed({ watched: watchedSent, meta: src.task?.meta ?? src.meta, at })); }
     if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as MediaSessionAction[]) navigator.mediaSession.setActionHandler(a, null); } catch { /* old */ } }
     void barsPlug?.systemBars?.({ mode: 'show' }).catch(() => undefined);
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); void wake?.then((w) => w?.release()); void turnScreen('auto').catch(() => undefined);
