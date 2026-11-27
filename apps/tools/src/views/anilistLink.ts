@@ -25,7 +25,7 @@ export async function capture(url: string, marker: string, title: string): Promi
   return undefined;
 }
 
-/** One tap, as in Hayase and Mihon: AniList's sign-in and «Authorize» in the app's window, the account linked as
+/** One tap: AniList's sign-in and «Authorize» in the app's window, the account linked as
  *  soon as AniList hands the token back. Where no window can be watched (the web), the sheet to paste it. */
 export async function anilistSignIn(linked: () => void): Promise<void> {
   if (!clientId()) { anilistLinkSheet(linked); return; }

@@ -18,8 +18,8 @@ async function requestNow(url: string, init: HttpInit): Promise<HttpResult> {
   const p = ktPlugin() as (ReturnType<typeof ktPlugin> & { httpRequest?(o: HttpInit & { url: string }): Promise<HttpResult> }) | null;
   if (p?.httpRequest) {
     // (A site whose TLS the phone's own client cannot get through — some networks refuse its hello, as AniList's
-    // «SSL handshake failure» — is asked through the web view's fetch instead, Chromium's own network stack, the way
-    // Hayase reaches AniList; that works for the sites that allow it (AniList, Cinemeta…), and the route is kept a day.)
+    // «SSL handshake failure» — is asked through the web view's fetch instead, Chromium's own network stack;
+    // that works for the sites that allow it (AniList, Cinemeta…), and the route is kept a day.)
     const host = hostOf(url);
     if (viaWeb(host)) { try { return await webFetch(url, init); } catch { forgetWeb(host); } }
     try { return await p.httpRequest({ url, ...init }); }

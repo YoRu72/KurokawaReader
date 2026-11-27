@@ -4339,6 +4339,19 @@ videoChecking: 'Looking at the link…', videoAudioOnly: 'Audio only', videoBest
   pickFolderShort: "Choose a folder",
   onlineResumed: "Back online: {n} resumed",
   movedToFolder: "Downloading again into «⁨{folder}⁩»",
+  animeNetOffline: "You're offline. Connect to the internet and try again.",
+  animeNetTimeout: "The catalogue didn't answer in time. Check your connection and try again.",
+  animeNetCut: "The connection dropped before the catalogue answered.",
+  animeNetBusy: "The catalogue is busy and is limiting requests. Try again in a minute.",
+  animeNetServer: "The catalogue had a problem on its side. Try again in a moment.",
+  animeNetBad: "The catalogue sent an answer that could not be read.",
+  animeNetWait: "The catalogue asked us to wait — {n} s",
+  animeNetRefreshing: "Showing the last list we have — refreshing…",
+  animeNetSlow: "Still waiting for the catalogue…",
+  animeNetPartial: "Only part of the list loaded.",
+  animeNetKept: "Couldn't refresh, so this is the last list we have.",
+  animeNetRetry: "Try again",
+  animeNetCancelled: "Stopped waiting for the catalogue.",
 } as const;
 
 export type Strings = { -readonly [K in keyof typeof en]: string };

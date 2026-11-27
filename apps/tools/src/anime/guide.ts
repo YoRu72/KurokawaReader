@@ -1,4 +1,4 @@
-// What the Seanime community's Season Guide and Anime Diary plugins do, here in the Anime tab: a season sorted
+// A season guide and an anime diary, in the Anime tab: a season sorted
 // «for you» (each show's genres and tags weighed by how you scored what you finished, dropped or are watching),
 // the season's top ten as S/A/B/C tiers (AniList's score weighted by how many voted, popularity early in a
 // season), and the diary — every episode you logged on AniList as a calendar heatmap, the shows you left
@@ -10,11 +10,12 @@ type ListRaw = { status: al.AlStatus; score: number; progress: number; updatedAt
 let tasteCache: { at: number; w: Map<string, number> } | null = null;
 
 /** The user's taste: each genre and tag, weighed by their scores (or by status when they do not score). */
-export async function taste(): Promise<Map<string, number>> {
+export async function taste(net?: al.Net): Promise<Map<string, number>> {
   if (tasteCache && Date.now() - tasteCache.at < 6 * 3600000) return tasteCache.w;
   const u = al.user(); const w = new Map<string, number>(); if (!u) return w;
-  const d = await al.gql<{ MediaListCollection: { lists: { entries: ListRaw[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME) { lists { entries { status score(format: POINT_100) progress media { id genres tags { name rank } } } } } }', { user: u.id });
-  for (const l of d.MediaListCollection.lists) for (const e of l.entries) {
+  const d = await al.gql<{ MediaListCollection: { lists: { entries: ListRaw[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME) { lists { entries { status score(format: POINT_100) progress media { id genres tags { name rank } } } } } }', { user: u.id }, true, false, net);
+  for (const l of d.MediaListCollection?.lists ?? []) for (const e of l?.entries ?? []) {
+    if (!e?.media) continue;
     const base = e.score ? (e.score - 60) / 40 : e.status === 'COMPLETED' ? 0.5 : e.status === 'CURRENT' || e.status === 'REPEATING' ? 0.4 : e.status === 'DROPPED' ? -0.6 : e.status === 'PAUSED' ? 0 : 0.1;
     for (const g of e.media.genres ?? []) w.set(`g:${g}`, (w.get(`g:${g}`) ?? 0) + base);
     for (const tg of e.media.tags ?? []) if (tg.rank >= 50) w.set(`t:${tg.name}`, (w.get(`t:${tg.name}`) ?? 0) + base * (tg.rank / 100) * 0.6);
@@ -40,12 +41,12 @@ export function tiers(list: al.Anime[]): { tier: 'S' | 'A' | 'B' | 'C'; a: al.An
 export interface DiaryDay { date: string; items: { id: number; title: string; cover?: string; episodes: number[]; status: string }[] }
 type Act = { createdAt: number; progress: string | null; status: string; media: { id: number; title: { userPreferred?: string }; coverImage?: { medium?: string }; duration?: number | null; genres?: string[]; studios?: { nodes: { name: string }[] } } };
 /** Every list activity of the user (AniList keeps them), up to a few thousand, newest first. */
-export async function activities(maxPages = 12): Promise<Act[]> {
+export async function activities(maxPages = 12, net?: al.Net): Promise<Act[]> {
   const u = al.user(); if (!u) return []; const out: Act[] = [];
   for (let page = 1; page <= maxPages; page++) {
-    const d = await al.gql<{ Page: { pageInfo: { hasNextPage: boolean }; activities: (Act | Record<string, never>)[] } }>('query ($user: Int, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } activities(userId: $user, type: ANIME_LIST, sort: ID_DESC) { ... on ListActivity { createdAt progress status media { id title { userPreferred } coverImage { medium } duration genres studios(isMain: true) { nodes { name } } } } } } }', { user: u.id, page });
-    for (const a of d.Page.activities) if ((a as Act).media) out.push(a as Act);
-    if (!d.Page.pageInfo.hasNextPage) break;
+    const d = await al.gql<{ Page: { pageInfo: { hasNextPage: boolean }; activities: (Act | Record<string, never>)[] } }>('query ($user: Int, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } activities(userId: $user, type: ANIME_LIST, sort: ID_DESC) { ... on ListActivity { createdAt progress status media { id title { userPreferred } coverImage { medium } duration genres studios(isMain: true) { nodes { name } } } } } } }', { user: u.id, page }, true, false, net);
+    for (const a of d.Page?.activities ?? []) if ((a as Act)?.media) out.push(a as Act);
+    if (!d.Page?.pageInfo?.hasNextPage) break;
   }
   return out;
 }
@@ -82,11 +83,12 @@ export function yearReview(acts: Act[], year: number): YearReview {
   return r;
 }
 /** Shows started and left: watching or paused, by when last touched, with how far behind an airing one is. */
-export async function unfinished(): Promise<{ a: al.Anime; behind: number; updatedAt: number }[]> {
+export async function unfinished(net?: al.Net): Promise<{ a: al.Anime; behind: number; updatedAt: number }[]> {
   const u = al.user(); if (!u) return [];
-  const d = await al.gql<{ MediaListCollection: { lists: { entries: (ListRaw & { updatedAt: number })[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME, status_in: [CURRENT, PAUSED, REPEATING]) { lists { entries { status score progress updatedAt media { id title { userPreferred romaji } coverImage { large } episodes status nextAiringEpisode { episode } genres } } } } }', { user: u.id });
+  const d = await al.gql<{ MediaListCollection: { lists: { entries: (ListRaw & { updatedAt: number })[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME, status_in: [CURRENT, PAUSED, REPEATING]) { lists { entries { status score progress updatedAt media { id title { userPreferred romaji } coverImage { large } episodes status nextAiringEpisode { episode } genres } } } } }', { user: u.id }, true, false, net);
   const out: { a: al.Anime; behind: number; updatedAt: number }[] = [];
-  for (const l of d.MediaListCollection.lists) for (const e of l.entries) {
+  for (const l of d.MediaListCollection?.lists ?? []) for (const e of l?.entries ?? []) {
+    if (!e?.media?.title) continue;
     const aired = e.media.nextAiringEpisode ? e.media.nextAiringEpisode.episode - 1 : e.media.episodes ?? e.progress;
     const a = { id: e.media.id, title: e.media.title.userPreferred ?? e.media.title.romaji ?? '', cover: coverFor(e.media.id, e.media.coverImage?.large), genres: e.media.genres ?? [], synonyms: [], isAdult: false, url: '', episodes: e.media.episodes, entry: { status: e.status, progress: e.progress, score: e.score } } as al.Anime;
     out.push({ a, behind: Math.max(0, aired - e.progress), updatedAt: e.updatedAt });

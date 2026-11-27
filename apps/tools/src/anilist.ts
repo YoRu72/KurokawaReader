@@ -1,6 +1,6 @@
 // AniList for anime: the account (a token taken from AniList's sign-in page or pasted), searching the
 // catalogue, an entry's status, progress and score read and written (the reader's tracking, for episodes), the
-// season chart (what AniChart draws) and the airing schedule (what LiveChart draws) — all from the one GraphQL
+// season chart and the airing schedule — all from the one GraphQL
 // endpoint, through the app's own HTTP so the phone and the desktop are not held back by CORS.
 import { request } from './http';
 import { parseFilename } from './anime/anitomy';
@@ -49,36 +49,79 @@ export function authUrl(): string { const id = getSettings().anilistClientId.tri
  *  used or kept). Its redirect address is AniList's pin page. */
 export const BUILTIN_CLIENT = '55772';
 
-const later = (m: string, retryAfter?: number, maybeSent = false) => Object.assign(new Error(m), { later: true, retryAfter, maybeSent });
+const later = (m: string, retryAfter?: number, maybeSent = false, kind?: FaultKind) => Object.assign(new Error(m), { later: true, retryAfter, maybeSent, kind });
+const fault = (kind: FaultKind, m: string) => Object.assign(new Error(m), { kind });
 /** A request that creates something public failed after it may have reached AniList (a 5xx, a cut connection, a timeout). */
 export const maybeSent = (e: unknown): boolean => !!(e as { maybeSent?: boolean })?.maybeSent;
 export const isLater = (e: unknown): boolean => !!(e as { later?: boolean })?.later;
 /** Seconds AniList asked to wait (its Retry-After) when it still refused after the one wait. */
 export const retryAfterOf = (e: unknown): number | undefined => (e as { retryAfter?: number })?.retryAfter;
+
+/** What a request is given by a screen that waits on it: a way to stop (leaving the tab) and a way to show the wait the
+ *  catalogue asked for (seconds left, counting down; 0 once it is over). */
+export interface Net { signal?: AbortSignal; onWait?: (secs: number) => void }
+/** Why a request failed, in a word the screens say in plain language (none: the catalogue's own message is shown). */
+export type FaultKind = 'offline' | 'timeout' | 'cut' | 'busy' | 'server' | 'bad' | 'cancelled';
+export const faultKind = (e: unknown): FaultKind | undefined => (e as { kind?: FaultKind })?.kind;
+/** The first answer is waited for this long; then the request is made once more, then it is an error. */
+const BUDGET_MS = 12000;
+// (A test hook: the budget scaled down so a stand-in that never answers is not waited on for half a minute.)
+const budget = (): number => Math.max(60, Math.round(BUDGET_MS * ((window as unknown as { __ktAlScale?: number }).__ktAlScale ?? 1)));
+/** Waits; the seconds counted down to the screen when `count`; stopped at once by the net's signal. */
+function pause(ms: number, net?: Net, count = false): Promise<void> {
+  return new Promise((ok, no) => {
+    const sig = net?.signal; if (sig?.aborted) { no(fault('cancelled', 'cancelled')); return; }
+    let left = Math.ceil(ms / 1000); let tm = 0; let tick = 0;
+    const end = (f: () => void) => { window.clearTimeout(tm); window.clearInterval(tick); sig?.removeEventListener('abort', stop); if (count) net?.onWait?.(0); f(); };
+    const stop = () => end(() => no(fault('cancelled', 'cancelled')));
+    sig?.addEventListener('abort', stop);
+    if (count) { net?.onWait?.(left); tick = window.setInterval(() => { left = Math.max(1, left - 1); net?.onWait?.(left); }, 1000); }
+    tm = window.setTimeout(() => end(ok), ms);
+  });
+}
+/** One POST with the time budget; the net's signal lets the caller stop waiting for it. */
+function post(headers: Record<string, string>, body: string, creates: boolean, net?: Net): Promise<Awaited<ReturnType<typeof request>>> {
+  const sig = net?.signal; if (sig?.aborted) return Promise.reject(fault('cancelled', 'cancelled'));
+  const p = request(API, { method: 'POST', headers, body, timeoutMs: budget() }).catch((e) => {
+    const m = String((e as Error)?.message ?? e);
+    throw later(m, undefined, creates, navigator.onLine === false ? 'offline' : /time(d)?[\s_-]?out|abort/i.test(`${(e as Error)?.name ?? ''} ${m}`) ? 'timeout' : 'cut');
+  });
+  if (!sig) return p;
+  return new Promise((ok, no) => { const ab = () => no(fault('cancelled', 'cancelled')); sig.addEventListener('abort', ab, { once: true }); p.then(ok, no).finally(() => sig.removeEventListener('abort', ab)); });
+}
 let lastCall = 0;
 /** One GraphQL call; AniList allows about thirty a minute, so calls are spaced out a little. `creates`: a mutation that
  *  makes something public (a new activity, a new review) — never sent twice by itself: a 5xx or a lost answer is
- *  reported as «may have been sent» instead of tried again (a 429, refused before any work, is still waited out). */
-export async function gql<T>(query: string, variables: Record<string, unknown> = {}, auth = true, creates = false): Promise<T> {
+ *  reported as «may have been sent» instead of tried again (a 429, refused before any work, is still waited out).
+ *  Every request has a time budget: no answer in ~12 s and it is made once more, then it is an error. A 429's wait is
+ *  reported through `net.onWait` (and can be cut short by `net.signal`). */
+export async function gql<T>(query: string, variables: Record<string, unknown> = {}, auth = true, creates = false, net?: Net): Promise<T> {
   await coversFirst();
-  const wait = lastCall + 350 - Date.now(); if (wait > 0) await new Promise((r) => setTimeout(r, wait)); lastCall = Date.now();
+  const wait = lastCall + 350 - Date.now(); if (wait > 0) await pause(wait, net); lastCall = Date.now();
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const tk = token(); if (auth && tk) headers.Authorization = `Bearer ${tk}`;
+  const body = JSON.stringify({ query, variables });
   let r: Awaited<ReturnType<typeof request>>;
   try {
-    r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) });
-    // (As Hayase does: a 429 waits what Retry-After says and a second more, a 5xx a second, then once again — a 5xx
-    // not for a mutation that creates something: it may have been made already.)
-    if (r.status === 429 || (r.status >= 500 && !creates)) { const ra = Number(r.headers['retry-after']); await new Promise((ok) => setTimeout(ok, r.status === 429 ? Math.min(60, (isFinite(ra) && ra > 0 ? ra : 2) + 1) * 1000 : 1000)); lastCall = Date.now(); r = await request(API, { method: 'POST', headers, body: JSON.stringify({ query, variables }) }); }
-  } catch (e) { throw later(String((e as Error)?.message ?? e), undefined, creates); }
+    // (A lost answer — no reply in the budget, a cut connection — is asked once more, not for a mutation that creates
+    // something: it may have been made already.)
+    try { r = await post(headers, body, creates, net); }
+    catch (e) { const k = faultKind(e); if (creates || k === 'cancelled' || k === 'offline') throw e; await pause(1000, net); lastCall = Date.now(); r = await post(headers, body, creates, net); }
+    // (A 429 waits what Retry-After says and a second more — shown, counted down —, a 5xx a second, then once again.)
+    if (r.status === 429 || (r.status >= 500 && !creates)) { const ra = Number(r.headers['retry-after']); await pause(r.status === 429 ? Math.min(60, (isFinite(ra) && ra > 0 ? ra : 2) + 1) * 1000 : 1000, net, r.status === 429); lastCall = Date.now(); r = await post(headers, body, creates, net); }
+  } catch (e) { if (faultKind(e) === 'cancelled' || isLater(e)) throw e; throw later(String((e as Error)?.message ?? e), undefined, creates, 'cut'); }
   const busy = r.status === 429 || r.status >= 500 || r.status === 0;
   const lost = creates && (r.status >= 500 || r.status === 0);
+  const kind: FaultKind = r.status === 429 ? 'busy' : busy ? 'server' : 'bad';
   const ra = r.status === 429 ? Number(r.headers['retry-after']) || 60 : undefined;
-  let json: { data?: T; errors?: { message: string; status?: number }[] } = {};
-  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`, ra, lost) : new Error(`AniList: HTTP ${r.status}`); }
-  if (json.errors?.length) { const e = json.errors[0]; if ((e.status === 400 && /invalid token|unauthorized/i.test(e.message)) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message, ra ?? (e.status === 429 ? 60 : undefined), lost) : new Error(e.message); }
-  if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`, ra, lost) : new Error(`AniList: HTTP ${r.status}`);
-  return json.data as T;
+  let json: { data?: T; errors?: { message: string; status?: number }[] } | null = null;
+  try { json = JSON.parse(r.body); } catch { throw busy ? later(`AniList: HTTP ${r.status}`, ra, lost, kind) : fault('bad', `AniList: HTTP ${r.status}`); }
+  if (!json || typeof json !== 'object') throw busy ? later(`AniList: HTTP ${r.status}`, ra, lost, kind) : fault('bad', `AniList: HTTP ${r.status}`);
+  if (json.errors?.length) { const e = json.errors[0]; if ((e.status === 400 && /invalid token|unauthorized/i.test(e.message)) || r.status === 401) unlink(); throw busy || (e.status ?? 0) >= 500 || e.status === 429 ? later(e.message, ra ?? (e.status === 429 ? 60 : undefined), lost, e.status === 429 ? 'busy' : 'server') : new Error(e.message); }
+  if (r.status >= 400) throw busy ? later(`AniList: HTTP ${r.status}`, ra, lost, kind) : fault('bad', `AniList: HTTP ${r.status}`);
+  // (A 200 without data — an empty or foreign page in place of the answer — is no answer.)
+  if (json.data === undefined || json.data === null) throw fault('bad', 'AniList: no data');
+  return json.data;
 }
 
 export async function link(tk: string): Promise<AlUser> {
@@ -107,23 +150,30 @@ export function calmTint(c?: string | null): string | undefined {
 type Raw = { id: number; idMal?: number; title: { romaji?: string; english?: string; native?: string; userPreferred?: string }; synonyms?: string[]; coverImage?: { large?: string; extraLarge?: string; color?: string }; bannerImage?: string; format?: string; status?: string; episodes?: number | null; duration?: number | null; season?: Season; seasonYear?: number; startDate?: AlDate; endDate?: AlDate; genres?: string[]; averageScore?: number; popularity?: number; description?: string; isAdult?: boolean; siteUrl: string; studios?: { nodes: { id?: number; name: string }[] }; trailer?: { id: string; site: string; thumbnail?: string } | null; nextAiringEpisode?: Airing | null; airingSchedule?: { nodes: Airing[] }; streamingEpisodes?: { title: string; url: string; site: string; thumbnail?: string }[]; externalLinks?: { site: string; url: string; type?: string }[]; relations?: { edges: { relationType: string; node: { id: number; title: { userPreferred?: string; romaji?: string }; format?: string } }[] }; mediaListEntry?: RawEntry };
 const entryOf = (e?: RawEntry): AlEntry | undefined => (e ? { id: e.id, status: e.status, progress: e.progress, score: e.score, startedAt: e.startedAt, completedAt: e.completedAt } : undefined);
 /** The title shown: the user's AniList preference when linked, else English, then romaji. */
-const pick = (m: Raw) => m.title.userPreferred || m.title.english || m.title.romaji || m.title.native || '';
+const pick = (m: Raw) => m.title?.userPreferred || m.title?.english || m.title?.romaji || m.title?.native || '';
 const toAnime = (m: Raw): Anime => ({
-  id: m.id, idMal: m.idMal ?? undefined, title: pick(m), titleRomaji: m.title.romaji ?? undefined, titleEnglish: m.title.english ?? undefined, titleNative: m.title.native ?? undefined, synonyms: m.synonyms ?? [],
+  id: m.id, idMal: m.idMal ?? undefined, title: pick(m), titleRomaji: m.title?.romaji ?? undefined, titleEnglish: m.title?.english ?? undefined, titleNative: m.title?.native ?? undefined, synonyms: Array.isArray(m.synonyms) ? m.synonyms : [],
   cover: m.coverImage?.extraLarge ?? m.coverImage?.large, banner: m.bannerImage ?? undefined, color: calmTint(m.coverImage?.color),
   format: m.format, status: m.status, episodes: m.episodes, duration: m.duration, season: m.season, seasonYear: m.seasonYear, startDate: m.startDate, endDate: m.endDate,
-  genres: m.genres ?? [], score: m.averageScore, popularity: m.popularity, description: strip(m.description), isAdult: !!m.isAdult, url: m.siteUrl,
+  genres: Array.isArray(m.genres) ? m.genres : [], score: m.averageScore, popularity: m.popularity, description: strip(m.description), isAdult: !!m.isAdult, url: m.siteUrl ?? `https://anilist.co/anime/${m.id}`,
   studio: m.studios?.nodes?.[0]?.name, studioId: m.studios?.nodes?.[0]?.id, trailer: m.trailer ?? undefined, nextAiring: m.nextAiringEpisode ?? undefined, schedule: m.airingSchedule?.nodes,
-  streaming: m.streamingEpisodes, links: m.externalLinks, relations: m.relations?.edges.map((e) => ({ relation: e.relationType, id: e.node.id, title: e.node.title.userPreferred || e.node.title.romaji || '', format: e.node.format })), entry: entryOf(m.mediaListEntry),
+  streaming: m.streamingEpisodes, links: m.externalLinks, relations: m.relations?.edges?.filter((e) => e?.node).map((e) => ({ relation: e.relationType, id: e.node.id, title: e.node.title?.userPreferred || e.node.title?.romaji || '', format: e.node.format })), entry: entryOf(m.mediaListEntry),
 });
+/** Many answers made into shows: one that cannot be (nothing in its place, no id) is left out and the rest kept — one odd
+ *  entry never blanks a list. */
+const toAnimes = (raws: (Raw | null | undefined)[] | null | undefined, per: (m: Raw) => Anime = toAnime): Anime[] => {
+  const out: Anime[] = []; if (!Array.isArray(raws)) return out;
+  for (const m of raws) { if (!m || typeof m !== 'object' || typeof m.id !== 'number') continue; try { out.push(per(m)); } catch { /* left out */ } }
+  return out;
+};
 const CARD = 'id idMal title { romaji english native userPreferred } synonyms coverImage { large extraLarge color } format status episodes season seasonYear startDate { year month day } genres averageScore popularity isAdult siteUrl nextAiringEpisode { airingAt episode } mediaListEntry { id status progress score startedAt { year month day } completedAt { year month day } }';
 const FULL = `${CARD} duration endDate { year month day } bannerImage description(asHtml: false) studios(isMain: true) { nodes { id name } } trailer { id site thumbnail } airingSchedule(perPage: 50) { nodes { airingAt episode } } streamingEpisodes { title url site thumbnail } externalLinks { site url type } relations { edges { relationType(version: 2) node { id title { userPreferred romaji } format } } }`;
 
 export async function search(q: string, opts: { adult?: boolean; page?: number } = {}): Promise<Anime[]> {
   const d = await gql<{ Page: { media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean) { Page(page: $page, perPage: 20) { media(search: $q, type: ANIME, sort: SEARCH_MATCH, isAdult: $adult) { ${CARD} } } }`, { q, page: opts.page ?? 1, adult: opts.adult ? undefined : false });
-  return d.Page.media.map(toAnime);
+  return toAnimes(d.Page?.media);
 }
-/** AniList's search with its filters (Hayase's and Senpwai's): words, genres, tags (all must match; some can be
+/** AniList's search with its filters: words, genres, tags (all must match; some can be
  *  left out), format, status, season and year, sort — any of them alone browses by it. Answers are kept a few
  *  minutes, so going back and forth costs no request. */
 export interface SearchFilters { q?: string; genres?: string[]; tags?: string[]; notTags?: string[]; formats?: string[]; status?: string; season?: Season; year?: number; sort?: string; minScore?: number; adult?: boolean; onList?: boolean; /** A decade or span of years (first and last year). */ from?: number; to?: number;
@@ -144,7 +194,7 @@ async function byPrefix(q: string, adult: boolean): Promise<number[]> {
   const r = await request(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(q)}&limit=15${adult ? '' : '&sfw=true'}`); if (r.status !== 200) return [];
   return [...new Set(((JSON.parse(r.body) as { data?: { mal_id: number }[] }).data ?? []).map((x) => x.mal_id))];
 }
-export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Anime[]; hasNext: boolean; used?: string }> {
+export async function searchBy(f: SearchFilters, page = 1, net?: Net): Promise<{ media: Anime[]; hasNext: boolean; used?: string }> {
   const v: Record<string, unknown> = { page, adult: f.adult ? undefined : false, sort: [f.sort || (f.q ? 'SEARCH_MATCH' : 'POPULARITY_DESC')] };
   if (f.q?.trim()) v.q = f.q.trim(); if (f.genres?.length) v.genres = f.genres; if (f.tags?.length) v.tags = f.tags; if (f.notTags?.length) v.notTags = f.notTags;
   if (f.formats?.length) v.formats = f.formats; if (f.status) v.status = f.status; if (f.season) v.season = f.season; if (f.year) v.year = f.year; if (f.minScore) v.minScore = f.minScore; if (f.onList !== undefined) v.onList = f.onList;
@@ -153,8 +203,8 @@ export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Ani
   // so the genres, tags, sort and the rest still work on AniList's side.)
   if (f.studios?.length) { const ids = [...new Set((await Promise.all(f.studios.map((s) => studioIds(s.id)))).flat())]; if (!ids.length) return { media: [], hasNext: false }; v.ids = ids; }
   const key = JSON.stringify(v); const had = searchCache.get(key); if (had && Date.now() - had.at < 5 * 60000) return had.v;
-  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean, $from: FuzzyDateInt, $to: FuzzyDateInt, $ids: [Int], $mal: [Int]) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, id_in: $ids, idMal_in: $mal, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList, startDate_greater: $from, startDate_lesser: $to) { ${CARD} } } }`, vars);
-  let d = await ask(v); let used: string | undefined;
+  const ask = (vars: Record<string, unknown>) => gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($q: String, $page: Int, $adult: Boolean, $genres: [String], $tags: [String], $notTags: [String], $formats: [MediaFormat], $status: MediaStatus, $season: MediaSeason, $year: Int, $sort: [MediaSort], $minScore: Int, $onList: Boolean, $from: FuzzyDateInt, $to: FuzzyDateInt, $ids: [Int], $mal: [Int]) { Page(page: $page, perPage: 30) { pageInfo { hasNextPage } media(search: $q, id_in: $ids, idMal_in: $mal, type: ANIME, isAdult: $adult, genre_in: $genres, tag_in: $tags, tag_not_in: $notTags, format_in: $formats, status: $status, season: $season, seasonYear: $year, sort: $sort, averageScore_greater: $minScore, onList: $onList, startDate_greater: $from, startDate_lesser: $to) { ${CARD} } } }`, vars, true, false, net);
+  let d = await ask(v); let used: string | undefined; d.Page.media = Array.isArray(d.Page.media) ? d.Page.media : [];
   // (Nothing for the words as typed — a file's name, «Season 2», a subtitle, a typo's last word —: the same search with
   // the words cleaned up, then shortened; the results say which words found them.)
   if (page === 1 && v.q && !d.Page.media.length) for (const q of queryVariants(String(v.q))) { const r = await ask({ ...v, q }); if (r.Page.media.length) { d = r; used = q; break; } }
@@ -164,22 +214,22 @@ export async function searchBy(f: SearchFilters, page = 1): Promise<{ media: Ani
     const more = await byPrefix(String(v.q), !!f.adult).then((mal) => (mal.length ? ask({ ...v, q: undefined, sort: undefined, mal }).then((r) => r.Page.media.sort((a, b) => mal.indexOf(a.idMal ?? 0) - mal.indexOf(b.idMal ?? 0))) : [])).catch(() => [] as Raw[]);
     const seen = new Set(d.Page.media.map((m) => m.id)); d = { Page: { ...d.Page, media: [...d.Page.media, ...more.filter((m) => !seen.has(m.id))] } }; if (more.length) used = undefined;
   }
-  const out = { media: d.Page.media.map(toAnime), hasNext: d.Page.pageInfo.hasNextPage, used };
+  const out = { media: toAnimes(d.Page.media), hasNext: !!d.Page.pageInfo?.hasNextPage, used };
   searchCache.set(key, { at: Date.now(), v: out }); if (searchCache.size > 60) searchCache.delete(searchCache.keys().next().value!);
   return out;
 }
 /** Several shows at once (the library's covers). */
-export async function mediaMany(ids: number[]): Promise<Anime[]> {
+export async function mediaMany(ids: number[], net?: Net): Promise<Anime[]> {
   const out: Anime[] = [];
-  for (let i = 0; i < ids.length; i += 50) { const d = await gql<{ Page: { media: Raw[] } }>(`query ($ids: [Int]) { Page(perPage: 50) { media(id_in: $ids, type: ANIME) { ${CARD} relations { edges { relationType(version: 2) node { id type status format title { userPreferred romaji } mediaListEntry { status } } } } } } }`, { ids: ids.slice(i, i + 50) }); out.push(...d.Page.media.map((m) => { const a = toAnime(m); a.sequels = ((m as unknown as { relations?: { edges: { relationType: string; node: { id: number; type: string; status: string; format?: string; title: { userPreferred?: string; romaji?: string }; mediaListEntry?: { status: string } | null } }[] } }).relations?.edges ?? []).filter((e) => e.relationType === 'SEQUEL' && e.node.type === 'ANIME').map((e) => ({ id: e.node.id, title: e.node.title.userPreferred || e.node.title.romaji || '', status: e.node.status, onList: !!e.node.mediaListEntry })); return a; })); }
+  for (let i = 0; i < ids.length; i += 50) { const d = await gql<{ Page: { media: Raw[] } }>(`query ($ids: [Int]) { Page(perPage: 50) { media(id_in: $ids, type: ANIME) { ${CARD} relations { edges { relationType(version: 2) node { id type status format title { userPreferred romaji } mediaListEntry { status } } } } } } }`, { ids: ids.slice(i, i + 50) }, true, false, net); out.push(...toAnimes(d.Page?.media, (m) => { const a = toAnime(m); a.sequels = ((m as unknown as { relations?: { edges: { relationType: string; node: { id: number; type: string; status: string; format?: string; title: { userPreferred?: string; romaji?: string }; mediaListEntry?: { status: string } | null } }[] } }).relations?.edges ?? []).filter((e) => e.relationType === 'SEQUEL' && e.node.type === 'ANIME').map((e) => ({ id: e.node.id, title: e.node.title?.userPreferred || e.node.title?.romaji || '', status: e.node.status, onList: !!e.node.mediaListEntry })); return a; })); }
   return out;
 }
-/** Finished shows whose sequel you have not started (Seanime's «missed sequels»): the sequels, released or airing. */
-export async function missedSequels(): Promise<{ from: Anime; sequel: { id: number; title: string; status: string } }[]> {
+/** Finished shows whose sequel you have not started («missed sequels»): the sequels, released or airing. */
+export async function missedSequels(net?: Net): Promise<{ from: Anime; sequel: { id: number; title: string; status: string } }[]> {
   const u = user(); if (!u) return [];
-  const d = await gql<{ MediaListCollection: { lists: { entries: { media: { id: number } }[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME, status_in: [COMPLETED]) { lists { entries { media { id } } } } }', { user: u.id });
-  const ids = [...new Set(d.MediaListCollection.lists.flatMap((l) => l.entries.map((e) => e.media.id)))];
-  const shows = await mediaMany(ids.slice(0, 300));
+  const d = await gql<{ MediaListCollection: { lists: { entries: { media: { id: number } }[] }[] } }>('query ($user: Int) { MediaListCollection(userId: $user, type: ANIME, status_in: [COMPLETED]) { lists { entries { media { id } } } } }', { user: u.id }, true, false, net);
+  const ids = [...new Set((d.MediaListCollection?.lists ?? []).flatMap((l) => (l?.entries ?? []).map((e) => e?.media?.id).filter((x): x is number => typeof x === 'number')))];
+  const shows = await mediaMany(ids.slice(0, 300), net);
   const out: { from: Anime; sequel: { id: number; title: string; status: string } }[] = []; const seen = new Set<number>();
   for (const a of shows) for (const s of a.sequels ?? []) if (!s.onList && s.status !== 'NOT_YET_RELEASED' && s.status !== 'CANCELLED' && !seen.has(s.id)) { seen.add(s.id); out.push({ from: a, sequel: s }); }
   return out;
@@ -197,37 +247,38 @@ export function genresAndTags(): Promise<{ genres: string[]; tags: AlTag[] }> {
   })().catch((e) => { tagsP = null; throw e; });
   return tagsP;
 }
-export async function media(id: number): Promise<Anime> {
-  const d = await gql<{ Media: Raw }>(`query ($id: Int) { Media(id: $id, type: ANIME) { ${FULL} } }`, { id });
+export async function media(id: number, net?: Net): Promise<Anime> {
+  const d = await gql<{ Media: Raw }>(`query ($id: Int) { Media(id: $id, type: ANIME) { ${FULL} } }`, { id }, true, false, net);
+  if (!d.Media || typeof d.Media.id !== 'number') throw fault('bad', 'AniList: no show');
   return toAnime(d.Media);
 }
-/** The season chart: every show of a season, most popular first (AniChart's page). */
-export async function seasonChart(season: Season, year: number, opts: { adult?: boolean; sort?: string; page?: number } = {}): Promise<{ media: Anime[]; hasNext: boolean }> {
-  const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($season: MediaSeason, $year: Int, $page: Int, $adult: Boolean, $sort: [MediaSort]) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(type: ANIME, season: $season, seasonYear: $year, isAdult: $adult, sort: $sort) { ${CARD} } } }`, { season, year, page: opts.page ?? 1, adult: opts.adult ? undefined : false, sort: [opts.sort ?? 'POPULARITY_DESC'] });
-  return { media: d.Page.media.map(toAnime), hasNext: d.Page.pageInfo.hasNextPage };
+/** The season chart: every show of a season, most popular first. */
+export async function seasonChart(season: Season, year: number, opts: { adult?: boolean; sort?: string; page?: number; net?: Net } = {}): Promise<{ media: Anime[]; hasNext: boolean }> {
+  const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: Raw[] } }>(`query ($season: MediaSeason, $year: Int, $page: Int, $adult: Boolean, $sort: [MediaSort]) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(type: ANIME, season: $season, seasonYear: $year, isAdult: $adult, sort: $sort) { ${CARD} } } }`, { season, year, page: opts.page ?? 1, adult: opts.adult ? undefined : false, sort: [opts.sort ?? 'POPULARITY_DESC'] }, true, false, opts.net);
+  return { media: toAnimes(d.Page?.media), hasNext: !!d.Page?.pageInfo?.hasNextPage };
 }
-/** Shows of the season before that are still airing (AniChart's «leftovers»). */
-export async function leftovers(season: Season, year: number, adult = false): Promise<Anime[]> {
-  const d = await gql<{ Page: { media: Raw[] } }>(`query ($season: MediaSeason, $year: Int, $adult: Boolean) { Page(perPage: 50) { media(type: ANIME, season: $season, seasonYear: $year, status_in: [RELEASING, HIATUS], isAdult: $adult, sort: [POPULARITY_DESC]) { ${CARD} } } }`, { season, year, adult: adult ? undefined : false });
-  return d.Page.media.map(toAnime);
+/** Shows of the season before that are still airing («leftovers»). */
+export async function leftovers(season: Season, year: number, adult = false, net?: Net): Promise<Anime[]> {
+  const d = await gql<{ Page: { media: Raw[] } }>(`query ($season: MediaSeason, $year: Int, $adult: Boolean) { Page(perPage: 50) { media(type: ANIME, season: $season, seasonYear: $year, status_in: [RELEASING, HIATUS], isAdult: $adult, sort: [POPULARITY_DESC]) { ${CARD} } } }`, { season, year, adult: adult ? undefined : false }, true, false, net);
+  return toAnimes(d.Page?.media);
 }
 export interface AiringItem { airingAt: number; episode: number; media: Anime }
 /** Episodes airing between two moments (seconds), in order — the day's schedule. */
-export async function airing(start: number, end: number): Promise<AiringItem[]> {
+export async function airing(start: number, end: number, net?: Net): Promise<AiringItem[]> {
   const out: AiringItem[] = [];
   for (let page = 1; page <= 6; page++) {
-    const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; airingSchedules: { airingAt: number; episode: number; media: Raw }[] } }>(`query ($start: Int, $end: Int, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { airingAt episode media { ${CARD} } } } }`, { start, end, page });
-    out.push(...d.Page.airingSchedules.map((a) => ({ airingAt: a.airingAt, episode: a.episode, media: toAnime(a.media) })));
-    if (!d.Page.pageInfo.hasNextPage) break;
+    const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; airingSchedules: { airingAt: number; episode: number; media: Raw }[] } }>(`query ($start: Int, $end: Int, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } airingSchedules(airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) { airingAt episode media { ${CARD} } } } }`, { start, end, page }, true, false, net);
+    for (const a of d.Page?.airingSchedules ?? []) { if (!a || typeof a.airingAt !== 'number') continue; const m = toAnimes([a.media])[0]; if (m) out.push({ airingAt: a.airingAt, episode: a.episode, media: m }); }
+    if (!d.Page?.pageInfo?.hasNextPage) break;
   }
   return out;
 }
 /** The user's own list (one status, or everything that is current/repeating when none is given). */
-export async function myList(status?: AlStatus): Promise<Anime[]> {
+export async function myList(status?: AlStatus, net?: Net): Promise<Anime[]> {
   const u = user(); if (!u) return [];
-  const d = await gql<{ MediaListCollection: { lists: { entries: { media: Raw; status: AlStatus; progress: number; score: number; id: number; startedAt?: AlDate; completedAt?: AlDate }[] }[] } }>(`query ($user: Int, $status: [MediaListStatus]) { MediaListCollection(userId: $user, type: ANIME, status_in: $status, sort: [UPDATED_TIME_DESC]) { lists { entries { id status progress score startedAt { year month day } completedAt { year month day } media { ${CARD} } } } } }`, { user: u.id, status: status ? [status] : ['CURRENT', 'REPEATING'] });
+  const d = await gql<{ MediaListCollection: { lists: { entries: { media: Raw; status: AlStatus; progress: number; score: number; id: number; startedAt?: AlDate; completedAt?: AlDate }[] }[] } }>(`query ($user: Int, $status: [MediaListStatus]) { MediaListCollection(userId: $user, type: ANIME, status_in: $status, sort: [UPDATED_TIME_DESC]) { lists { entries { id status progress score startedAt { year month day } completedAt { year month day } media { ${CARD} } } } } }`, { user: u.id, status: status ? [status] : ['CURRENT', 'REPEATING'] }, true, false, net);
   const out: Anime[] = [];
-  for (const l of d.MediaListCollection.lists) for (const e of l.entries) { const a = toAnime(e.media); a.entry = { id: e.id, status: e.status, progress: e.progress, score: e.score, startedAt: e.startedAt, completedAt: e.completedAt }; out.push(a); }
+  for (const l of d.MediaListCollection?.lists ?? []) for (const e of l?.entries ?? []) { const a = toAnimes([e?.media])[0]; if (!a) continue; a.entry = { id: e.id, status: e.status, progress: e.progress, score: e.score, startedAt: e.startedAt, completedAt: e.completedAt }; out.push(a); }
   return out;
 }
 
@@ -298,7 +349,7 @@ export async function idsOf(anilistId: number): Promise<IdMap> {
 const num = (v: unknown): number | undefined => (typeof v === 'number' && v > 0 ? v : undefined);
 export interface EpisodeArt { image?: string; title?: string; overview?: string; runtime?: number }
 const epArt = new Map<number, Promise<Map<number, EpisodeArt>>>();
-/** Each episode's picture, title and summary from ani.zip (TheTVDB's, through ani.zip — Seanime's and Hayase's source),
+/** Each episode's picture, title and summary from ani.zip (TheTVDB's, through ani.zip — the same source the episode pages use),
  *  asked for once a session; an empty map when it has none. */
 export function episodeArt(anilistId: number): Promise<Map<number, EpisodeArt>> {
   let p = epArt.get(anilistId);
@@ -320,7 +371,7 @@ export interface DiscoverData { trending: Anime[]; airing: (Anime & { sequel?: b
 let discoverCache: { at: number; key: string; v: DiscoverData } | null = null;
 /** The Discover page's rows in one request: trending (with banners for the hero), airing now, this season, the best
  *  rated, the popular films. Kept ten minutes. */
-export async function discover(adult = false): Promise<DiscoverData> {
+export async function discover(adult = false, net?: Net): Promise<DiscoverData> {
   const { season, year } = seasonOf(); const key = `${season}${year}${adult}`;
   if (discoverCache && discoverCache.key === key && Date.now() - discoverCache.at < 10 * 60000) return discoverCache.v;
   const A = adult ? '' : ', isAdult: false';
@@ -329,22 +380,22 @@ export async function discover(adult = false): Promise<DiscoverData> {
     airing: Page(perPage: 24) { media(type: ANIME, status: RELEASING, sort: [POPULARITY_DESC]${A}) { ${CARD} prequels: relations { edges { relationType(version: 2) } } } }
     season: Page(perPage: 24) { media(type: ANIME, season: $season, seasonYear: $year, sort: [POPULARITY_DESC]${A}) { ${CARD} } }
     top: Page(perPage: 20) { media(type: ANIME, sort: [SCORE_DESC], popularity_greater: 20000${A}) { ${CARD} } }
-    movies: Page(perPage: 20) { media(type: ANIME, format: MOVIE, sort: [POPULARITY_DESC]${A}) { ${CARD} } } }`, { season, year });
+    movies: Page(perPage: 20) { media(type: ANIME, format: MOVIE, sort: [POPULARITY_DESC]${A}) { ${CARD} } } }`, { season, year }, true, false, net);
   const v: DiscoverData = {
-    trending: d.trending.media.map(toAnime), season: d.season.media.map(toAnime), top: d.top.media.map(toAnime), movies: d.movies.media.map(toAnime),
-    airing: d.airing.media.map((m) => ({ ...toAnime(m), sequel: !!m.prequels?.edges.some((e) => e.relationType === 'PREQUEL') })),
+    trending: toAnimes(d.trending?.media), season: toAnimes(d.season?.media), top: toAnimes(d.top?.media), movies: toAnimes(d.movies?.media),
+    airing: toAnimes(d.airing?.media, (m) => ({ ...toAnime(m), sequel: !!(m as { prequels?: { edges: { relationType: string }[] } }).prequels?.edges?.some((e) => e?.relationType === 'PREQUEL') })),
   };
   discoverCache = { at: Date.now(), key, v }; return v;
 }
 export interface Art { image?: string; color?: string }
 const ART_KEY = 'kt.anime.art';
 /** A picture for each tile (the best known show of a genre, a season, a decade): asked for in one request, kept three days. */
-export async function tileArt(want: { key: string; filter: string }[]): Promise<Record<string, Art>> {
+export async function tileArt(want: { key: string; filter: string }[], net?: Net): Promise<Record<string, Art>> {
   let kept: { at: number; v: Record<string, Art> } = { at: 0, v: {} }; try { kept = JSON.parse(localStorage.getItem(ART_KEY) ?? 'null') ?? kept; } catch { /* first time */ }
   const fresh = Date.now() - kept.at < 3 * 86400e3; const missing = want.filter((w) => !fresh || !(w.key in kept.v)); if (!missing.length) return kept.v;
   const alias = (k: string) => 'a' + k.replace(/[^a-zA-Z0-9]/g, '_');
   const q = `query { ${missing.map((w) => `${alias(w.key)}: Page(perPage: 1) { media(type: ANIME, sort: [POPULARITY_DESC], isAdult: false, ${w.filter}) { bannerImage coverImage { extraLarge color } } }`).join(' ')} }`;
-  const d = await gql<Record<string, { media: { bannerImage?: string; coverImage?: { extraLarge?: string; color?: string } }[] }>>(q, {}, false);
+  const d = await gql<Record<string, { media: { bannerImage?: string; coverImage?: { extraLarge?: string; color?: string } }[] }>>(q, {}, false, false, net);
   const v = fresh ? { ...kept.v } : {};
   for (const w of missing) { const m = d[alias(w.key)]?.media?.[0]; v[w.key] = { image: m?.bannerImage ?? m?.coverImage?.extraLarge, color: calmTint(m?.coverImage?.color) }; }
   try { localStorage.setItem(ART_KEY, JSON.stringify({ at: fresh ? kept.at : Date.now(), v })); } catch { /* full */ }
@@ -379,9 +430,9 @@ export async function searchStudios(q: string): Promise<Studio[]> {
 const FAMOUS = ['MAPPA', 'ufotable', 'Kyoto Animation', 'Madhouse', 'Production I.G', 'Bones', 'Wit Studio', 'A-1 Pictures', 'CloverWorks', 'Trigger', 'Shaft', 'Pierrot', 'Toei Animation', 'Sunrise', 'David Production', 'Science SARU', 'P.A. Works', 'J.C.Staff', 'Studio Ghibli', 'Kinema Citrus'];
 const STUDIOS_KEY = 'kt.anime.studios';
 /** The best known studios, each with its id and its best known show's picture (asked once, kept a week). */
-export async function famousStudios(): Promise<Studio[]> {
+export async function famousStudios(net?: Net): Promise<Studio[]> {
   try { const k = JSON.parse(localStorage.getItem(STUDIOS_KEY) ?? 'null') as { at: number; v: Studio[] } | null; if (k && Date.now() - k.at < 7 * 86400e3 && k.v.length) return k.v; } catch { /* first time */ }
-  const d = await gql<Record<string, RawStudio | null>>(`query { ${FAMOUS.map((n, i) => `s${i}: Studio(search: ${JSON.stringify(n)}) { ${STUDIO_FIELDS} }`).join(' ')} }`, {}, false);
+  const d = await gql<Record<string, RawStudio | null>>(`query { ${FAMOUS.map((n, i) => `s${i}: Studio(search: ${JSON.stringify(n)}) { ${STUDIO_FIELDS} }`).join(' ')} }`, {}, false, false, net);
   const seen = new Set<number>(); const v: Studio[] = [];
   FAMOUS.forEach((_, i) => { const s = d[`s${i}`]; if (s && !seen.has(s.id)) { seen.add(s.id); v.push(toStudio(s)); } });
   try { localStorage.setItem(STUDIOS_KEY, JSON.stringify({ at: Date.now(), v })); } catch { /* full */ }
@@ -398,7 +449,8 @@ function studioIds(id: number): Promise<number[]> {
   return p;
 }
 /** A studio's works: the page asked for, in the order chosen, its own productions only or with the ones it helped on. */
-export async function studioWorks(id: number, o: { page?: number; sort?: string; mainOnly?: boolean } = {}): Promise<{ studio: Studio; media: Anime[]; hasNext: boolean; total?: number }> {
-  const d = await gql<{ Studio: RawStudio & { works: { pageInfo: { hasNextPage: boolean; total?: number }; nodes: Raw[] } } }>(`query ($id: Int, $page: Int, $sort: [MediaSort], $main: Boolean) { Studio(id: $id) { ${STUDIO_FIELDS} works: media(page: $page, perPage: 30, sort: $sort, isMain: $main) { pageInfo { hasNextPage total } nodes { ${CARD} } } } }`, { id, page: o.page ?? 1, sort: [o.sort ?? 'POPULARITY_DESC'], main: o.mainOnly ? true : undefined }, true);
-  const s = d.Studio; return { studio: toStudio(s), media: s.works.nodes.filter((m) => m.siteUrl).map(toAnime), hasNext: s.works.pageInfo.hasNextPage, total: s.works.pageInfo.total };
+export async function studioWorks(id: number, o: { page?: number; sort?: string; mainOnly?: boolean; net?: Net } = {}): Promise<{ studio: Studio; media: Anime[]; hasNext: boolean; total?: number }> {
+  const d = await gql<{ Studio: RawStudio & { works: { pageInfo: { hasNextPage: boolean; total?: number }; nodes: Raw[] } } }>(`query ($id: Int, $page: Int, $sort: [MediaSort], $main: Boolean) { Studio(id: $id) { ${STUDIO_FIELDS} works: media(page: $page, perPage: 30, sort: $sort, isMain: $main) { pageInfo { hasNextPage total } nodes { ${CARD} } } } }`, { id, page: o.page ?? 1, sort: [o.sort ?? 'POPULARITY_DESC'], main: o.mainOnly ? true : undefined }, true, false, o.net);
+  const s = d.Studio; if (!s || typeof s.id !== 'number') throw fault('bad', 'AniList: no studio');
+  return { studio: toStudio(s), media: toAnimes(s.works?.nodes?.filter((m) => m?.siteUrl)), hasNext: !!s.works?.pageInfo?.hasNextPage, total: s.works?.pageInfo?.total };
 }

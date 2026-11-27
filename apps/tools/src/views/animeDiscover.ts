@@ -11,6 +11,8 @@ import type { Anime } from '../anilist';
 import { hero, rail, poster, tile, continueCard, hueOf } from '../ui/discover';
 import { titleOf, fmtFormat, fmtUntil, seasonName, presetSearch, type AnimeTab } from './anime';
 import { coverOf, coverFor, customCover, coversReady } from '../anime/covers';
+import { cached, keep } from '../anime/listCache';
+import { notice } from './animeNet';
 
 const GENRES = ['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Romance', 'Slice of Life', 'Sci-Fi', 'Mystery', 'Horror', 'Psychological', 'Thriller', 'Sports', 'Supernatural', 'Mecha', 'Music', 'Mahou Shoujo', 'Ecchi'];
 const DECADES = [2020, 2010, 2000, 1990, 1980, 1970, 1960];
@@ -28,7 +30,10 @@ function airingBadge(a: Anime & { sequel?: boolean }): { text: string; kind: 'ne
   return null;
 }
 
-export function animeDiscover(body: HTMLElement, o: { live: () => boolean; goTab: (tab: AnimeTab) => void }): void {
+/** A row's items made into cards: one that cannot be made (an odd show) is left out, the row stays. */
+const each = <X, Y>(xs: X[], f: (x: X, i: number) => Y): Y[] => xs.flatMap((x, i) => { try { return [f(x, i)]; } catch { return []; } });
+
+export function animeDiscover(body: HTMLElement, o: { live: () => boolean; signal: AbortSignal; retry: () => void; goTab: (tab: AnimeTab) => void }): void {
   const adult = getSettings().animeAdult;
   const heroBox = h('div', { class: 'dc-hero-box' }, hero([]));
   const cont = rail(t('continueWatching'), 'history', { kind: 'cont', count: 3 }); cont.el.hidden = true;
@@ -45,21 +50,41 @@ export function animeDiscover(body: HTMLElement, o: { live: () => boolean; goTab
   body.classList.add('dc-page');
 
   // ---- the rows from AniList, in one request
-  void al.discover(adult).then((d) => {
-    if (!o.live()) return;
+  const fillFrom = (d: al.DiscoverData) => {
     const heroes = d.trending.filter((a) => a.banner).slice(0, 8);
-    heroBox.replaceChildren(hero(heroes.map((a) => ({
+    heroBox.replaceChildren(hero(each(heroes, (a) => ({
       image: a.banner, title: titleOf(a), color: a.color, onClick: open(a),
       facts: [a.format ? fmtFormat(a.format) : '', ...a.genres.slice(0, 2).map(genreName), a.duration ? countMinutes(a.duration) : '', yearsOf(a)].filter(Boolean),
       chips: [a.status === 'RELEASING' ? t('dcOngoing') : a.status === 'FINISHED' ? t('dcFinished') : '', a.score ? `${localDigits(a.score)}%` : '', a.studio ?? ''].filter(Boolean),
       text: a.description?.replace(/\s+/g, ' ').slice(0, 260),
     }))));
-    trending.fill(d.trending.map((a, i) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, badge: t('dcRank', { n: localDigits(i + 1) }), badgeKind: i < 3 ? 'rank' : 'plain', overlay: overlayOf(a), onClick: open(a) })));
-    airing.fill(d.airing.map((a) => { const b = airingBadge(a); return poster({ image: coverOf(a), title: titleOf(a), sub: a.nextAiring ? t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - Date.now() / 1000) }) : yearsOf(a), color: a.color, badge: b?.text, badgeKind: b?.kind, overlay: overlayOf(a), onClick: open(a) }); }));
-    season.fill(d.season.map((a) => poster({ image: coverOf(a), title: titleOf(a), sub: a.episodes ? countEpisodes(a.episodes) : yearsOf(a), color: a.color, overlay: overlayOf(a), onClick: open(a) })));
-    top.fill(d.top.map((a, i) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, badge: `#${localDigits(i + 1)}`, badgeKind: 'plain', overlay: overlayOf(a), onClick: open(a) })));
-    movies.fill(d.movies.map((a) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, overlay: score10(a), onClick: open(a) })));
-  }).catch((e) => { if (!o.live()) return; const m = String((e as Error)?.message ?? e); heroBox.replaceChildren(); for (const r of [trending, airing, season, top, movies]) r.fail(m); });
+    trending.fill(each(d.trending, (a, i) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, badge: t('dcRank', { n: localDigits(i + 1) }), badgeKind: i < 3 ? 'rank' : 'plain', overlay: overlayOf(a), onClick: open(a) })));
+    airing.fill(each(d.airing, (a) => { const b = airingBadge(a); return poster({ image: coverOf(a), title: titleOf(a), sub: a.nextAiring ? t('animeNextEp', { n: a.nextAiring.episode, t: fmtUntil(a.nextAiring.airingAt - Date.now() / 1000) }) : yearsOf(a), color: a.color, badge: b?.text, badgeKind: b?.kind, overlay: overlayOf(a), onClick: open(a) }); }));
+    season.fill(each(d.season, (a) => poster({ image: coverOf(a), title: titleOf(a), sub: a.episodes ? countEpisodes(a.episodes) : yearsOf(a), color: a.color, overlay: overlayOf(a), onClick: open(a) })));
+    top.fill(each(d.top, (a, i) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, badge: `#${localDigits(i + 1)}`, badgeKind: 'plain', overlay: overlayOf(a), onClick: open(a) })));
+    movies.fill(each(d.movies, (a) => poster({ image: coverOf(a), title: titleOf(a), sub: yearsOf(a), color: a.color, overlay: score10(a), onClick: open(a) })));
+  };
+  // (The page's own request: a time budget, the wait the catalogue asked for shown with Cancel, the last good page shown at once
+  // and refreshed, a failure said in words with «Try again». The rows below it that are only pictures fail quietly.)
+  const note = notice(); body.prepend(note.el);
+  const key = `discover:${adult ? 1 : 0}`; const had = cached<al.DiscoverData>(key); let painted = false;
+  if (had) { try { fillFrom(had.v); painted = true; note.refreshing(); } catch { /* asked for below */ } }
+  const run = () => {
+    const ctl = new AbortController(); let user = false; let ended = false;
+    const slow = window.setTimeout(() => { if (!ended && o.live() && !painted) note.slow(); }, 6000);
+    const stop = () => { ended = true; window.clearTimeout(slow); o.signal.removeEventListener('abort', onAbort); };
+    const onAbort = () => ctl.abort(); o.signal.addEventListener('abort', onAbort);
+    al.discover(adult, { signal: ctl.signal, onWait: (n) => { if (!ended && o.live()) { if (n > 0) note.wait(n, () => { user = true; ctl.abort(); }); else if (painted) note.refreshing(); else note.clear(); } } }).then((d) => {
+      stop(); if (!o.live()) return;
+      try { fillFrom(d); painted = true; } catch (e) { note.plain(e, o.retry); return; }
+      keep(key, d); note.clear();
+    }).catch((e) => {
+      stop(); if (!o.live() || (al.faultKind(e) === 'cancelled' && !user)) return;
+      const err = user ? new Error(t('animeNetCancelled')) : e;
+      if (painted) note.failed(err, false, run); else { heroBox.replaceChildren(); for (const r of [trending, airing, season, top, movies]) r.el.hidden = true; note.plain(err, o.retry); }
+    });
+  };
+  run();
 
   // ---- continue watching: what the player left half-way, then the list's next episodes
   void (async () => {
@@ -69,7 +94,7 @@ export function animeDiscover(body: HTMLElement, o: { live: () => boolean; goTab
     for (const m of half) { if (had.has(m.anilistId!)) continue; had.add(m.anilistId!); cards.push(continueCard({ image: coverFor(m.anilistId, m.cover), title: m.show ?? '', line: m.episode ? t('episodeN', { n: m.episode }) : undefined, chip: t('timeLeft', { t: countMinutes(Math.max(1, Math.round((m.duration - m.pos) / 60))) }), progress: m.pos / m.duration, onClick: () => navigate(`/anime/${m.anilistId}`) })); }
     if (cards.length && o.live()) cont.fill(cards);
     if (!al.linked()) return;
-    const list = await al.myList().catch(() => [] as Anime[]); if (!o.live()) return;
+    const list = await al.myList(undefined, { signal: o.signal }).catch(() => [] as Anime[]); if (!o.live()) return;
     const now = Date.now() / 1000;
     for (const a of list) {
       if (had.has(a.id) || cards.length >= 16) continue; const e = a.entry; if (!e) continue; const next = e.progress + 1;
@@ -83,7 +108,7 @@ export function animeDiscover(body: HTMLElement, o: { live: () => boolean; goTab
   })();
 
   // ---- the studios, each with the picture of its best known show
-  void al.famousStudios().then((ss) => { if (o.live()) studios.fill(ss.map((s) => tile({ image: s.image, label: s.name, color: s.color ?? hueOf(s.name), onClick: () => navigate(studioPath(s.id, s.name)) }, true))); }).catch(() => { if (o.live()) studios.el.hidden = true; });
+  void al.famousStudios({ signal: o.signal }).then((ss) => { if (o.live()) studios.fill(ss.map((s) => tile({ image: s.image, label: s.name, color: s.color ?? hueOf(s.name), onClick: () => navigate(studioPath(s.id, s.name)) }, true))); }).catch(() => { if (o.live()) studios.el.hidden = true; });
 
   // ---- genres, seasons, decades: picture tiles that open the search on them
   const now = al.seasonOf(); const lastFour = [-3, -2, -1, 0].map((k) => al.seasonShift(now, k)).reverse();
@@ -98,7 +123,7 @@ export function animeDiscover(body: HTMLElement, o: { live: () => boolean; goTab
     seasons.fill(lastFour.map((s) => tile({ image: art[`s:${s.season}${s.year}`]?.image, label: seasonName(s.season), sub: localDigits(s.year), color: hueOf(s.season), onClick: () => { presetSearch({ season: s.season, year: s.year }); o.goTab('search'); } })));
     decades.fill(DECADES.map((y) => tile({ image: art[`d:${y}`]?.image, label: t('dcDecade', { y: localDigits(y), z: localDigits(y + 9) }), color: hueOf(String(y)), onClick: () => { presetSearch({ from: y, to: y + 9 }); o.goTab('search'); } })));
   };
-  draw({}); void al.tileArt(want).then(draw).catch(() => undefined);
+  draw({}); void al.tileArt(want, { signal: o.signal }).then(draw).catch(() => undefined);
 }
 
 /** A genre's name in the app's language (AniList's own names otherwise). */

@@ -742,3 +742,17 @@ html.pc .dl-float { bottom: 20px; inset-inline: auto 24px; width: 380px; margin:
 @media (max-width: 340px) { .kt-top { gap: 2px; padding-inline: 6px; } .kt-top .kt-title { min-width: 48px; } }
 /* A short screen (a phone turned sideways): the bars lean closer so the picture keeps its room */
 @media (max-height: 420px) { .kt-top { padding-top: calc(4px + var(--safe-top, 0px)); padding-bottom: 0; } .kt-bottom { gap: 0; padding-bottom: calc(6px + var(--safe-bottom, 0px)); } html.pc .kt-top { padding-bottom: 0; } html.pc .kt-bottom { padding-top: 0; } .kt-play { width: 44px; height: 44px; } }
+
+/* The catalogue slow, busy or away: the strip above a list (refreshing / the wait asked for / the failure kept beside what is shown) and the full failure. */
+.net-note { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 12px; border-radius: var(--sh-lg); background: var(--md-secondary-container); color: var(--md-on-secondary-container); font-size: 14px; line-height: 1.45; min-height: 48px; }
+.net-note[hidden] { display: none; }
+.net-note.bad { background: var(--md-error-container); color: var(--md-on-error-container); }
+.net-note > svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.net-note .net-text { flex: 1 1 180px; min-width: 0; }
+.net-note .mini-spinner { width: 18px; height: 18px; flex: none; border-radius: 50%; border: 2.5px solid color-mix(in srgb, currentColor 25%, transparent); border-top-color: currentColor; animation: net-spin .9s linear infinite; }
+@keyframes net-spin { to { transform: rotate(360deg); } }
+.net-btn { min-width: 128px; flex: none; }
+.net-fail { margin-top: 4vh; }
+.net-fail > svg { width: 40px; height: 40px; fill: none; stroke: var(--md-on-surface-variant); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.net-box { min-height: 40px; }
+@media (prefers-reduced-motion: reduce) { .net-note .mini-spinner { animation-duration: 3s; } }

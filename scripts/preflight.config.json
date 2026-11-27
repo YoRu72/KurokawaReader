@@ -31,7 +31,8 @@
       "filesclip.cjs": 480,
       "filestauri.cjs": 480,
       "perfviews.cjs": 420,
-      "pickwalk.cjs": 644
+      "pickwalk.cjs": 644,
+      "animewalk.cjs": 904
     },
     "budgets": {
       "perfstart.cjs": {

@@ -22,7 +22,7 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   }, lang);
   await p.goto(`http://127.0.0.1:${port}/#/settings`); await p.waitForSelector('#anilist');
   await p.evaluate(() => { const c = document.querySelector('#anilist'); if (c?.classList.contains('collapsed')) c.querySelector('h3')?.click(); });
-  // One tap, as in Hayase: AniList's sign-in and «Authorize» in the app's window with the app's own client.
+  // One tap: AniList's sign-in and «Authorize» in the app's window with the app's own client.
   await p.click('#anilist .btn.primary'); await p.waitForSelector('#anilist .track-user', { timeout: 8000 });
   const first = await p.evaluate(() => window.__opened[0]); console.log('one tap:', first);
   check('one tap: signed in with the app\'s client, linked', /client_id=55772/.test(first) && /response_type=token/.test(first) && /Keyaru/.test(await p.$eval('#anilist .track-user', (e) => e.textContent)));

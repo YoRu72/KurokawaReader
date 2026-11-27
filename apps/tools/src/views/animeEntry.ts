@@ -15,6 +15,7 @@ import { parseFilename, matchesEpisode } from '../anime/anitomy';
 import { ruleOf, saveRule, dropRule, downloadRange, downloadedEpisodes, fillersOf, checkRules, startAuto, type AutoRule } from '../anime/auto';
 import type { Task } from '../engine/types';
 import { coverOf } from '../anime/covers';
+import { netLoad } from './animeNet';
 import { reviewIcon } from '../anime/reviewIcon';
 import type { ShowNote } from '../anime/notes';
 
@@ -22,6 +23,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
   const body = h('div', { class: 'body anime-entry' }, h('div', { class: 'center' }, h('div', { class: 'spinner' })));
   const title = h('div', { class: 'title' }, h('span', null, ''));
   const root = h('div', { class: 'view anime-entry-view' }, h('header', { class: 'topbar' }, iconButton('back', t('back'), () => back('/anime')), title, h('div', { class: 'topbar-actions' })), body) as HTMLElement & { dispose?: () => void };
+  const ctl = new AbortController();
   let a: Anime | null = null; let gone = false; let range = -1; let have = new Map<number, Task>(); let disk = new Map<number, { path: string; name: string }>(); let fillers = new Set<number>(); let streams = 0; let art = new Map<number, al.EpisodeArt>();
   // (The user's notes on this show — loaded with its page, kept on the device — and the module that draws them.)
   let notes: ShowNote[] = []; let NV: typeof import('./animeNotes') | null = null;
@@ -80,7 +82,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
       // (The streaming site's picture and title first, else ani.zip's — TheTVDB's — for the episodes the sites lack.)
       const st = st0 || ar ? { title: st0?.title || ar?.title, thumbnail: st0?.thumbnail || ar?.image } : undefined;
       const got = have.get(n); const filler = fillers.has(n); const noted = notes.some((x) => !x.review && x.ep === n);
-      // (Hayase's «hide spoilers»: past the next episode, no title and no picture.)
+      // («Hide spoilers»: past the next episode, no title and no picture.)
       const spoil = !!s.animeHideSpoilers && n > (e?.progress ?? 0) + 1;
       const epTitle = (!spoil && st?.title?.replace(/^Episode\s*\d+\s*[-–:]?\s*/i, '')) || t('episodeN', { n }); const onDisk = !got ? disk.get(n) : undefined;
       const rowEl = h('div', { class: 'ep-row' + (seen ? ' seen' : '') + (aired ? '' : ' future') + (got ? ' have' : ''), dataset: { ep: String(n) }, role: aired ? 'button' : undefined, tabindex: aired ? '0' : undefined,
@@ -93,7 +95,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
         aired && streams && !(got && got.state === 'done') ? iconButton('play', t('streamWatch'), () => void import('./animeStream').then((m) => m.streamSheet(a!, n))) : null,
         aired ? (() => { const b = iconButton('more', t('reviewThisEp'), () => openNote(n)); b.replaceChildren(reviewIcon()); b.classList.add('ep-note-btn'); if (noted) { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); } return b; })() : null,
         al.linked() ? iconButton(seen ? 'check' : 'circle', seen ? t('animeSeen') : t('animeMarkSeen'), () => (seen && e ? unmark(e, n) : void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: seen ? n - 1 : n, ...(n === a!.episodes && !seen ? { status: 'COMPLETED', completedAt: al.today() } : {}) }))) : null);
-      // (Held: the episode's options — Hayase's — among them deleting its download.)
+      // (Held: the episode's options, among them deleting its download.)
       if (aired) onLongPress(rowEl, (ev) => episodeMenu(a!, n, epTitle, got, seen, al.linked() ? (to) => void saveEntry({ ...(e ?? { status: 'CURRENT', progress: 0, score: 0, startedAt: al.today() }), progress: to }) : null, () => draw(), ev, noted, () => openNote(n)));
       eps.push(rowEl);
     }
@@ -131,7 +133,8 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     sh.actions.append(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); void saveEntry({ ...a!.entry!, score: Number(range.value) }); } }, t('save')));
   };
   void al.episodeArt(id).then((x) => { art = x; if (x.size && a && !gone) draw(); });
-  void al.media(id).then((m) => { if (gone) return; a = m; draw(); void Promise.all([import('./animeNotes'), import('../anime/notes').then((N) => N.notesOf(id))]).then(([v, x]) => { NV = v; notes = x; if (gone) return; draw(); focusEp(); const ask = pending('kt.anime.reviewAsk'); if (ask && Date.now() - (ask.at ?? 0) < 10 * 60e3) askReview(ask.ep); }).catch(() => undefined); void import('../anime/library').then((l) => l.filesFor(m.id)).then((f) => { disk = f; if (f.size && !gone) draw(); }).catch(() => undefined); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); }).catch((e) => body.replaceChildren(h('p', { class: 'empty small' }, String((e as Error).message ?? e))));
+  // (The show asked for with a time budget; a slow or failed answer is said, with «Try again», in place of the page.)
+  netLoad<Anime>({ host: body, signal: ctl.signal, live: () => !gone, ask: (net) => al.media(id, net), show: (m) => { if (gone) return; a = m; draw(); void Promise.all([import('./animeNotes'), import('../anime/notes').then((N) => N.notesOf(id))]).then(([v, x]) => { NV = v; notes = x; if (gone) return; draw(); focusEp(); const ask = pending('kt.anime.reviewAsk'); if (ask && Date.now() - (ask.at ?? 0) < 10 * 60e3) askReview(ask.ep); }).catch(() => undefined); void import('../anime/library').then((l) => l.filesFor(m.id)).then((f) => { disk = f; if (f.size && !gone) draw(); }).catch(() => undefined); void downloadedEpisodes(m.id).then((x) => { have = x; if (!gone) draw(); }); void fillersOf(m).then((x) => { fillers = x; if (x.size && !gone) draw(); }).catch(() => undefined); void import('../anime/stream').then((st) => st.streamProviders()).then((x) => { streams = x.length; if (streams && !gone) draw(); }).catch(() => undefined); } });
   // Downloads of this show followed as they go: each episode's bar and percentage moved in place; the page
   // redrawn when one is added, finishes or fails.
   const offTasks = getEngine().onChange((ts) => {
@@ -148,7 +151,7 @@ export function animeEntryView(id: number): HTMLElement & { dispose?: () => void
     if (redraw) draw();
   });
   const tick = tickCountdowns(body);
-  root.dispose = () => { gone = true; window.clearInterval(tick); offTasks(); window.removeEventListener('kt-anime-watched', onWatched); dropBar?.(); };
+  root.dispose = () => { gone = true; ctl.abort(); window.clearInterval(tick); offTasks(); window.removeEventListener('kt-anime-watched', onWatched); dropBar?.(); };
   return root;
 }
 /** A yes/no in the app's own sheet (a browser confirm() looks foreign and blocks). */
@@ -218,7 +221,7 @@ export async function torrentSheet(a: Anime, episode: number, mode: 'download' |
       }
       const tk = await getEngine().add({ source, name: r.url ? r.title : undefined, sequential: !!r.url, files, meta });
       void import('../anime/watch').then((w) => w.rememberPick(a.id, r));
-      // (Downloaded in the background, as in Hayase: the show's page stays; «Show» goes to the download.)
+      // (Downloaded in the background: the show's page stays; «Show» goes to the download.)
       void import('../ui/dlFloat').then((m) => m.downloadStarted(tk, r.title)); sh.close();
     } catch (e) { toast(t('taskFailed', { error: String((e as Error).message ?? e) }), 'error', 5000); }
   };
@@ -241,7 +244,7 @@ export async function torrentSheet(a: Anime, episode: number, mode: 'download' |
   await run('');
 }
 
-/** Episodes from–to in one go, with the show's choices (Senpwai's batch download); optionally kept as a rule. */
+/** Episodes from–to in one go, with the show's choices (a batch download); optionally kept as a rule. */
 function choiceFields(c: Pick<AutoRule, 'resolution' | 'group' | 'dub' | 'require' | 'avoid'>): HTMLElement[] {
   const res = h('div', { class: 'chip-row wrap' }); const drawRes = () => res.replaceChildren(...['', '2160', '1080', '720', '480'].map((q) => h('button', { type: 'button', class: 'chip small' + (c.resolution === q ? ' on' : ''), onclick: () => { c.resolution = q; drawRes(); } }, q ? `${q}p` : t('allQualities')))); drawRes();
   const dub = h('div', { class: 'chip-row wrap' }); const drawDub = () => dub.replaceChildren(...([['any', t('audioAny')], ['sub', t('audioSub')], ['dub', t('audioDub')]] as const).map(([k, l]) => h('button', { type: 'button', class: 'chip small' + (c.dub === k ? ' on' : ''), onclick: () => { c.dub = k; drawDub(); } }, l))); drawDub();
@@ -272,7 +275,7 @@ function rangeSheet(a: Anime, from: number, to: number): void {
     toast(t('autoRangeDone', { n: countEpisodes(n) })); sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn primary', onclick: () => { sh.close(); } }, t('done')));
   });
 }
-/** Seanime's Auto Downloader for one show: new episodes fetched as they air, with these choices. */
+/** The auto downloader for one show: new episodes fetched as they air, with these choices. */
 function ruleSheet(a: Anime, next: number, changed: () => void): void {
   const sh = openSheet(`${titleOf(a)} · ${t('autoTitle')}`, t('close'));
   const r = ruleOf(a.id) ?? { anilistId: a.id, title: titleOf(a), cover: a.cover, resolution: getSettings().animeQuality, group: '', dub: 'any', require: '', avoid: '', next, enabled: true } as AutoRule;
@@ -339,7 +342,7 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
   })();
 }
 
-/** Senpwai's review: every episode's pick shown before anything is added — changeable from the releases that fit —
+/** The review: every episode's pick shown before anything is added — changeable from the releases that fit —
  *  and, when every pick is clear, added by itself after a short countdown (which can be stopped). */
 async function reviewRange(sh: ReturnType<typeof openSheet>, log: HTMLElement, a: Anime, o: Parameters<typeof downloadRange>[1], stopped: () => boolean): Promise<void> {
   const { planRange, addFor } = await import('../anime/auto');
@@ -366,7 +369,7 @@ async function reviewRange(sh: ReturnType<typeof openSheet>, log: HTMLElement, a
   add.addEventListener('click', () => void addAll());
   sh.actions.replaceChildren(h('button', { type: 'button', class: 'btn tonal', onclick: () => { window.clearInterval(timer); sh.close(); } }, t('cancel')), add);
   if (!picks().length) { add.disabled = true; return; }
-  // Every pick clear: added after ten seconds unless stopped or changed (Senpwai's countdown).
+  // Every pick clear: added after ten seconds unless stopped or changed (a countdown).
   if (plan.every((x) => x.state !== 'pick' || x.clear)) {
     let left = 10; const note = h('p', { class: 'hint review-count' }); log.prepend(note);
     const tick = () => { note.textContent = t('reviewCountdown', { n: localDigits(left) }); if (left-- <= 0) void addAll(); };
