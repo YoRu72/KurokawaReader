@@ -22,11 +22,12 @@ const serve = (root) => http.createServer((req, res) => { let p = decodeURICompo
   check('Watched episodes card with the Anime add-on', await p.$eval('#episodes', (e) => /After watching/.test(e.textContent) && /Delete the watched ones/.test(e.textContent)).catch(() => false));
   check('the Anime card no longer repeats the account', !(await p.$eval('#anime', (e) => /anilist\.co\/settings\/developer/.test(e.innerHTML))));
   await p.click('#sublangs h3').catch(() => undefined); await p.waitForTimeout(200);
-  const chips = () => p.$$eval('#sublangs .lang-chips .chip', (c) => c.map((x) => (x.classList.contains('on') ? '*' : '') + x.textContent.trim()));
-  const before = await chips(); console.log('languages:', before.join(' | ')); check('the languages in order, the first starred', before.length === 3 && before[0].startsWith('*'));
-  await p.click('#sublangs .lang-chips .chip >> nth=2'); await p.waitForTimeout(200);
-  const after = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).subLangs); console.log('after a tap:', after.join(','));
-  check('a tap puts a language first', after[0] === 'ja' && after.length === 3);
+  await p.waitForSelector('#sublangs .sub-lang-row', { timeout: 5000 }).catch(() => undefined);
+  const rows = () => p.$$eval('#sublangs .sub-lang-row', (c) => c.map((x) => x.dataset.lang));
+  const before = await rows(); console.log('languages:', before.join(' | ')); check('the languages in order, the first without «up»', before.length === 3 && !(await p.$('#sublangs .sub-lang-row:first-child .sub-lang-up')));
+  await p.click('#sublangs .sub-lang-row:nth-child(3) .sub-lang-up'); await p.click('#sublangs .sub-lang-row:nth-child(2) .sub-lang-up'); await p.waitForTimeout(200);
+  const after = await p.evaluate(() => JSON.parse(localStorage.getItem('kt.settings')).subLangs); console.log('after moving up twice:', after.join(','));
+  check('«up» moves a language first', after[0] === 'ja' && after.length === 3);
   await p.close();
   p = await open(['player']); check('with the Player add-on alone: subtitle languages, no AniList', !!(await p.$('#sublangs')) && !(await p.$('#anilist'))); await p.close();
   check('no page errors', !errors.length);

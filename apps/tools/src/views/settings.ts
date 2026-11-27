@@ -23,7 +23,6 @@ import { updateRows } from '../updates';
 import { latestRelease, suitableAsset, fetchAndInstall } from '../installer';
 
 /** A language's own name (the Subtitles add-on's list, else the browser's names). */
-const langName = (code: string): string => { try { return new Intl.DisplayNames([code], { type: 'language' }).of(code) ?? code; } catch { return code; } };
 const card = (id: string, title: string, ...kids: (Node | null)[]) => h('section', { class: 'card', id }, h('h3', null, title), ...kids);
 const row = (label: string, control: Node, hint?: string) => h('div', { class: 'row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), control);
 const toggle = (label: string, on: boolean, set: (v: boolean) => void, hint?: string) => { const c = h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }); return h('label', { class: 'row switch-row' }, h('span', null, label, hint ? h('small', { class: 'src' }, hint) : null), c); };
@@ -288,13 +287,11 @@ export function settingsView(section?: string): HTMLElement & { dispose?: () => 
     // (asked each time until a choice is remembered in the question itself).
     const streaming = s.addons.includes('anime') || s.addons.includes('tv') || s.addons.includes('player') ? card('streaming', t('streamSection'), h('p', { class: 'hint' }, t('streamKeepHint')),
       row(t('streamKeepRow'), pickButton(t('streamKeepRow'), [['ask', t('streamKeepAsk')], ['keep', t('keepEpisodeKeep')], ['delete', t('keepEpisodeDelete')]], s.streamKeep ?? 'ask', (v) => { updateSettings({ streamKeep: v as 'ask' | 'keep' | 'delete' }); rerender(); }, t('close')))) : null;
-    // Subtitle languages (with the Subtitles or Player add-on): the order they are wanted in — the first is
-    // the one searched first and the one the player shows by itself; a tap puts a language first.
+    // Subtitles (with the Subtitles or Player add-on): the one ordered list of languages (packs, search, auto-find
+    // and the video's own tracks read it), and «Find subtitles automatically» with its sources — ../subs/autoSettings.
     const subLangs = s.addons.includes('subtitles') || s.addons.includes('player') ? (() => {
-      const box = h('div', { class: 'chips lang-chips' });
-      const draw = () => { const l = getSettings().subLangs; box.replaceChildren(...l.map((code, i) => h('button', { type: 'button', class: 'chip small' + (i === 0 ? ' on' : ''), title: t('subLangFirst'), onclick: () => { updateSettings({ subLangs: [code, ...l.filter((x) => x !== code)] }); draw(); } }, i === 0 ? icon('star') : null, langName(code)))); };
-      draw();
-      return card('sublangs', t('subLangsTitle'), h('p', { class: 'hint' }, t('subLangsHint')), box, h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn tonal small', onclick: () => void import('./subs').then((m) => m.langSheet(() => draw())) }, icon('pen'), t('subLangsChange'))));
+      const box = h('div', { class: 'sub-settings' }); void import('../subs/autoSettings').then((m) => box.replaceChildren(...m.subtitleSettings()));
+      return card('sublangs', t('navSubs'), box);
     })() : null;
     const tvCard = s.addons.includes('tv') ? tvSettingsCard(rerender) : null;
     // Privacy (from the reader): DNS over HTTPS — sites blocked by the network's resolver reached through another —

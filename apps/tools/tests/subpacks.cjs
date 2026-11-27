@@ -89,14 +89,14 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   await subsSheet();
   const tracks = await p.$$eval('.sheet .dest-list .dest-row .name', (els) => els.map((e) => e.textContent));
   ok('the other variant of episode 4 is a track to switch to', tracks.some((x) => /\[H\]/.test(x)), tracks);
-  ok('the sheet tells the pack and this episode\'s file', /04/.test(await p.$eval('.sheet .pack-this', (e) => e.textContent)));
+  ok('the sheet tells this episode\'s pick and why', /04/.test(await p.$eval('.sheet .pack-picked', (e) => e.textContent)) && !!(await p.$('.sheet .pack-picked .pack-why')));
   // A wrong pick corrected by hand: every file listed, the chosen one loaded, the shift offered.
-  await p.click('.sheet .pack-choose'); await p.waitForSelector('.pack-files .pack-file');
-  const listed = await p.$$eval('.pack-files .pack-file .name', (els) => els.map((e) => e.textContent));
-  ok('«Choose another file» lists every subtitle in the pack, the matching ones first', listed.length === 4 && /04/.test(listed[0]) && /04/.test(listed[1]), listed);
-  await p.locator('.pack-files .pack-file', { hasText: '07' }).click();
+  await p.waitForSelector('.sheet .kt-pack .pack-files .pack-file');
+  const listed = await p.$$eval('.sheet .kt-pack .pack-files .pack-file .name', (els) => els.map((e) => e.textContent));
+  ok('the subtitles list holds every file of the pack, this episode\'s first', listed.length === 4 && /04/.test(listed[0]) && /04/.test(listed[1]), listed);
+  await p.locator('.sheet .kt-pack .pack-files .pack-file', { hasText: '07' }).click();
   ok('the file picked by hand loaded', await cue(/PACK EP7/));
-  ok('the shift it implies offered in a toast with an action', !!(await p.waitForSelector('.toast.with-action', { timeout: 3000 }).catch(() => null)));
+  ok('the shift it implies learned, said in a toast with an action', !!(await p.waitForSelector('.toast.with-action', { timeout: 3000 }).catch(() => null)));
   await closePlayer(); await play(4);
   ok('reopened: the hand-picked file kept for the episode', await cue(/PACK EP7/));
   await p.waitForTimeout(4500); ok('…and not replaced by the automatic search', /PACK EP7/.test(await subsNow()));
@@ -117,7 +117,7 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   await p.waitForTimeout(5500); ok('…and the online auto-search runs as usual', httpLog.slice(b5).some((u) => /anilist|cinemeta/.test(u)), httpLog.slice(b5));
   await closePlayer();
   // A ZIP pack.
-  await packSheet(); await p.evaluate(() => { window.__pickFile = '/sdcard/Subs/frieren.zip'; }); await p.click('.pack-sheet .pack-pick-archive');
+  await packSheet(); await p.click('.pack-sheet .pack-remove'); await p.waitForSelector('.pack-sheet .pack-pick-archive'); await p.evaluate(() => { window.__pickFile = '/sdcard/Subs/frieren.zip'; }); await p.click('.pack-sheet .pack-pick-archive');
   await p.waitForFunction(() => /S01E03/.test(document.querySelector('.pack-ep[data-ep="3"] .name')?.textContent || ''), null, { timeout: 8000 }).catch(() => undefined);
   ok('a zip as the pack: its episodes listed', /S01E03/.test(await p.$eval('.pack-ep[data-ep="3"] .name', (e) => e.textContent)));
   await clear(); await play(3); ok('zip: episode 3 loaded', await cue(/ZIP EP3/)); await closePlayer();
@@ -125,7 +125,7 @@ const SERIES = { id: 'tt1234567', imdb_id: 'tt1234567', type: 'series', name: 'N
   // Removed: nothing loaded.
   await packSheet(); await p.click('.pack-sheet .pack-remove'); await clear();
   await play(3); await p.waitForTimeout(2500); ok('the pack removed: nothing loaded from it', !/EP3/.test(await subsNow()));
-  await subsSheet(); ok('…and the player\'s sheet offers to assign one', !!(await p.$('.sheet .kt-pack .pack-pick-folder')) && !(await p.$('.sheet .pack-this')));
+  await subsSheet(); ok('…and the player\'s sheet offers to assign one', !!(await p.$('.sheet .kt-pack .pack-pick-folder')) && !(await p.$('.sheet .pack-picked')));
   await closePlayer();
   // The TV page has the control too.
   await p.goto(`http://127.0.0.1:${port}/#/tv/series/tt1234567`); await p.waitForSelector('.subs-btn', { timeout: 10000 }).catch(() => undefined);

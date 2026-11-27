@@ -341,7 +341,25 @@ function episodeSheet(a: Anime, n: number, title: string, thumb: string | undefi
     }
     row('magnet', t('epChoose'), t('epChooseHint'), () => void torrentSheet(a, n));
     if (note) row('note', noted ? t('noteEditEp') : t('noteWriteEp'), t('noteEpHint'), note);
+    void packSubRow(sh, `al:${a.id}`, undefined, n);
   })();
+}
+/** Another player is the default: the subtitle the show's pack gives this episode, shown before it plays, with
+ *  «Change»; after a hand-over of this episode, «Wrong subtitle?» too. */
+export async function packSubRow(sh: { body: HTMLElement; el: HTMLElement }, key: string, season: number | undefined, n: number): Promise<void> {
+  const { canPlayExternally } = await import('./player'); if (!canPlayExternally()) return;
+  const s = getSettings(); const outs = Object.values(s.extPlayers ?? {}).flatMap((x) => Object.values(x ?? {}));
+  if (s.playerWith === 'app' && !outs.some((v) => v && v !== 'app' && v !== 'ask')) return;
+  const PK = await import('../player/subPacks'); const p = PK.packOf(key); if (!p?.on) return;
+  let scan: import('../player/subPacks').PackScan; try { scan = await PK.scanPack(p); } catch { return; }
+  const draw = () => { const pp = PK.packOf(key) ?? p; const r = PK.fileFor(pp, scan, PK.wantFor(pp, season, n), getSettings().subLangs); return r; };
+  const { reasonText } = await import('./subPackSheet'); const { chooseForEpisode, lastHanded } = await import('../player/external/packSubs');
+  const name = h('span', { class: 'name', dir: 'auto' }); const why = h('small', { class: 'src pack-why' });
+  const fill = () => { const r = draw(); name.textContent = r.file ? r.file.path.split('/').pop() ?? r.file.path : t('extSubNone'); why.textContent = r.file ? reasonText(r.ranked.find((x) => x.file === r.file), r.manual) : ''; };
+  const last = lastHanded(); const wrong = last && last.key === key && last.episode === n && (last.season ?? undefined) === season;
+  const el = h('div', { class: 'dest-row ep-sub-row' }, icon('subtitles'), h('span', { class: 'grow' }, h('b', null, t('extSubRow')), name, why),
+    h('button', { type: 'button', class: 'btn tonal small ep-sub-change', onclick: () => void chooseForEpisode(key, season, n, () => fill()) }, wrong ? t('extWrongSub') : t('extSubChange')));
+  fill(); if (sh.el.isConnected) sh.body.append(el);
 }
 
 /** The review: every episode's pick shown before anything is added — changeable from the releases that fit —

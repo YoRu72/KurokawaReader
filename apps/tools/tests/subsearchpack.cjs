@@ -147,7 +147,7 @@ const SERIES = { id: 'tt1112223', imdb_id: 'tt1112223', type: 'series', name: 'N
   const mv = await p.$eval('.pack-movie', (e) => e.textContent);
   // (English first: two English files fit alike — «several» said; Arabic first: the Arabic one, alone.)
   ok('a folder of several files: the best by title, year and the first language plays (several alike: said)', LANG === 'ar' ? /2019 \[ar\]/.test(mv) : /Moon Harbor 2019/.test(mv) && !/Other Film/.test(mv) && /tap/.test(mv), mv);
-  ok('…the folder from a content: tree copied into the film\'s own subtitles folder', /Subtitles\/Moon Harbor/.test(await p.$eval('.pack-sheet .pack-current', (e) => e.textContent)) && !/SDH/.test(mv), await p.$eval('.pack-sheet .pack-current', (e) => e.textContent));
+  ok('…the folder from a content: tree copied into the film\'s own subtitles folder', /Subtitles\/Moon Harbor/.test(await p.$eval('.pack-sheet .pack-src', (e) => e.textContent)) && !/SDH/.test(mv), await p.$eval('.pack-sheet .pack-src', (e) => e.textContent));
   await shot('subs-movie-phone');
   await p.click('.pack-movie'); await p.waitForSelector('.pack-files .pack-file'); await p.locator('.pack-files .pack-file', { hasText: 'alt' }).click();
   await p.waitForFunction(() => /alt/.test(document.querySelector('.pack-movie')?.textContent || ''), null, { timeout: 5000 }).catch(() => undefined);

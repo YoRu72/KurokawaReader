@@ -384,6 +384,8 @@ pub struct Req {
     pub others: Vec<(String, String)>,
     pub slang: Vec<String>,
     pub alang: Vec<String>,
+    /// The show's subtitle pack's fonts folder (mpv's --sub-fonts-dir); empty for none.
+    pub fonts_dir: String,
 }
 fn no_break(s: &str) -> bool {
     !s.contains(['\r', '\n', '\0']) && s.len() < 4096
@@ -421,6 +423,13 @@ pub fn check(mut r: Req, temp_dirs: &[std::path::PathBuf]) -> Result<Req, &'stat
     }
     r.slang = langs(&r.slang);
     r.alang = langs(&r.alang);
+    // (The pack's fonts folder: an absolute folder that is there, no line breaks, no «..».)
+    if !r.fonts_dir.is_empty() {
+        let p = std::path::Path::new(&r.fonts_dir);
+        if !p.is_absolute() || !no_break(&r.fonts_dir) || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) || !p.is_dir() {
+            return Err("fonts");
+        }
+    }
     Ok(r)
 }
 fn secs(s: f64) -> String {
@@ -448,8 +457,12 @@ pub fn build(id: &str, q: &Req, template: &str) -> (Vec<String>, bool) {
             if q.start > 0.0 {
                 a.push(o(format!("--start={}", secs(q.start))));
             }
-            for (s, _) in &q.subs {
+            // (The pick first: mpv shows an outside file before the video's own, and the earliest of the same language.)
+            for (s, _) in q.subs.iter().filter(|s| s.1).chain(q.subs.iter().filter(|s| !s.1)) {
                 a.push(o(format!("--sub-file={}", s)));
+            }
+            if !q.fonts_dir.is_empty() {
+                a.push(o(format!("--sub-fonts-dir={}", q.fonts_dir)));
             }
             if !q.slang.is_empty() {
                 a.push(o(format!("--slang={}", q.slang.join(","))));
@@ -620,7 +633,12 @@ mod tests {
     #[test]
     fn players() {
         let tmp = vec![std::path::PathBuf::from("/tmp")];
-        let q = Req { target: "https://cdn.test/v/a.m3u8".into(), title: "Show - 03".into(), start: 90.4, subs: vec![("/tmp/en.vtt".into(), true)], ua: Some("UA-1".into()), referer: Some("https://site.test/".into()), others: vec![], slang: vec!["ar".into(), "EN".into()], alang: vec!["ja".into()] };
+        let q = Req { target: "https://cdn.test/v/a.m3u8".into(), title: "Show - 03".into(), start: 90.4, subs: vec![("/tmp/en.vtt".into(), true)], ua: Some("UA-1".into()), referer: Some("https://site.test/".into()), others: vec![], slang: vec!["ar".into(), "EN".into()], alang: vec!["ja".into()], fonts_dir: String::new() };
+        let td = std::env::temp_dir().to_string_lossy().to_string();
+        let (fm, _) = build("mpv", &check(Req { subs: vec![("/tmp/a.ass".into(), false), ("/tmp/b.ass".into(), true)], fonts_dir: td.clone(), ..q.clone() }, &tmp).unwrap(), "");
+        assert!(fm.iter().position(|x| x == "--sub-file=/tmp/b.ass") < fm.iter().position(|x| x == "--sub-file=/tmp/a.ass") && fm.contains(&format!("--sub-fonts-dir={}", td)));
+        assert_eq!(check(Req { fonts_dir: "relative/fonts".into(), ..q.clone() }, &tmp).unwrap_err(), "fonts");
+        assert_eq!(check(Req { fonts_dir: "/nowhere/kt-fonts-missing".into(), ..q.clone() }, &tmp).unwrap_err(), "fonts");
         assert_eq!(check(Req { others: vec![("Cookie".into(), "k=v".into())], ..q.clone() }, &tmp).unwrap_err(), "header");
         let q = check(q, &tmp).unwrap();
         assert_eq!(q.slang, vec!["ar"]);

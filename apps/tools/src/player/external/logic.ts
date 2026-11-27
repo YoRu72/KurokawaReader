@@ -21,6 +21,7 @@ export interface ExtSource {
   /** What the in-app player would open: a remote address, the app's stream on 127.0.0.1, or a local file's address. */
   url: string; name: string; localPath?: string; headers?: Record<string, string>; hls?: boolean;
   subs?: ExtSub[]; /** seconds */ start?: number; alang?: string[]; slang?: string[];
+  /** The show's subtitle pack's fonts folder (a computer's mpv takes it). */ fontsDir?: string;
 }
 /** What a computer's player can take (desktop/extcmd.cjs's table; the chosen program by its arguments line). */
 export interface Caps { id: string; name: string; /** what may go on its command line: User-Agent and Referer, or nothing */ headers: 'ua-ref' | 'none'; hls: boolean; subs: 'url' | 'path'; reports: boolean }
@@ -81,10 +82,23 @@ export function plan(src: ExtSource, plat: Platform, caps?: Caps): Plan {
   else main = 'relay';
   const subs = (src.subs ?? []).map((s): How => {
     // (The app's own subtitles on 127.0.0.1 are read here and saved as a copy: their address carries the run's token.)
-    if (c.subs === 'path' || s.path || isLoopback(s.url ?? '')) return 'temp';
+    // (A file read here — out of an archive — has an in-page address only: saved as a copy too.)
+    if (c.subs === 'path' || s.path || isLoopback(s.url ?? '') || /^blob:/.test(s.url ?? '')) return 'temp';
     return s.headers && Object.keys(s.headers).length && !isLoopback(s.url ?? '') ? 'relay' : 'direct';
   });
   return { main, headerArgs, subs, relay: main === 'relay' || subs.includes('relay'), problem: src.hls && !c.hls ? 'hls' : undefined };
+}
+
+/** The show's subtitle pack's files put with a source: first, the pick the one shown (the source's own then
+ *  follow, none of them shown by default); a local path as a path, anything else as an address; the pick's language
+ *  first in the languages the player prefers, so a player that ranks by language keeps the pick. */
+export function withPackSubs(src: ExtSource, pack: { subs: { url: string; name: string; lang?: string; isDefault?: boolean }[]; fontsDir?: string }): ExtSource {
+  const local = (u: string) => /^(file:|\/|[A-Za-z]:\\)/.test(u);
+  const mine: ExtSub[] = pack.subs.map((s) => (local(s.url) ? { path: s.url.replace(/^file:\/\//, ''), name: s.name, lang: s.lang, isDefault: s.isDefault } : { url: s.url, name: s.name, lang: s.lang, isDefault: s.isDefault }));
+  const picked = mine.find((s) => s.isDefault);
+  const theirs = (src.subs ?? []).filter((s) => !mine.some((m) => m.name === s.name)).map((s) => (picked ? { ...s, isDefault: false } : s));
+  const slang = picked?.lang ? [picked.lang, ...(src.slang ?? []).filter((l) => l !== picked.lang)] : src.slang;
+  return { ...src, subs: [...mine, ...theirs].slice(0, 20), slang, fontsDir: pack.fontsDir ?? src.fontsDir };
 }
 
 /* ---------- the phone: one intent, the union of the known players' extras ---------- */

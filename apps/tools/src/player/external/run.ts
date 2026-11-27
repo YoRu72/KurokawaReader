@@ -13,7 +13,7 @@ import { getSettings, updateSettings } from '../../settings';
 import { ktPlugin, nativePlatform } from '../../native';
 import { getPrefs, memoryOf, remember } from '../prefs';
 import type { Task } from '../../engine/types';
-import { plan, androidIntent, androidResult, isWatched, autoPick, pcCaps, chosenCaps, wayOf, isLoopback, type ExtSource, type Platform, type Service, type Ready, type AndroidIntent, type Caps, type Way } from './logic';
+import { plan, withPackSubs, androidIntent, androidResult, isWatched, autoPick, pcCaps, chosenCaps, wayOf, isLoopback, type ExtSource, type Platform, type Service, type Ready, type AndroidIntent, type Caps, type Way } from './logic';
 
 type Meta = Task['meta'];
 export interface ExtRequest { src: ExtSource; service: Service; key: string; task?: Task; fileIndex?: number; meta?: Meta; /** the app's own player instead */ fallback: () => void; /** opened from inside the app's own player (closed for the hand-over): cancelling reopens it */ fromPlayer?: boolean; /** the app's own player has already counted it watched */ alreadyWatched?: boolean }
@@ -143,6 +143,11 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
   if (pc && !pc.caps) { toast(t('extNothingFound'), 'info', 4000); if (!(await chooseProgram())) { giveUp(); return true; } pc = await pcPlayer(); if (!pc.caps) { giveUp(); return true; } }
   const name = p === 'android' ? t('extAnyApp') : pc!.caps!.name;
   const again = () => void playExternally(req, true);
+  // (The show's subtitle pack: this episode's pick goes along, shown, and the nearby episodes' files as choices.)
+  let hand: import('./packSubs').PackHand | null = null;
+  if (!packAdded.has(req)) { try { const PS = await import('./packSubs'); hand = await PS.packForExternal(req.task?.meta ?? req.meta, req.src.localPath?.split(/[\\/]/).pop() ?? req.src.name, p === 'android' ? 'android' : 'desktop'); } catch { hand = null; } if (hand) { req.src = withPackSubs(req.src, hand); packAdded.add(req); }
+    // (No pack file: «Find subtitles automatically», when on, before the hand-over — a short wait seen, «Launch without» skips it.)
+    else if (!(req.src.subs ?? []).length) { const found = await autoBefore(req, p); if (found) { req.src = withPackSubs(req.src, found); packAdded.add(req); } } }
   const pl = plan(req.src, p, pc?.caps);
   if (pl.problem === 'hls') { failed(t('extCantHls', { app: name }), req, p, again, undefined, giveUp); return true; }
   const relayer = p === 'android' ? plug() : desk();
@@ -170,19 +175,19 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
     const target = pl.main === 'relay' ? relay?.url ?? req.src.url : pl.main === 'path' ? req.src.localPath ?? req.src.url : req.src.url;
     if (p === 'android') {
       const pk = plug(); if (!pk?.openPlayerApp) throw new Error('openPlayerApp');
-      noteLaunch(req);
+      noteLaunch(req); if (hand) void import('./packSubs').then((m) => m.noteHanded(hand!));
       const res = await pk.openPlayerApp(androidIntent({ target, isPath: pl.main === 'path', title: req.src.name, start, subs: readySubs }));
       clearLaunch();
       letGo(true);
-      await applyResult(req, androidResult(res), name);
+      await applyResult(req, androidResult(res), name); wrongSub(hand);
     } else {
       const caps = pc!.caps!;
       const hd = Object.fromEntries(Object.entries(req.src.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
       const headers = pl.headerArgs ? { ua: hd['user-agent'], referer: hd.referer } : {};
-      const r = await runDesktop({ player: caps.id, target, title: req.src.name, start, subs: readySubs.map((s) => ({ at: s.at, isDefault: !!s.isDefault })), headers, slang: req.src.slang ?? [], alang: req.src.alang ?? [] }, name);
+      const r = await runDesktop({ player: caps.id, target, title: req.src.name, start, subs: readySubs.map((s) => ({ at: s.at, isDefault: !!s.isDefault })), headers, slang: req.src.slang ?? [], alang: req.src.alang ?? [], ...(req.src.fontsDir ? { fontsDir: req.src.fontsDir } : {}) }, name);
       if (!r.reports) { keep = true; void afterUntold(req, name, relay, relayer, temps); return true; }
       letGo(true);
-      await applyResult(req, { pos: r.pos, dur: r.dur, ended: r.ended, told: r.pos !== undefined || r.ended }, name);
+      await applyResult(req, { pos: r.pos, dur: r.dur, ended: r.ended, told: r.pos !== undefined || r.ended }, name); wrongSub(hand);
     }
   } catch (e) {
     const why = String((e as Error)?.message ?? e);
@@ -191,6 +196,29 @@ export async function playExternally(req: ExtRequest, forceAsk = false): Promise
     if (!keep) letGo(false);
   }
   return true;
+}
+const packAdded = new WeakSet<ExtRequest>();
+/** Auto-find for the other player: the sheet «Looking for a subtitle…» with «Launch without»; the subtitle found, as
+ *  a list of one to hand along (a phone's copy in the show's folder, a computer's in-page address saved as a copy). */
+async function autoBefore(req: ExtRequest, p: Platform): Promise<{ subs: { url: string; name: string; lang?: string; isDefault?: boolean }[] } | null> {
+  const A = await import('../../subs/auto'); if (!A.autoOn() || !(await A.networkAllows())) return null;
+  const m = req.task?.meta ?? req.meta; const { parseFilename } = await import('../../anime/anitomy'); const parsed = parseFilename(req.src.name);
+  let stop = false; const sh = openSheet(t('subAutoLooking'), t('close')); sh.el.classList.add('ext-auto-wait');
+  sh.body.append(h('p', { class: 'hint' }, h('span', { class: 'spinner tiny' }), ' ', t('extAutoLooking')), h('button', { type: 'button', class: 'btn tonal ext-auto-skip', onclick: () => { stop = true; sh.close(); } }, t('extAutoSkip')));
+  const gone = new Promise<null>((ok) => { const o = new MutationObserver(() => { if (!sh.el.isConnected) { stop = true; o.disconnect(); ok(null); } }); o.observe(document.body, { childList: true, subtree: true }); });
+  const res = await Promise.race([A.autoFind({ title: m?.title ?? parsed.title ?? '', anilistId: m?.anilistId, imdbId: m?.imdbId, season: m?.season ?? parsed.season, episode: m?.episode ?? parsed.episode, videoName: req.src.localPath?.split(/[\\/]/).pop() ?? req.src.name, stop: () => stop }), gone, new Promise<null>((ok) => window.setTimeout(() => ok(null), 30000))]);
+  stop = true; sh.close();
+  if (!res || !res.applied) return null; const f = res.applied.file;
+  let url = '';
+  if (p === 'android') { const PK = await import('../subPacks'); const { decodeSubtitle } = await import('../subs'); try { const dir = `${await PK.showFolder(m?.title ?? parsed.title ?? 'Show')}/.kt-player`; await (plug() as unknown as { filesMkdir?(o: { path: string }): Promise<unknown> } | null)?.filesMkdir?.({ path: dir }).catch(() => undefined); url = await PK.writeSubText(dir, f.name, decodeSubtitle(f.bytes)); } catch { return null; } }
+  else url = URL.createObjectURL(new Blob([f.bytes as BlobPart], { type: 'text/plain' }));
+  return { subs: [{ url, name: f.name, lang: res.applied.r.language, isDefault: true }] };
+}
+/** Back from the other player with a pack's subtitle: «Wrong subtitle?», which opens the pack's files for that
+ *  episode (a choice there is a correction, used next time). */
+function wrongSub(hand: import('./packSubs').PackHand | null): void {
+  if (!hand) return; void import('./packSubs').then((m) => m.noteHanded(hand));
+  toast(t('extWrongSub'), 'info', 9000, { label: t('extSubChange'), run: () => void import('./packSubs').then((m) => m.chooseForEpisode(hand.key, hand.season, hand.episode, (n) => { if (n) toast(t('extSubKept', { name: n })); })) });
 }
 function closeRelay(relay: { token: string } | null, relayer: Desk | Plug | null | undefined): void { if (relay) void relayer?.relayClose?.({ token: relay.token }).catch(() => undefined); }
 function releaseStream(req: ExtRequest, p: Platform): void { if (req.task?.kind === 'torrent' && p !== 'android') void desk()?.streamDone?.({ id: req.task.id }).catch(() => undefined); }

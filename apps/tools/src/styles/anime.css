@@ -786,3 +786,61 @@ html.pc .dl-float { bottom: 20px; inset-inline: auto 24px; width: 380px; margin:
 .kt-keep .switch-row { min-height: 48px; }
 .kt-keep-list { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; max-height: 46vh; overflow: auto; }
 .kt-keep-name { display: block; overflow-wrap: anywhere; } .kt-keep-word { font-size: 12px; color: var(--md-on-surface-variant); margin-inline: 8px; }
+/* (SB) A show's subtitle sources: each its own row (where it is, its counts, the files no episode took), the path box
+   on a computer; the player's pack list grouped by source; the find sheet's results with badges and a preview. */
+.pack-src .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.pack-src .grow > * { overflow-wrap: anywhere; }
+.pack-src.bad .pack-src-stat { color: var(--md-error); }
+.pack-src > .icon-btn { flex: none; min-width: 40px; min-height: 40px; }
+.pack-unmatched-list summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; color: var(--md-on-surface-variant); font-size: 13px; }
+.pack-unmatched-list .src { padding-inline-start: 12px; font-size: 12.5px; overflow-wrap: anywhere; }
+.pack-path-row { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+.pack-path-row .pack-path { flex: 1; min-width: 0; height: 40px; }
+.pack-path-row .btn { flex: none; min-height: 40px; }
+.pack-sources .row-actions .btn, .kt-pack .row-actions .btn { flex: 1 1 0; min-width: 0; min-height: 40px; justify-content: center; }
+.kt-pack .pack-picked .grow, .ep-sub-row .grow { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.kt-pack .pack-picked .name, .ep-sub-row .name { overflow-wrap: anywhere; }
+.pack-why { color: var(--md-on-surface-variant); }
+.kt-pack .pack-filter { margin: 8px 0; width: 100%; box-sizing: border-box; height: 40px; }
+.kt-pack .pack-src-head { margin: 12px 0 4px; font-size: 13px; font-weight: 700; color: var(--md-primary); }
+.kt-pack .pack-near-head { display: block; margin: 6px 4px 2px; }
+.kt-pack .pack-file .grow { display: flex; flex-direction: column; min-width: 0; }
+.kt-pack .pack-file .name { overflow-wrap: anywhere; }
+.ep-sub-row { gap: 12px; }
+.ep-sub-row .btn { flex: none; min-height: 40px; }
+.sub-find-status { margin: 8px 0; flex-wrap: wrap; gap: 8px; }
+.sub-find-status .chip.failed { background: color-mix(in srgb, var(--md-error) 14%, transparent); color: var(--md-error); cursor: pointer; }
+.sub-find-fail { flex-basis: 100%; font-size: 13px; color: var(--md-error); }
+.sub-find-slow { margin: 0 0 8px; }
+.sub-search .sub-find-num { height: 40px; }
+.sub-result { border-radius: 14px; }
+.sub-result.applied { background: color-mix(in srgb, var(--md-primary) 8%, transparent); }
+.sub-result .sub-row { padding: 4px 4px 4px 0; gap: 8px; }
+.sub-row-main { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 8px; border-radius: 12px; min-height: 40px; }
+.sub-row-main:focus-visible { outline: 2px solid var(--md-primary); }
+.sub-row-main .result-title { overflow-wrap: anywhere; }
+.sub-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sub-badges .lang-badge { min-width: 34px; height: 24px; border-radius: 8px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.sub-badge { height: 24px; padding: 0 8px; }
+.sub-badge.pack { background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); }
+.sub-other-head { margin: 16px 4px 4px; color: var(--md-on-surface-variant); }
+.sub-preview { margin: 0 8px 10px; padding: 10px 12px; border-radius: 12px; background: var(--md-surface-container); display: flex; flex-direction: column; gap: 4px; }
+.sub-preview[hidden] { display: none; }
+.sub-preview .sub-line { margin: 0; font-size: 14px; line-height: 1.5; }
+.sub-pv-actions { margin-top: 8px; gap: 12px; }
+.sub-pv-actions .btn { flex: 1 1 0; min-width: 0; min-height: 40px; justify-content: center; }
+.pack-src .pack-src-gap { flex: none; width: 40px; }
+/* (SB-F) Settings → Subtitles: the ordered languages (a handle to drag, up, remove), auto-find's switches; the player's dot. */
+.sub-lang-row { gap: 12px; cursor: grab; }
+.sub-lang-row .grow { display: flex; flex-direction: column; min-width: 0; }
+.sub-lang-row > .icon-btn { flex: none; min-width: 40px; min-height: 40px; }
+.sub-auto-box { margin-top: 16px; display: flex; flex-direction: column; gap: 4px; }
+.sub-auto-box .switch-row > span { display: flex; flex-direction: column; gap: 2px; }
+.kt-top button[data-icon="subtitles"] { position: relative; }
+.kt-dot { position: absolute; top: 4px; inset-inline-end: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--md-primary); color: var(--md-on-primary); font: 700 10px/16px var(--font-ui); text-align: center; pointer-events: none; }
+.kt-auto-row { gap: 12px; } .kt-auto-row .grow { display: flex; flex-direction: column; min-width: 0; } .kt-auto-row .name { overflow-wrap: anywhere; }
+.kt-auto-wait { display: flex; align-items: center; gap: 8px; }
+.kt-sub-offer { position: absolute; top: calc(64px + env(safe-area-inset-top, 0px)); inset-inline: 12px; margin-inline: auto; max-width: 520px; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px 10px 16px; border-radius: 20px; background: rgb(18 20 24 / .88); color: #f1f3f6; font-size: 14px; line-height: 1.4; }
+.kt-sub-offer .grow { flex: 1 1 180px; min-width: 0; }
+.kt-sub-offer .btn { min-height: 40px; }
+.kt-sub-offer .btn.text { color: #dfe3ec; }

@@ -32,7 +32,8 @@
       "filestauri.cjs": 480,
       "perfviews.cjs": 420,
       "pickwalk.cjs": 644,
-      "animewalk.cjs": 904
+      "animewalk.cjs": 904,
+      "subauto.cjs": 1060
     },
     "budgets": {
       "perfstart.cjs": {

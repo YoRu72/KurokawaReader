@@ -544,6 +544,7 @@ pub async fn kt_ext_player_start(app: AppHandle, o: Value) -> Result<Value, Stri
         others: h.get("others").and_then(|v| v.as_array()).cloned().unwrap_or_default().iter().filter_map(|kv| Some((kv.get(0)?.as_str()?.to_string(), kv.get(1)?.as_str()?.to_string()))).collect(),
         slang: strs(o.get("slang")),
         alang: strs(o.get("alang")),
+        fonts_dir: o.get("fontsDir").and_then(|v| v.as_str()).unwrap_or("").into(),
     };
     let tmp = std::env::temp_dir();
     let q = rl::check(req, &[tmp.clone(), tmp.join("kurokawa-clip")]).map_err(|e| format!("refused: {}", e))?;

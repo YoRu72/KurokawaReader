@@ -119,8 +119,12 @@ export interface Settings {
   animeQuality: '' | '2160' | '1080' | '720' | '480';
   animeAdult: boolean;
   animeTitleLang: 'preferred' | 'romaji' | 'english' | 'native';
-  /** Subtitles: the languages wanted, in order. */
+  /** Subtitles: the languages wanted, in order (the one list the pack matcher, the search, the auto-find and the player's
+   *  choice of the video's own tracks read). */
   subLangs: string[];
+  /** Auto-find (the player's «Find subtitles automatically», kept in its preferences): the installed sources switched
+   *  off for it (add-on ids), whether only the languages above may be applied (default on), Wi-Fi only on a phone (default on). */
+  subAutoOff?: string[]; subAutoOnly?: boolean; subAutoWifi?: boolean;
   /** Settings shown as one list, or with a bar of tabs above: all, the app's own, each add-on's. */
   settingsLayout: 'tabs' | 'list';
   /** The Videos tab (the Player add-on's library: the phone's videos, the recent ones, media servers). */

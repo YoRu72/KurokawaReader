@@ -48,7 +48,10 @@ function check(r, tempDirs) {
   if (Array.isArray(h.others) && h.others.length) return { error: 'header' };
   const langs = (a) => (Array.isArray(a) ? a.map(String).filter((x) => /^[a-z]{2,3}$/.test(x)).slice(0, 10) : []);
   const start = Number(r.start);
-  return { req: { target: r.target, title: clean(r.title), start: Number.isFinite(start) && start > 0 ? start : 0, subs, headers, slang: langs(r.slang), alang: langs(r.alang) } };
+  // (The show's subtitle pack's fonts folder, for mpv: an absolute folder that is there, no line breaks, no «..».)
+  let fontsDir = '';
+  if (r.fontsDir !== undefined && r.fontsDir !== '') { const f = String(r.fontsDir); let isDir = false; try { isDir = require('node:fs').statSync(f).isDirectory(); } catch { isDir = false; } if (!path.isAbsolute(f) || !noBreak(f) || /(^|[\\/])\.\.([\\/]|$)/.test(f) || !isDir) return { error: 'fonts' }; fontsDir = path.resolve(f); }
+  return { req: { target: r.target, title: clean(r.title), start: Number.isFinite(start) && start > 0 ? start : 0, subs, headers, slang: langs(r.slang), alang: langs(r.alang), fontsDir } };
 }
 
 const secs = (s) => (s > 0 ? String(Math.round(s * 10) / 10) : '');
@@ -63,7 +66,9 @@ function build(id, q, template) {
       if (id === 'iina') a.push('--keep-running');                 // (iina-cli stays until IINA's window is closed)
       if (q.title) a.push(o(`--force-media-title=${q.title}`));
       if (q.start) a.push(o(`--start=${secs(q.start)}`));
-      for (const s of q.subs) a.push(o(`--sub-file=${s.at}`));
+      // (The pick first: mpv shows an outside file before the video's own, and the earliest of the same language.)
+      for (const s of [...q.subs.filter((x) => x.isDefault), ...q.subs.filter((x) => !x.isDefault)]) a.push(o(`--sub-file=${s.at}`));
+      if (q.fontsDir) a.push(o(`--sub-fonts-dir=${q.fontsDir}`));
       if (q.slang.length) a.push(o(`--slang=${q.slang.join(',')}`));
       if (q.alang.length) a.push(o(`--alang=${q.alang.join(',')}`));
       if (ua) a.push(o(`--user-agent=${ua}`));
