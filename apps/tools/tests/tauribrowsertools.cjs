@@ -80,7 +80,7 @@ const site = http.createServer((req, res) => {
   at('an unasked answer'); await p.evaluate(grabCall('g9')); pending.add('g2'); await p.evaluate(grabCall('g2')); await until(() => got.find((m) => m.rid === 'g2'), 15000);
   assert.equal(got.some((m) => m.rid === 'g9'), false, 'an unasked grab taken');
   // (New windows kept in this one.)
-  at('target=_blank'); await p.click('#pop', { noWaitAfter: true }); await onUrl(base + '/popup'); assert.equal(ctx.pages().length, 1, 'target=_blank opened a window');
+  at('target=_blank'); /* (Not page.click: on GitHub it waits for a lane request — a navigation answered 204 — «to finish», for 30 s.) */ await p.evaluate(() => document.querySelector('#pop').click()); await onUrl(base + '/popup'); assert.equal(ctx.pages().length, 1, 'target=_blank opened a window');
   at('window.open'); await p.evaluate(() => window.open('/opened', '_blank')); await onUrl(base + '/opened'); assert.equal(ctx.pages().length, 1, 'window.open opened a window');
   await until(() => got.find((m) => m.rid[0] === 't' && m.head.title === 'KT opened'));
   at('load finished'); await p.waitForFunction(() => document.readyState === 'complete', null, { timeout: 15000 });
