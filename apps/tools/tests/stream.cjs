@@ -5,6 +5,12 @@
 const { chromium } = require('playwright');
 const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path'); const crypto = require('node:crypto');
 const DIST = path.join(__dirname, '..', 'dist');
+// (The compiler the app fetches for a TypeScript extension — pinned by its checksum — is served from the copy of
+// TypeScript 6 that is installed here (CI: ts-api), so nothing leaves this machine. Without that exact file the
+// extension is served as the JavaScript it compiles to and the TypeScript part is a named, skipped case.)
+const TS_SHA256 = '569177652966bd528c319171c7dd22860dbf72bde116cbc4f644f1d02bb12e39';
+const TS_FILE = ['ts-api', 'typescript'].map((n) => { try { const f = require.resolve(n + '/lib/typescript.js', { paths: [path.join(__dirname, '..'), process.cwd()] }); return crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex') === TS_SHA256 ? f : null; } catch { return null; } }).find(Boolean) || null;
+if (!TS_FILE) console.log('SKIPPED case «extension written in TypeScript»: no TypeScript 6 compiler installed (npm install --no-save ts-api@npm:typescript@6.0.3); the same extension is served as JavaScript');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 const serve = (root) => http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(root, p); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
 const MEDIA = { id: 1, idMal: 1, title: { romaji: 'Sousou no Frieren', english: 'Frieren: Beyond Journey\'s End', native: '葬送のフリーレン', userPreferred: 'Sousou no Frieren' }, synonyms: [], coverImage: { large: '' }, format: 'TV', status: 'FINISHED', episodes: 28, season: 'FALL', seasonYear: 2023, startDate: { year: 2023, month: 9, day: 29 }, genres: ['Adventure'], averageScore: 90, popularity: 100000, isAdult: false, siteUrl: 'https://anilist.co/anime/1', nextAiringEpisode: null, mediaListEntry: null, duration: 24, description: 'A synopsis.', studios: { nodes: [] }, airingSchedule: { nodes: [] }, streamingEpisodes: [], externalLinks: [], relations: { edges: [] } };
@@ -40,12 +46,22 @@ class Provider {
         return { server, headers: { Referer: this.base + "/" }, videoSources: data.map((d) => ({ url: d.file, type: d.file.includes(".m3u8") ? "m3u8" : "mp4", quality: d.label, subtitles: [{ id: "en", url: this.base + "/subs/en.vtt", language: "English", isDefault: true }] })) }
     }
 }`;
+// (The same extension without types: what the compiler makes of the one above, for a machine without the compiler.)
+const PAYLOAD_JS = PAYLOAD.replace(/^\/\/\/.*\n/, '').replace(/^interface Hit.*\n/m, '').replace(/: (Settings|Promise<[^{]*?>|EpisodeServer|SearchOptions|EpisodeDetails|DocSelection|number|string)(?=[ ,)={])/g, '').replace(/ as (string|\{[^}]*\}\[\])/g, '').replace(/\)!(?=[.,])/g, ')').replace(/const out: SearchResult\[\]/, 'const out');
 (async () => {
   const web = serve(DIST).listen(0); const port = web.address().port;
   const br = await chromium.launch(); const p = await br.newPage({ viewport: { width: 420, height: 860 } });
   const errors = []; p.on('pageerror', (e) => errors.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') console.log('console:', m.text().slice(0, 300)); });
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
-  await p.route('https://ext.test/**', (r) => { const u = r.request().url(); if (u.endsWith('manifest.json')) return r.fulfill({ headers: cors, json: [{ id: 'mockstream', name: 'Mock Stream', version: '1.0.0', type: 'onlinestream-provider', language: 'typescript', author: 'test', payloadURI: 'https://ext.test/provider.ts' }] }); return r.fulfill({ headers: cors, contentType: 'text/plain', body: PAYLOAD }); });
+  // (Nothing leaves this machine: every address outside 127.0.0.1 is answered here, made up; the first route is the
+  // catch-all — the later ones win.)
+  const outside = [];
+  await p.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => { outside.push(r.request().url()); return r.fulfill({ status: 404, headers: cors, body: '' }); });
+  let tsServed = false;
+  await p.route('https://cdn.jsdelivr.net/**', (r) => (TS_FILE ? (tsServed = true,  r.fulfill({ headers: cors, contentType: 'text/javascript', body: fs.readFileSync(TS_FILE) })) : r.fulfill({ status: 404, headers: cors, body: '' })));
+  await p.route('https://api.github.com/**', (r) => r.fulfill({ headers: cors, json: [] }));
+  await p.route('https://cdn.mock-anime.test/**', (r) => (r.request().method() === 'OPTIONS' ? r.fulfill({ status: 204, headers: cors }) : r.fulfill({ headers: cors, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n#EXT-X-ENDLIST\n' })));
+  await p.route('https://ext.test/**', (r) => { const u = r.request().url(); if (u.endsWith('manifest.json')) return r.fulfill({ headers: cors, json: [{ id: 'mockstream', name: 'Mock Stream', version: '1.0.0', type: 'onlinestream-provider', language: 'typescript', author: 'test', payloadURI: 'https://ext.test/provider.ts' }] }); return r.fulfill({ headers: cors, contentType: 'text/plain', body: TS_FILE ? PAYLOAD : PAYLOAD_JS }); });
   const seen = [];
   await p.route('https://mock-anime.test/**', (r) => {
     if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: cors });
@@ -73,16 +89,16 @@ class Provider {
   console.log('sheet:', sheet.replace(/\s+/g, ' '));
   const ok = L.matched.test(sheet) && /1080p|١٠٨٠p/.test(sheet) && /720p|٧٢٠p/.test(sheet) && /beta/.test(sheet) && L.subs.test(sheet);
   console.log('requests:', seen.join(' '));
-  await p.waitForTimeout(600); await p.screenshot({ path: path.join(__dirname, `shot-stream-${lang}.png`) });
+  await p.screenshot({ path: path.join(__dirname, `shot-stream-${lang}.png`) });
   await p.locator('.stream-row').first().locator('.btn.primary').click();
-  // (The Player add-on is offered in the download card the first time.)
-  await p.waitForSelector('.get-card'); await p.click('.get-card .btn.primary'); await p.waitForSelector('video.kt-video');
+  // (The Player add-on is offered in the download card when it is not in yet; when it already is, the player opens.)
+  await p.waitForSelector('.get-card, video.kt-video'); if (await p.$('.get-card')) { await p.click('.get-card .btn.primary'); await p.waitForSelector('video.kt-video'); }
   const src = await p.$eval('video.kt-video', (v) => v.getAttribute('src') || v.src);
-  await p.waitForTimeout(1500); const subsLoaded = await p.evaluate(() => document.body.innerText.includes('Hello') || !!document.querySelector('.toast'));
+  await p.waitForFunction(() => document.body.innerText.includes('Hello') || !!document.querySelector('.toast'), null, { timeout: 5000 }).catch(() => undefined); const subsLoaded = await p.evaluate(() => document.body.innerText.includes('Hello') || !!document.querySelector('.toast'));
   console.log('player src:', src, '| subtitle fetched:', seen.includes('/subs/en.vtt'), subsLoaded);
   // A wrong match corrected by hand, and kept
   const kept = await p.evaluate(() => localStorage.getItem('kt.stream.match')); console.log('kept match:', kept);
-  const pass = ok && src.includes('1080.m3u8') && seen.includes('/subs/en.vtt') && /frieren"/.test(kept ?? '') && seen.some((x) => x.includes('server=alpha')) && seen.some((x) => x.includes('server=beta'));
+  const pass = ok && src.includes('1080.m3u8') && seen.includes('/subs/en.vtt') && /frieren"/.test(kept ?? '') && seen.some((x) => x.includes('server=alpha')) && seen.some((x) => x.includes('server=beta')) && (!TS_FILE || tsServed);
   console.log(errors.length ? 'errors ' + JSON.stringify(errors) : pass ? 'all passed' : 'FAILED');
   await br.close(); web.close(); process.exit(errors.length || !pass ? 1 : 0);
 })();

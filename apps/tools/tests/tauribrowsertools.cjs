@@ -20,6 +20,9 @@ const init = INIT.replace('__S__', `${SENDER}(${JSON.stringify(K)},${JSON.string
 const CAND = /pub const CAND_JS: &str = "((?:[^"\\]|\\.)*)";/.exec(fs.readFileSync(path.join(SRC, 'mediawatch.rs'), 'utf8')); assert.ok(CAND, 'CAND_JS');
 const grabCall = (rid) => { let i = 0; const args = [JSON.stringify(K), GRAB, JSON.parse('"' + CAND[1] + '"'), JSON.stringify(rid)]; return wrapFmt[1].replace(/\{\{/g, '\u0001').replace(/\}\}/g, '\u0002').replace(/\{\}/g, () => args[i++]).replace(/\u0001/g, '{').replace(/\u0002/g, '}'); };
 
+// (Every step is named, and a watchdog ends a hung run — saying where it stood — instead of the runner's clock doing it.)
+let step = 'start'; const at = (n) => { step = n; };
+setTimeout(() => { console.log('FAIL tauribrowsertools: no progress in 90 s, stuck at: ' + step); process.exit(1); }, 90000).unref();
 const links = Array.from({ length: 120 }, (_, i) => `<a href="/files/f${i}.mkv">file ${i}</a>`).join(' ');
 const site = http.createServer((req, res) => {
   const page = (title, body) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`); };
@@ -29,7 +32,7 @@ const site = http.createServer((req, res) => {
   res.writeHead(404); res.end();
 }).listen(0, async () => {
   const base = `http://127.0.0.1:${site.address().port}`;
-  const br = await chromium.launch(); const ctx = await br.newContext({ viewport: { width: 900, height: 700 } }); const p = await ctx.newPage();
+  at('launch'); const br = await chromium.launch(); const ctx = await br.newContext({ viewport: { width: 900, height: 700 } }); const p = await ctx.newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   await p.addInitScript(init);
   // (browser.rs's on_nav: parse_reply, Assembly, handle, the ack.)
@@ -47,13 +50,14 @@ const site = http.createServer((req, res) => {
     }
     await p.evaluate(([k, id]) => { const a = window[k]; if (a) a.ack(id); }, [K, `${rid}/${part}`]).catch(() => undefined);
   });
-  const until = async (f, ms = 8000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await p.waitForTimeout(50); } throw new Error('timed out'); };
-  await p.goto(base + '/', { waitUntil: 'commit' });
+  const until = async (f, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await new Promise((r) => setTimeout(r, 50)); } throw new Error('timed out at: ' + step); };
+  const onUrl = (u) => until(() => p.url() === u);
+  at('first page'); await p.goto(base + '/', { waitUntil: 'commit' });
   const t1 = await until(() => got.find((m) => m.rid[0] === 't' && m.head.title === 'KT site'));
   assert.ok(/Chrome|Mozilla/.test(t1.head.ua), 'the title carries the user agent');
   assert.equal(await p.evaluate(() => !!document.getElementById('kt-browser-bar') && getComputedStyle(document.getElementById('kt-browser-bar')).right === '12px'), true, 'the bar, on the right for a right-to-left page');
   assert.equal(await p.evaluate(() => document.getElementById('kt-browser-bar').shadowRoot), null, 'closed shadow root');
-  await p.keyboard.press('Control+g');
+  at('Ctrl+G'); await p.keyboard.press('Control+g');
   const c = await until(() => got.find((m) => m.rid[0] === 'c'));
   assert.deepEqual(c.head, { act: 'grab', k: CMD });
   await p.keyboard.press('Control+l');
@@ -63,7 +67,7 @@ const site = http.createServer((req, res) => {
   const forged = await until(() => got.find((m) => m.rid === 'cforged'));
   assert.notEqual(forged.head.k, CMD, 'a forged command does not carry the bar\'s token');
   // (The grab, as browser.rs's command() asks it: in several pieces, whole, main.cjs's shape.)
-  pending.add('g1'); await p.evaluate(grabCall('g1'));
+  at('the grab'); pending.add('g1'); await p.evaluate(grabCall('g1'));
   const g = await until(() => got.find((m) => m.rid === 'g1'), 15000);
   const page = JSON.parse(g.body.toString('utf8'));
   assert.ok(g.n > 3, 'the grab came in pieces: ' + g.n);
@@ -72,12 +76,14 @@ const site = http.createServer((req, res) => {
   assert.ok(page.links.some((l) => l.href === base + '/v/movie.mp4' && l.kind === 'video'), 'the video');
   assert.ok(page.links.some((l) => l.href === base + '/files/f119.mkv' && l.kind === 'video'), 'the last link');
   // (An answer not asked for is not taken.)
-  const before = got.length; await p.evaluate(grabCall('g9')); await p.waitForTimeout(1500); assert.equal(got.length, before, 'an unasked grab taken');
+  // (Told by order, not by a pause: g9 is sent first and g2, asked for, after it; once g2 is whole g9, which would have come first, has not.)
+  at('an unasked answer'); await p.evaluate(grabCall('g9')); pending.add('g2'); await p.evaluate(grabCall('g2')); await until(() => got.find((m) => m.rid === 'g2'), 15000);
+  assert.equal(got.some((m) => m.rid === 'g9'), false, 'an unasked grab taken');
   // (New windows kept in this one.)
-  await p.click('#pop'); await p.waitForURL(base + '/popup', { waitUntil: 'commit' }); assert.equal(ctx.pages().length, 1, 'target=_blank opened a window');
-  await p.evaluate(() => window.open('/opened', '_blank')); await p.waitForURL(base + '/opened', { waitUntil: 'commit' }); assert.equal(ctx.pages().length, 1, 'window.open opened a window');
+  at('target=_blank'); await p.click('#pop', { noWaitAfter: true }); await onUrl(base + '/popup'); assert.equal(ctx.pages().length, 1, 'target=_blank opened a window');
+  at('window.open'); await p.evaluate(() => window.open('/opened', '_blank')); await onUrl(base + '/opened'); assert.equal(ctx.pages().length, 1, 'window.open opened a window');
   await until(() => got.find((m) => m.rid[0] === 't' && m.head.title === 'KT opened'));
-  assert.equal(await p.evaluate(() => document.readyState), 'complete', 'the site\'s own load finished');
+  at('load finished'); await p.waitForFunction(() => document.readyState === 'complete', null, { timeout: 15000 });
   assert.deepEqual(errors, []);
   console.log(`tauribrowsertools: ok — title + user agent, the bar (closed, right-to-left), Ctrl+G / Ctrl+L, a forged command told apart, the grab in ${g.n} pieces (${page.links.length} links), an unasked answer refused, new windows kept`);
   await br.close(); site.close();

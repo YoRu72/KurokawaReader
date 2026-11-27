@@ -107,11 +107,6 @@
       "reason": "Not in the release workflow's test chain; a candidate to add once confirmed green (orchestrator's decision)."
     },
     {
-      "name": "startup.cjs",
-      "reason": "Start-up timings with fixtures (tests/fixtures); not in CI because it needs the fixtures. The preflight makes them.",
-      "needsFixtures": true
-    },
-    {
       "name": "sweep.cjs",
       "reason": "Takes <books dir> <outdir>: every view at several sizes and languages, with screenshots; slow. The preflight gives it the fixtures and a temp folder.",
       "args": [

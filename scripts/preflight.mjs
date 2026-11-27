@@ -352,6 +352,14 @@ async function preflight(app) {
     }
   });
 
+  // 6c. the bridge-assets list's own test (scripts/bridge-assets.test.mjs: made-up files in a temp folder, no network, under a
+  // second): repo-level, so it is a static step of both apps (it is not a tests/*.cjs of either app, no chain runs it).
+  if (S1) await guard('bridge assets test', async () => {
+    const r = await run('node', ['scripts/bridge-assets.test.mjs'], { cwd: ROOT, timeoutMs: 60000 });
+    if (r.code !== 0) writeLog('bridge-assets-test', r.out);
+    add('bridge assets list (scripts/bridge-assets.test.mjs)', r.code === 0 ? 'PASS' : 'FAIL', r.code === 0 ? sec(r.ms) : tail(r.out, 8));
+  });
+
   // 7. tests (this shard's part of the plan made at the top of this function)
   if (!NO_TESTS) {
     if (S1 && fs.existsSync(path.join(APP, 'scripts/themes.mjs')) && app === 'tools') { const th = await run('node', ['scripts/themes.mjs', '--check'], { cwd: APP }); add('themes up to date (themes.mjs --check)', th.code === 0 ? 'PASS' : 'FAIL', th.code === 0 ? '' : tail(th.out, 6)); }

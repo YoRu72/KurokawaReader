@@ -1,12 +1,4 @@
 {
   "_": "Tests that fail on the untouched baseline. The preflight reports them as KNOWN, a NEW failure fails the run, and one that starts passing is reported as FIXED (remove it here). name, reason (the true one), how (how to run it properly), date, loadSensitive, mode: run (default) or skip (not run).",
-  "failures": [
-    {
-      "name": "stream.cjs",
-      "reason": "Needs the network: it fails after about 33 s because it reaches outside hosts (the mock Seanime extension's fetches are not all served locally). Not a product fault; fails the same on untouched main.",
-      "how": "run on a machine with internet: node tests/stream.cjs [en|ar]",
-      "date": "2026-11-15",
-      "needsNetwork": true
-    }
-  ]
+  "failures": []
 }

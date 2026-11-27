@@ -23,12 +23,12 @@
       "default": 300,
       "filesbatch.cjs": 480,
       "filesqueue.cjs": 480,
-      "filesclip.cjs": 480,
-      "filestauri.cjs": 480,
       "hunt.cjs": 480,
       "scene.cjs": 720,
-      "perfviews.cjs": 420,
-      "gesturewalk.cjs": 1800
+      "gesturewalk.cjs": 1800,
+      "filesclip.cjs": 480,
+      "filestauri.cjs": 480,
+      "perfviews.cjs": 420
     },
     "budgets": {
       "perfstart.cjs": {
@@ -49,12 +49,11 @@
       "default": 300,
       "backpdf.cjs": 600,
       "sweep.cjs": 900,
-      "glassperf.cjs": 400,
-      "hunt.cjs": 300,
       "uihunt.cjs": 1800,
       "pdf2docxcorpus.cjs": 900,
-      "pdf2docxedit.cjs": 600,
-      "pdf2docxcorpus3.cjs": 900
+      "pdf2docxcorpus3.cjs": 900,
+      "glassperf.cjs": 400,
+      "pdf2docxedit.cjs": 600
     },
     "budgets": {
       "perfbudget.cjs": {

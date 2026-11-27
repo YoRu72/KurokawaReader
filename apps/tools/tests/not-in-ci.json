@@ -33,20 +33,6 @@
       "run": false
     },
     {
-      "name": "stream.cjs",
-      "reason": "Needs outside network hosts (see known-failures.json); not in any workflow."
-    },
-    {
-      "name": "tauribrowsertools.cjs",
-      "reason": "Runs in tauri-check.yml (Linux, Playwright 1.48.2, Chromium installed). It passes here (Playwright 1.56.0, 2.5 s) but timed out after 32 s in the preflight job, which installs Playwright 1.64.1; the cause there is not known, so the preflight does not run it.",
-      "run": false
-    },
-    {
-      "name": "webstream.cjs",
-      "reason": "Needs the webtorrent package from desktop/package.json (cd desktop && npm install), which the preflight and release-tools.yml jobs do not install; it runs in webstream-check.yml, which installs it on three systems.",
-      "run": false
-    },
-    {
       "name": "aria2cert.cjs",
       "reason": "Needs a real aria2c (the bundle's, fetched by desktop/fetch-aria2.mjs only in the build jobs, or one on the PATH) and openssl; it skips with a message without them. Run by hand after fetch-aria2."
     }
