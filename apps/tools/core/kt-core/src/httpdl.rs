@@ -221,6 +221,13 @@ pub fn same_version(before: &str, now: &str) -> bool {
     ae.is_empty() && be.is_empty() && !al.is_empty() && al == bl
 }
 
+/// The same date on both answers (KrDownloader.sameDate): the parts begun are kept when only the ETag changed.
+pub fn same_date(before: &str, now: &str) -> bool {
+    let (_, al) = version_parts(before);
+    let (_, bl) = version_parts(now);
+    !al.is_empty() && al == bl
+}
+
 /// Changed for sure: both dates there and different, and no common ETag (KrDownloader.changedVersion): begun afresh.
 pub fn changed_version(before: &str, now: &str) -> bool {
     let (ae, al) = version_parts(before);
@@ -491,7 +498,10 @@ impl Planner {
                 if changed_version(&prev.validator, &self.validator) {
                     return self.fresh_plan();
                 }
-                prev.partial.clear();
+                // (D4c: the same date on both — an ETag that changed alone, a CDN's —: the parts begun are kept.)
+                if !same_date(&prev.validator, &self.validator) {
+                    prev.partial.clear();
+                }
                 // matches(): a few done chunks (the first, the last, some between) compared with the server's.
                 let done: Vec<i64> = prev.done.iter().copied().collect();
                 if done.is_empty() {
@@ -1016,6 +1026,8 @@ mod d4_version_tests {
         assert!(changed_version("d1", "d2"));
         assert!(!changed_version("\"a\" @d1", "\"b\" @d1"));
         assert!(!changed_version("\"a\"", "\"b\""));
+        assert!(same_date("\"a\" @d1", "\"b\" @d1"));
+        assert!(!same_date("\"a\"", "\"b\""));
     }
 }
 
@@ -1212,6 +1224,11 @@ mod tests {
         assert_eq!(need, Need::Zero(vec![10000 - 4096]));
         assert_eq!(p.zero(&[false]), Need::Go);
         assert_eq!(p.rec.unwrap().partial_of(0), 0);
+        // An ETag that changed alone, the same date (a CDN's): its begun chunks kept (D4c).
+        let prev = rec_with(total, 1 << 20, &[], &[(0, 10000)], "\"e\" @d1");
+        let (mut p, _) = Planner::new(total, "\"g\" @d1", 8, Some(prev), total, true);
+        assert_eq!(p.zero(&[false]), Need::Go);
+        assert_eq!(p.rec.unwrap().partial_of(0), 10000);
         // The same ETag: its begun chunks kept; another date: begun afresh.
         let prev = rec_with(total, 1 << 20, &[], &[(0, 10000)], "\"e\" @d1");
         let (mut p, _) = Planner::new(total, "\"e\" @d2", 8, Some(prev.clone()), total, true);

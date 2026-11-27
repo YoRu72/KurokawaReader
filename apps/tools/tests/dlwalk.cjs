@@ -62,7 +62,7 @@ const NAMES = {
   dotdot: 'attachment; filename=".."', bidi: `attachment; filename*=UTF-8''${encodeURIComponent('\u202Egpj.exe')}`, nul: 'attachment; filename="nul.txt"',
 };
 function fileCase(q, r, k, u) {
-  const s = cs(k); s.reqs++; const probe = q.headers.range === 'bytes=0-0';
+  const s = cs(k); s.reqs++; const probe = q.headers.range === 'bytes=0-0'; if (s.marked) s.log.push(q.headers.range || '');
   const etag = (v) => ({ etag: `"${k}-v${v}"` });
   switch (k) {
     case 'nolen': return send(q, r, V1, { k, noRange: true, noLength: true });
@@ -90,7 +90,7 @@ function fileCase(q, r, k, u) {
 const server = http.createServer((q, r) => {
   const u = new URL(q.url, 'http://x');
   if (u.pathname === '/ctl') { const s = cs(u.searchParams.get('c')); const op = u.searchParams.get('op');
-    if (op === 'change') s.ver = 2; else if (op === 'expire') s.expired = true; else if (op === 'fast') s.slow = false; else if (op === 'offline') s.offline = true; else if (op === 'online') s.offline = false;
+    if (op === 'mark') { s.marked = true; s.log = []; } else if (op === 'change') s.ver = 2; else if (op === 'expire') s.expired = true; else if (op === 'fast') s.slow = false; else if (op === 'offline') s.offline = true; else if (op === 'online') s.offline = false;
     r.writeHead(200, { 'content-type': 'text/plain' }); r.end(String(s.inflight)); return; }
   if (u.pathname.startsWith('/f/')) { void fileCase(q, r, u.pathname.slice(3), u); return; }
   let p = decodeURIComponent(u.pathname); if (p === '/') p = '/index.html';
@@ -125,7 +125,23 @@ async function engine(port) {
   if (has('changed')) done('changed', V2, ' (file changed between pause and resume: the new one, whole)');
   if (has('changedmid')) done('changedmid', MID, ' (only the chunks\' middles changed, new date and ETag: never spliced)');
   if (has('changedpart')) done('changedpart', V2, ' (ETag changed, no date, only a part begun: never spliced)');
-  if (has('rotate')) { const r = g('rotate'); done('rotate', V1, ' (an ETag that changes every answer, the same date)'); ok('engine rotate: …resumed, not begun again', r.firstAt >= SIZE * 0.2, { firstAt: r.firstAt, pausedAt: r.pausedAt }); }
+  if (has('rotate')) {
+    // (The exact rule: after the pause each chunk goes on from what its record saved — a done chunk is not fetched again
+    // (only its 16 KB check windows are read), a begun one from its saved position, an untouched one from its start —
+    // and the bytes fetched again are under one 128 KB buffer per chunk.)
+    const r = g('rotate'); done('rotate', V1, ' (an ETag that changes every answer, the same date)');
+    const L = String(r.record || '').split('\n'); const chunk = Number(L[3]); const doneSet = new Set((L[4] || '').split(',').filter(Boolean).map(Number)); const part = new Map((L[5] || '').split(',').filter(Boolean).map((kv) => kv.split(':').map(Number)));
+    const n = chunk > 0 ? Math.ceil(SIZE / chunk) : 0; const savedAt = (i) => i * chunk + (doneSet.has(i) ? Math.min(chunk, SIZE - i * chunk) : part.get(i) || 0);
+    const reqs = (C.rotate?.log || []).map((h) => /bytes=(\d+)-(\d*)/.exec(h)).filter(Boolean).map((m) => ({ a: Number(m[1]), b: m[2] ? Number(m[2]) : SIZE - 1 })).filter((x) => !(x.a === 0 && x.b === 0));
+    const data = reqs.filter((x) => x.b - x.a + 1 !== 16384); const bad = []; let again = 0;
+    for (const x of data) { const i = Math.floor(x.a / chunk); const sv = savedAt(i); if (x.a < sv && x.a === i * chunk) bad.push({ chunk: i, asked: x.a, saved: sv }); else if (x.a < sv) bad.push({ chunk: i, asked: x.a, saved: sv }); again += Math.max(0, Math.min(x.b + 1, sv) - x.a); }
+    const firstAsk = new Map(); for (const x of data) { const i = Math.floor(x.a / chunk); if (!firstAsk.has(i)) firstAsk.set(i, x.a); }
+    const perChunk = [...Array(n).keys()].map((i) => `${i}: saved ${savedAt(i) - i * chunk}${doneSet.has(i) ? ' (done)' : ''} asked ${firstAsk.has(i) ? firstAsk.get(i) - i * chunk : '-'}`);
+    console.log(`   · rotate chunks (${chunk} B): ${perChunk.join(' | ')}`);
+    ok('engine rotate: every chunk asked again from its saved position (never earlier), none re-fetched whole', n > 0 && !bad.length && [...firstAsk].every(([i, a]) => a === savedAt(i) || (a > savedAt(i))), { bad, perChunk, record: r.record });
+    ok('engine rotate: bytes fetched again under one 128 KB buffer per chunk', again < n * 131072, { again, n });
+    ok('engine rotate: …resumed from all it had (the count it began from = the bytes saved)', r.firstAt >= [...Array(n).keys()].reduce((t, i) => t + savedAt(i) - i * chunk, 0), { firstAt: r.firstAt, pausedAt: r.pausedAt });
+  }
   if (has('expired')) { const r = g('expired'); ok('engine expired: the link refused after a pause → failed «HTTP 403»', r.expiredState === 'failed' && r.expiredError === 'HTTP 403', r); ok('engine expired: …the bytes and the record kept', r.partKept === SIZE && r.recordKept === true, r); done('expired', V1, ' with a new link'); ok('engine expired: the new link went on from the bytes kept', r.firstAt >= SIZE * 0.3, { firstAt: r.firstAt, pausedAt: r.pausedAt }); }
   if (has('r429')) { const r = g('r429'); done('r429', V1, ' (429 with Retry-After: 2 first)'); ok('engine r429: Retry-After heeded, its wait told (retryAt)', r.ms >= 1900 && r.retryWhy === 'HTTP 429' && r.retryWait > 1000, { ms: r.ms, why: r.retryWhy, wait: r.retryWait }); }
   if (has('r503')) { const r = g('r503'); done('r503', V1, ' (503 three times first)'); ok('engine r503: the waits told as «HTTP 503»', r.retryWhy === 'HTTP 503', r.retryWhy); }

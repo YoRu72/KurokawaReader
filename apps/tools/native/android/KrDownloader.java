@@ -287,6 +287,9 @@ final class KrDownloader {
         if (!a[0].isEmpty() && a[0].equals(b[0])) return true;
         return a[0].isEmpty() && b[0].isEmpty() && !a[1].isEmpty() && a[1].equals(b[1]);
     }
+    /** The same date on both answers (an ETag that changed alone — a CDN's nodes —): the parts begun are kept, the done
+     *  chunks still checked by their bytes (D4c: on a rotating ETag every begun part was fetched again from its start). */
+    static boolean sameDate(String before, String now) { String a = versionParts(before)[1], b = versionParts(now)[1]; return !a.isEmpty() && a.equals(b); }
     /** Changed for sure: both dates there and different (and no common ETag) — the file on the server is another one;
      *  what is here is not spliced with it. An ETag alone that changes may be a CDN's (checked by the bytes instead). */
     static boolean changedVersion(String before, String now) {
@@ -430,7 +433,7 @@ final class KrDownloader {
             // begun afresh. Not known — an ETag that changed alone, none at all —: the done chunks checked by their bytes, and
             // the parts begun dropped, since nothing checks them: before, a file changed on the server could be spliced.)
             if (sameVersion(prev.validator, validator)) { st0 = prev; resumed = true; }
-            else if (!changedVersion(prev.validator, validator)) { prev.partial.clear(); if (matches(res.finalUrl, opener, out, prev, Math.max(1, Math.min(4, maxConnections)), 12, mega(opt))) { st0 = prev; resumed = true; } }
+            else if (!changedVersion(prev.validator, validator)) { if (!sameDate(prev.validator, validator)) prev.partial.clear(); if (matches(res.finalUrl, opener, out, prev, Math.max(1, Math.min(4, maxConnections)), 12, mega(opt))) { st0 = prev; resumed = true; } }
         } else if (prev == null && out.exists() && out.length() > 0 && out.length() <= total) {
             // (No record kept — lost, or a download begun elsewhere under this name —: the chunks already here found
             // by their bytes, each checked against the server's before it is kept.)

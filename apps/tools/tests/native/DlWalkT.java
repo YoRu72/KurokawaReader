@@ -57,8 +57,11 @@ public class DlWalkT {
       case "norange": case "r200": case "changed": case "changedmid": case "changedpart": case "rotate": {
         AtomicBoolean cancel = new AtomicBoolean(); Run r1 = fetch("/f/" + c, out, st, c.equals("changedpart") ? 1 : 4, cancel, c.equals("changedpart") ? (g -> g >= SIZE / 5) : at40);   // (changedpart: stopped inside its first chunk, so only a part is begun)
         if (c.startsWith("changed")) ctl(c, "change");
+        // (The record as the pause left it — what each chunk had saved —, and the server told to log the ranges asked from here.)
+        String rec = null; try { rec = new String(java.nio.file.Files.readAllBytes(st.toPath()), "UTF-8"); } catch (IOException ignored) {}
+        ctl(c, "mark");
         Run r2 = fetch("/f/" + c, out, st, c.equals("changedpart") ? 1 : 4, new AtomicBoolean(), null);
-        print(c, r2, "\"pausedAt\":" + r1.got + ",\"pausedState\":" + q(r1.state)); break;
+        print(c, r2, "\"pausedAt\":" + r1.got + ",\"pausedState\":" + q(r1.state) + ",\"record\":" + q(rec)); break;
       }
       // (Paused, the link then refused — it ran out —: failed with the reason, the bytes kept; a new link goes on from them.)
       case "expired": {
