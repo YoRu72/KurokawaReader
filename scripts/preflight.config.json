@@ -27,7 +27,8 @@
       "filestauri.cjs": 480,
       "hunt.cjs": 480,
       "scene.cjs": 720,
-      "perfviews.cjs": 420
+      "perfviews.cjs": 420,
+      "gesturewalk.cjs": 1800
     },
     "budgets": {
       "perfstart.cjs": {
@@ -52,7 +53,8 @@
       "hunt.cjs": 300,
       "uihunt.cjs": 1800,
       "pdf2docxcorpus.cjs": 900,
-      "pdf2docxedit.cjs": 600
+      "pdf2docxedit.cjs": 600,
+      "pdf2docxcorpus3.cjs": 900
     },
     "budgets": {
       "perfbudget.cjs": {
