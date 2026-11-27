@@ -11,7 +11,9 @@ import { swipeable } from '../ui/swipe';
 import { claimTouch } from '../ui/touchOwner';
 import { pullToRefresh } from '../ui/gestures';
 import { h, icon, iconButton, toast, openSheet, pickSheet, onLongPress } from '../ui/dom';
-import { t, formatBytes, formatDate, formatDateShort, formatRowDate, localDigits, countFiles, countItems, countFolders } from '../i18n';
+import { t, formatBytes, formatDate, formatDateShort, formatRowDate, localDigits, countFiles, countItems, countFolders, countLabel, getLang } from '../i18n';
+/** A count of files standing alone: «العدد: 2» in Arabic, «2 files» elsewhere. */
+const countLabelFiles = (n: number): string => (getLang() === 'ar' ? countLabel(n) : countFiles(n));
 import { ktPlugin, listen, nativePlatform } from '../native';
 import { navigate, previousPath } from '../router';
 import { onBack as onBackStep } from '../ui/backstack';
@@ -245,8 +247,19 @@ const dayOf = (ms: number): string => { const d = new Date(ms); const now = new 
  *  address; embedded (two panes) it keeps quiet and tells the other pane through `peer`. */
 export type Pane = HTMLElement & { dispose?: () => void; pathNow: () => string; dropIn: (op: 'copy' | 'move', paths: string[]) => Promise<void>; reload: () => void; /** The view (list or grid) changed: button and rows redrawn in place. */ restyle: () => void; /** A computer's keyboard focus moved here from the other pane (F6, Tab). */ focusPc?: () => void };
 /** Another app's «pick a file» (views/pick.ts): the page as a picker — files of the kind asked chosen, folders walked. */
+/** (D5) Where a picker opens: the folder this asking app last picked from, else the last one any app did. */
+const PICK_BY = 'kt.files.pickLast.by', PICK_RECENT = 'kt.files.pickRecent';
+const readJson = <T,>(k: string, d: T): T => { try { const v = JSON.parse(localStorage.getItem(k) ?? 'null') as T | null; return v ?? d; } catch { return d; } };
+function pickStart(caller: string): string { const by = readJson<Record<string, string>>(PICK_BY, {}); if (caller && typeof by[caller] === 'string') return by[caller]; try { return localStorage.getItem('kt.files.pickLast') ?? ''; } catch { return ''; } }
+/** The folder a pick came from, kept: for this app, for any app, and among the last four picked from. */
+function notePick(caller: string, dir: string): void {
+  try { localStorage.setItem('kt.files.pickLast', dir); } catch { /* none */ }
+  if (caller) { const by = readJson<Record<string, string>>(PICK_BY, {}); delete by[caller]; by[caller] = dir; const keys = Object.keys(by); for (const k of keys.slice(0, Math.max(0, keys.length - 30))) delete by[k]; try { localStorage.setItem(PICK_BY, JSON.stringify(by)); } catch { /* none */ } }
+  const rec = [dir, ...readJson<string[]>(PICK_RECENT, []).filter((x) => typeof x === 'string' && x !== dir)].slice(0, 4); try { localStorage.setItem(PICK_RECENT, JSON.stringify(rec)); } catch { /* none */ }
+}
+const pickRecent = (): string[] => readJson<string[]>(PICK_RECENT, []).filter((x) => typeof x === 'string' && !!x).slice(0, 4);
 /** `done` may answer the paths that could not be handed over (nothing was): the screen says so and waits. */
-export type PickMode = { req: PickRequest; done: (paths: string[]) => void | Promise<string[] | void>; cancel: () => void };
+export type PickMode = { req: PickRequest; done: (paths: string[]) => void | Promise<string[] | { refused: string[]; why?: string } | void>; cancel: () => void };
 type PaneOpts = { embedded?: boolean; side?: 'a' | 'b'; peer?: () => Pane | null; pick?: PickMode; /** Opened by another app («Open with»): its folders walked inside the page; Back at `start` hands back to that app. */ handedIn?: { start: string; leave: () => void } };
 /** Two panes when the reader asked and the screen is wide enough, else one. */
 export function filesView(route: { p?: string; save?: string; c?: string }): HTMLElement {
@@ -265,7 +278,8 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   // (A picker, like a pane beside another, keeps the address as it is: its folders are walked inside the page.)
   const pk = po.pick; const quiet = !!po.embedded || !!pk || !!po.handedIn;
   // (Another app's picker: like the reference pickers, a list with each folder's count and date — its own view.)
-  if (pk) { if (!pageView) pageView = prefs.view; prefs.view = (() => { try { const v = localStorage.getItem('kt.files.pickView'); return v === 'grid' || v === 'gallery' ? v : 'list'; } catch { return 'list'; } })(); }
+  // (D5: a request for pictures or videos only — «attach a photo» — opens on the pictures themselves, until a view is chosen here.)
+  if (pk) { if (!pageView) pageView = prefs.view; const media = pk.req.mimes.length > 0 && pk.req.mimes.every((m) => /^(image|video)\//.test(m)); prefs.view = (() => { try { const v = localStorage.getItem('kt.files.pickView'); return v === 'grid' || v === 'gallery' || v === 'list' ? v : media ? 'gallery' : 'list'; } catch { return media ? 'gallery' : 'list'; } })(); }
   // (A computer's file manager — details list, navigation pane, address bar, status bar, keys — in views/filesPc.ts, loaded on the first folder shown there.)
   let pcm: typeof import('./filesPc') | null = null; let pcCtl: import('./filesPc').PcCtl | null = null;
   const body = h('div', { class: 'files-body' }); const sizeNote = h('p', { class: 'hint files-sizenote', hidden: true });
@@ -325,7 +339,7 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
   { let byTouch = false; let last: { el: Element | null; at: number } = { el: null, at: 0 };
     root.addEventListener('pointerdown', (e) => { byTouch = e.pointerType === 'touch'; }, true);
     root.addEventListener('click', (e) => { if (!byTouch) return; const b = (e.target as Element).closest?.('button, [role="button"]'); if (!b) return; const now = performance.now(); if (last.el === b && now - last.at < 450) { e.stopPropagation(); e.preventDefault(); return; } last = { el: b, at: now }; }, true); }
-  let at = mendScheme(route.p ?? (route.c ? '' : pk ? (() => { try { return localStorage.getItem('kt.files.pickLast') ?? ''; } catch { return ''; } })() || prefs.home || '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? ''))); let remotes: Conn[] = [];
+  let at = mendScheme(route.p ?? (route.c ? '' : pk ? pickStart(pk.req.caller) || prefs.home || '' : (prefs.rememberLast === false ? prefs.home ?? '' : (po.side === 'b' ? prefs.lastB : prefs.last) ?? prefs.home ?? ''))); let remotes: Conn[] = [];
   let vroots: VRoots = { shell: null, trees: [], shizuku: false };
   const remoteNow = (): Conn | null => (isRemote(at) ? remotes.find((c) => c.id === parseRemote(at).id) ?? null : null); void remoteNow; let collection: string | null = route.c ?? null; let entries: Entry[] = []; let query = ''; let selecting = false; const picked = new Set<string>(); let roots: Root[] = []; let allFiles = true; let gone = false;
   // (Pictures: asked for only as rows come near the screen, a few at a time — ui/thumbs.ts —; the phone's from its
@@ -787,25 +801,25 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
 
   // ---- the picker: what is chosen (kept while folders are walked), the bar with Cancel and Select
   const chosen = new Map<string, Entry>();
-  let showAll = false; const pickLastKey = 'kt.files.pickLast';
+  let showAll = false;
   const pickable = (e: Entry): boolean => !!pk && !e.dir && !isVirtual(e.path) && !isApps(e.path) && (showAll || mimeMatches(mimeOfName(e.name), pk.req.mimes));
   /** The answer: the folder it came from is kept (apart from ordinary browsing) for next time. */
   const finishPick = (paths: string[]) => {
     if (!pk || !paths.length) return; if (paths.some((x) => refused.has(x))) { drawPick(); return; }
-    const dir = paths[0].replace(/\/[^/]*$/, '') || '/'; try { localStorage.setItem(pickLastKey, dir); } catch { /* none */ }
-    void Promise.resolve(pk.done(pickResult(pk.req, paths))).then((r) => { if (gone || !Array.isArray(r) || !r.length) return; for (const x of r) refused.add(x); drawPick(); });
+    const dir = paths[0].replace(/\/[^/]*$/, '') || '/'; notePick(pk.req.caller, dir);
+    void Promise.resolve(pk.done(pickResult(pk.req, paths))).then((r) => { const list = Array.isArray(r) ? r : r && Array.isArray(r.refused) ? r.refused : []; if (gone || !list.length) return; refusedWhy = !Array.isArray(r) && r?.why === 'gone' ? 'gone' : 'nolink'; for (const x of list) refused.add(x); drawPick(); });
   };
   // (Files Android could not give the asking app a link to: said here — which, and why —, and nothing handed back
   // until they are taken out of the choice, or Cancel.)
-  const refused = new Set<string>(); const pickNote = h('p', { class: 'pick-refused', role: 'alert', hidden: true });
+  const refused = new Set<string>(); let refusedWhy: 'nolink' | 'gone' = 'nolink'; const pickNote = h('p', { class: 'pick-refused', role: 'alert', hidden: true });
   const pickCount = h('span', { class: 'pick-count' });
   const pickGo = h('button', { type: 'button', class: 'btn primary', onclick: () => { if (pk && chosen.size) finishPick([...chosen.keys()]); } }) as HTMLButtonElement;
   const drawPick = () => {
     if (!pk) return; const n = chosen.size; const one = n === 1 ? [...chosen.values()][0] : undefined;
-    pickCount.classList.toggle('has', n > 0); pickCount.textContent = !n ? t('pickNothingYet') : one ? one.name : countFiles(n);
+    pickCount.classList.toggle('has', n > 0); pickCount.textContent = !n ? t('pickNothingYet') : one ? one.name : countLabelFiles(n);
     const bad = [...chosen.values()].filter((e) => refused.has(e.path)); pickNote.hidden = !bad.length;
-    if (bad.length) pickNote.textContent = `${bad.length === 1 ? t('pickRefusedOne', { name: bad[0].name }) : t('pickRefusedMany', { n: localDigits(bad.length) })} ${pk.req.multiple ? t('pickRefusedFix') : t('pickRefusedFixOne')}`;
-    pickGo.replaceChildren(icon('check'), n ? t('pickAddN', { n: localDigits(n) }) : t('pickAdd')); pickGo.disabled = !n || bad.length > 0;
+    if (bad.length) pickNote.textContent = `${refusedWhy === 'gone' ? (bad.length === 1 ? t('pickGoneOne', { name: bad[0].name }) : t('pickGoneMany', { n: localDigits(bad.length) })) : bad.length === 1 ? t('pickRefusedOne', { name: bad[0].name }) : t('pickRefusedMany', { n: localDigits(bad.length) })} ${pk.req.multiple ? t('pickRefusedFix') : t('pickRefusedFixOne')}`;
+    pickGo.replaceChildren(icon('check'), n && getLang() !== 'ar' ? t('pickAddN', { n: localDigits(n) }) : t('pickAdd')); /* (Arabic: the count said once, «العدد: n» beside, never squeezed into the button) */ pickGo.disabled = !n || bad.length > 0;
   };
   const choose = (e: Entry) => {
     if (!pk) return;
@@ -1436,7 +1450,11 @@ export function filesPane(route: { p?: string; save?: string; c?: string }, po: 
     const kinds = kindsAsked(pk.req.mimes, { image: t('filesKindImages'), video: t('filesKindVideo'), audio: t('filesKindMusic'), text: t('filesKindDocs') });
     const sub = [pk.req.caller ? t('pickFor', { app: pk.req.caller }) : '', kinds.length ? t('pickKinds', { kinds: kinds.join(document.documentElement.lang === 'ar' ? '، ' : ', ') }) : ''].filter(Boolean).join(' · ');
     (crumbs.parentElement ?? crumbs).before(h('div', { class: 'pick-head' }, icon(pk.req.multiple ? 'copy' : 'file'), h('span', { class: 'grow' }, h('b', null, pk.req.multiple ? t('pickTitleMany') : t('pickTitle')), sub ? h('small', { dir: 'auto' }, sub) : null), ...(pk.req.mimes.length && !pk.req.mimes.includes('*/*') ? [h('label', { class: 'switch-row pick-all' }, h('span', null, t('pickShowAll')), h('input', { type: 'checkbox', onchange: (ev: Event) => { showAll = (ev.target as HTMLInputElement).checked; draw(); } }))] : [])));
-    root.append(pickNote, h('div', { class: 'pick-bar' + (pk.req.multiple ? '' : ' single'), role: 'toolbar' }, ...(pk.req.multiple ? [pickCount] : [h('span', { class: 'grow' })]), h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), ...(pk.req.multiple ? [pickGo] : [])));
+    // (D5: the folders picked from lately, a tap away.)
+    const rec = pickRecent();
+    if (rec.length) (crumbs.parentElement ?? crumbs).before(h('div', { class: 'pick-recent', role: 'group', 'aria-label': t('pickRecent') }, h('span', { class: 'label' }, t('pickRecent')), ...rec.map((d) => h('button', { type: 'button', class: 'chip', title: d, dir: 'auto', onclick: () => go(d) }, icon('folder'), h('bdi', null, d.split('/').pop() || d)))));
+    // (Cancel and Add of one width: the pair in a grid whose columns share the wider one's width.)
+    root.append(pickNote, h('div', { class: 'pick-bar' + (pk.req.multiple ? '' : ' single'), role: 'toolbar' }, ...(pk.req.multiple ? [pickCount] : [h('span', { class: 'grow' })]), h('span', { class: 'pick-acts' }, h('button', { type: 'button', class: 'btn text', onclick: () => pk.cancel() }, t('cancel')), ...(pk.req.multiple ? [pickGo] : []))));
     drawPick();
   }
   // ---- «Everywhere in my folders» (a computer's Tauri shell): its panel over the folder, loaded on first use

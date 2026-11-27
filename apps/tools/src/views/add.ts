@@ -2,7 +2,7 @@
 // name, the connections; for a torrent, its files picked once the metadata is here.
 import { nameDotExt } from '../ui/nameExt';
 import { h, icon, openSheet, toast } from '../ui/dom';
-import { t, formatBytes, countFiles, localDigits } from '../i18n';
+import { t, formatBytes, countFiles, localDigits, getLang } from '../i18n';
 import { getEngine, parseSources, isVideo, magnetName, isTorrentBytes } from '../engine';
 import type { Task, TaskSource, TorrentInfo } from '../engine/types';
 import { canArchive, pickFiles } from '../archives';
@@ -139,7 +139,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
   const video = videoPanel(() => { const page = !!video.picks(); sh.el.classList.toggle('as-video', page); if (goBtn) { const off = video.unread() && !post.picks() && sources().length === 1 && !!sh.el.querySelector('.video-failed'); goBtn.disabled = off; goBtn.title = off ? t('vPageNotSaved') : ''; } });
   // (A post's photos and videos read here at once — «auto-grab» —; then they are what «Download» adds.)
   let goBtn: HTMLButtonElement | null = null;
-  const post = postPanel(() => { const pp = post.picks(); sh.el.classList.toggle('as-post', !!pp); if (goBtn) goBtn.lastChild!.textContent = pp ? t('grabAddN', { n: countFiles(pp.length) }) : t('addStart'); },
+  const post = postPanel(() => { const pp = post.picks(); sh.el.classList.toggle('as-post', !!pp); if (goBtn) goBtn.lastChild!.textContent = pp ? t('grabAddN', { n: (getLang() === 'ar' ? localDigits : countFiles)(pp.length) }) : t('addStart'); },
     // (The post's video in its qualities: yt-dlp asked only now — the post reader already listed it.)
     () => { const u = sources()[0]?.url; if (!u) return; void post.read(null); video.check(u); });
   const zipBox = h('div', { class: 'add-files', hidden: true }); let zipFor = '';
@@ -235,7 +235,7 @@ export function addSheet(initial = '', how: { pickTorrent?: boolean; video?: boo
       if (!pp.length) { toast(t('postNonePicked'), 'error'); return; }
       go.disabled = true;
       const { addGrabbed } = await import('../downloads/prism'); const r = await addGrabbed(pp);
-      toast(t('grabAdded', { n: countFiles(r.n) })); if (r.noVideo) toast(t('grabNeedsVideo'), 'error', 6000); sh.close(); return;
+      toast(t('grabAdded', { n: (getLang() === 'ar' ? localDigits : countFiles)(r.n) })); if (r.noVideo) toast(t('grabNeedsVideo'), 'error', 6000); sh.close(); return;
     }
     if (!debridRow.hidden && viaDebrid.checked) {
       go.disabled = true;

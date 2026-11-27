@@ -3,7 +3,9 @@
 // from the end of the file with two small range requests); the clipboard monitor (a copied link offered for
 // download when the app comes to the front); and the scheduler (downloads marked «later» run in the hours set).
 import { h, icon, toast, openSheet } from '../ui/dom';
-import { t, formatBytes, countFiles, localDigits } from '../i18n';
+import { t, formatBytes, countFiles, localDigits, getLang } from '../i18n';
+/** A count of files inside a sentence: Arabic's strings say «العدد: n» themselves (the bare number), others «3 files». */
+const nFiles = (n: number): string => (getLang() === 'ar' ? localDigits(n) : countFiles(n));
 import { ktPlugin } from '../native';
 import { request } from '../http';
 import { getEngine, parseSources } from '../engine';
@@ -77,7 +79,7 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   const belowBox = h('input', { type: 'checkbox', checked: below, onchange: (e: Event) => { below = (e.target as HTMLInputElement).checked; } });
   const belowRow = h('label', { class: 'check-row small', hidden: depth === 0 }, belowBox, h('span', null, t('grabBelow')));
   const projRow = h('div', { class: 'chip-row wrap grab-projects' });
-  const chips = h('div', { class: 'chip-row wrap' }); const list = h('div', { class: 'grab-list' }); let links: Link[] = []; let kind = project?.kind ?? ''; const chosen = new Set<string>();
+  const chips = h('div', { class: 'chip-row wrap grab-kinds' }); const list = h('div', { class: 'grab-list' }); let links: Link[] = []; let kind = project?.kind ?? ''; const chosen = new Set<string>();
   const go = h('button', { type: 'button', class: 'btn primary', disabled: true }, icon('download'), t('grabAdd')) as HTMLButtonElement;
   const keep = h('button', { type: 'button', class: 'btn text', disabled: true, onclick: () => { const u = url.value.trim(); saveProjects([{ url: u, depth, below, kind, at: Date.now() }, ...grabProjects().filter((x) => x.url !== u)]); drawProjects(); toast(t('grabKept')); } }, icon('star'), t('grabKeep')) as HTMLButtonElement;
   const drawProjects = () => { const ps = grabProjects(); projRow.hidden = !ps.length; projRow.replaceChildren(h('span', { class: 'label' }, t('grabProjects')), ...ps.map((x) => h('span', { class: 'chip small proj' }, h('button', { type: 'button', class: 'proj-go', dir: 'ltr', title: x.url, onclick: () => { url.value = x.url; depth = x.depth; below = x.below; kind = x.kind; belowBox.checked = below; belowRow.hidden = depth === 0; for (const c of Array.from(depthPick.querySelectorAll('.chip'))) c.classList.toggle('on', (c as HTMLElement).dataset.d === String(depth)); void load(); } }, (() => { try { const u = new URL(x.url); return u.host + (u.pathname.length > 1 ? u.pathname.replace(/\/$/, '').slice(-24) : ''); } catch { return x.url; } })()), h('button', { type: 'button', class: 'proj-x', 'aria-label': t('remove'), onclick: () => { saveProjects(grabProjects().filter((p) => p.url !== x.url)); drawProjects(); } }, icon('close'))))); };
@@ -166,7 +168,7 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   const shown = () => (kind ? links.filter((x) => kindL(x) === kind) : links).filter((x) => !minBytes || (x.size ?? 0) >= minBytes);
   const host = (u: string) => { try { return new URL(u).host; } catch { return ''; } };
   const sync = () => {
-    go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: countFiles(chosen.size) });
+    go.disabled = !chosen.size; go.lastChild!.textContent = t('grabAddN', { n: nFiles(chosen.size) });
     const bar = list.querySelector<HTMLElement>('.grab-bar'); if (!bar) return; const xs = shown(); const picked = xs.filter((x) => chosen.has(x.href)).length; const [all, none] = bar.querySelectorAll('button');
     all.disabled = picked === xs.length; none.disabled = !picked; bar.querySelector('.grab-count')!.textContent = t('grabSelectedN', { n: localDigits(picked) });
   };
@@ -179,7 +181,7 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
         h('span', { class: 'grab-count' }, t('grabSelectedN', { n: localDigits(picked) }))),
       ...xs.slice(0, 600).map((x) => { const nm = x.name ?? safeDecode(((/[?&](?:f|filename|name|file)=([^&]+)/.exec(x.href)?.[1]) ?? x.href.split('?')[0].split('/').pop() ?? x.href).replace(/\+/g, ' ')); return h('label', { class: 'check-row file-row grab-row' }, h('input', { type: 'checkbox', checked: chosen.has(x.href), onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) chosen.add(x.href); else chosen.delete(x.href); sync(); } }),
         x.thumb ? h('img', { class: 'grab-thumb', src: x.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null,
-        h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, [nm !== x.text ? nm : '', host(x.href), x.size ? (x.est ? '~' : '') + formatBytes(x.size) : '', x.type && !/octet-stream/.test(x.type) ? x.type.replace(/^application\//, '') : '', x.status ? `HTTP ${x.status}` : ''].filter(Boolean).join(' · ')))); }));
+        h('span', { class: 'grow' }, h('span', { class: 'result-title', dir: 'auto' }, x.text && x.text.length < 120 && x.text !== x.href ? x.text : nm || x.href), h('small', { class: 'src', dir: 'ltr' }, ...((): (string | HTMLElement)[] => { /* (D5: the file's name isolated — a right-to-left name read in its own order inside this left-to-right line) */ const rest = [host(x.href), x.size ? (x.est ? '~' : '') + formatBytes(x.size) : '', x.type && !/octet-stream/.test(x.type) ? x.type.replace(/^application\//, '') : '', x.status ? `HTTP ${x.status}` : ''].filter(Boolean).join(' · '); return nm && nm !== x.text ? [h('bdi', null, nm), rest ? ` · ${rest}` : ''] : [rest]; })()))); }));
     sync();
   };
   const fromPage = (ls: Link[]) => {
@@ -195,7 +197,7 @@ export async function grabberSheet(start = '', project?: GrabProject, pre?: { li
   go.addEventListener('click', async () => {
     go.disabled = true;
     const { n, noVideo } = await addGrabbed([...chosen].map((href) => links.find((x) => x.href === href) ?? { href, text: '' }), pre ? hdrs : undefined);
-    toast(t('grabAdded', { n: countFiles(n) })); if (noVideo) toast(t('grabNeedsVideo'), 'error', 6000); sh.close();
+    toast(t('grabAdded', { n: nFiles(n) })); if (noVideo) toast(t('grabNeedsVideo'), 'error', 6000); sh.close();
   });
   if (pre) { if (pre.title) sh.body.prepend(h('p', { class: 'hint', dir: 'auto' }, pre.title)); fromPage(pre.links); }
   else if (start) void load();

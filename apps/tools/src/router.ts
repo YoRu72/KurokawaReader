@@ -19,7 +19,8 @@ export type Route =
   | { name: 'battery' }
   | { name: 'files'; p?: string; save?: string; c?: string; /** A stamp that only forces the page to be built anew (panes toggled). */ t?: string }
   | { name: 'install'; p: string }
-  | { name: 'pick' }
+  /** Another app's «pick a file»; `t` marks each request, so a second one rebuilds the picker. */
+  | { name: 'pick'; t?: string }
   /** Files, a file or a folder handed in by another app through one of Kurokawa's «Open with» entries (Android). */
   | { name: 'openWith'; kind: string; id: string; t?: string };
 
@@ -40,7 +41,7 @@ export function parseRoute(hash = location.hash): Route {
   const tvt = /^\/tv\/(movie|series)\/(tt\d+)/.exec(p); if (tvt) return { name: 'tvTitle', type: tvt[1] as 'movie', id: tvt[2], season: sp.get('s') ? Number(sp.get('s')) : undefined };
   if (p.startsWith('/screen')) return { name: 'screen' };
   if (p.startsWith('/battery')) return { name: 'battery' };
-  if (p.startsWith('/pick')) return { name: 'pick' };
+  if (p.startsWith('/pick')) return { name: 'pick', t: sp.get('t') ?? undefined };
   if (p.startsWith('/files')) return { name: 'files', p: sp.get('p') ?? undefined, save: sp.get('save') ?? undefined, c: sp.get('c') ?? undefined, t: sp.get('t') ?? undefined };
   // (An app opened with «Kurokawa Installer»: the app's installer for it.)
   if (p.startsWith('/install') && sp.get('p')) return { name: 'install', p: sp.get('p')! };

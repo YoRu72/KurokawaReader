@@ -17,6 +17,9 @@ function logic() {
   ok('a request of the wrong sort: nothing', L.parsePick('not json') === null && L.parsePick(null) === null && L.parsePick(42) === null);
   const d = L.parsePick({}); ok('a request with nothing in it: one file, any kind', d && d.multiple === false && d.mimes.length === 0 && d.caller === '');
   ok('a single «mimes» string taken as one kind', JSON.stringify(L.parsePick({ mimes: 'video/*' }).mimes) === '["video/*"]');
+  // (D5: a PICK that names only a media collection, or the collection's own type: that kind.)
+  ok('a PICK on content://media/…/images/media with no type: pictures', JSON.stringify(L.parsePick({ action: 'android.intent.action.PICK', mimes: [], data: 'content://media/external/images/media' }).mimes) === '["image/*"]' && JSON.stringify(L.parsePick({ mimes: [], data: 'content://media/external_primary/video/media' }).mimes) === '["video/*"]' && JSON.stringify(L.parsePick({ mimes: [], data: 'content://media/external/audio/media/' }).mimes) === '["audio/*"]');
+  ok('the collection\'s own type (vnd.android.cursor.dir/image) read as pictures; another app\'s data left alone', JSON.stringify(L.parsePick({ mimes: ['vnd.android.cursor.dir/image'] }).mimes) === '["image/*"]' && L.parsePick({ mimes: [], data: 'content://contacts/people' }).mimes.length === 0 && JSON.stringify(L.parsePick({ mimes: ['application/pdf'], data: 'content://media/external/images/media' }).mimes) === '["application/pdf"]');
   ok('kinds from names', L.mimeOfName('a.JPG') === 'image/jpeg' && L.mimeOfName('ep.mkv') === 'video/x-matroska' && L.mimeOfName('x.ass') === 'text/x-ssa' && L.mimeOfName('y.srt') === 'application/x-subrip' && L.mimeOfName('noext') === 'application/octet-stream');
   ok('no kind asked, or */*: everything', L.mimeMatches('application/zip', []) && L.mimeMatches('video/mp4', ['*/*']) && L.mimeMatches('x/y', ['application/octet-stream']));
   ok('image/*: pictures only', L.mimeMatches('image/png', ['image/*']) && !L.mimeMatches('video/mp4', ['image/*']));
@@ -44,7 +47,8 @@ async function page(browser, port, z, lang, multiple) {
   else ok(L('who asked and for what, in Arabic'), multiple ? /اختر ملفات/.test(head) : /اختر ملفًّا/.test(head) && /Telegram/.test(head), head);
   ok(L('the app\'s bottom bar and the + button gone'), !(await p.isVisible('.bottom-nav')) && !(await p.$('.files-view.picker .files-fab')));
   // (0.22.1: as the reference pickers — a list with each folder's count and date, × to close, the path, search, a view switch.)
-  ok(L('a list (whatever the Files page uses), × at the start in place of the drawer, the path, search and the view switch there'), await p.$eval('.files-view.picker .files-list', (e) => e.classList.contains('list')) && !!(await p.$('.files-view.picker .topbar .pick-close')) && !(await p.$('.files-view.picker .topbar [data-icon="menu"]')) && !!(await p.$('.files-view.picker .crumbs, .files-view.picker .files-strip')) && !!(await p.$('.files-view.picker .topbar [data-icon="search"]')) && (await p.$$('.files-view.picker .topbar-actions .icon-btn')).length >= 2);
+  // (D5: a request for pictures only opens on the pictures — the gallery —, any other a list, whatever the Files page uses.)
+  ok(L('a list (pictures asked: the gallery), × at the start in place of the drawer, the path, search and the view switch there'), await p.$eval('.files-view.picker .files-list', (e, m) => (m ? e.classList.contains('list') : e.classList.contains('gallery')), multiple) && !!(await p.$('.files-view.picker .topbar .pick-close')) && !(await p.$('.files-view.picker .topbar [data-icon="menu"]')) && !!(await p.$('.files-view.picker .crumbs, .files-view.picker .files-strip')) && !!(await p.$('.files-view.picker .topbar [data-icon="search"]')) && (await p.$$('.files-view.picker .topbar-actions .icon-btn')).length >= 2);
   const fmeta = await p.$$eval('.files-view.picker .files-row', (rs) => rs.filter((r) => !r.hasAttribute('aria-pressed')).map((r) => r.querySelector('small.src')?.textContent || ''));
   ok(L('a folder\'s line: its count and its date'), fmeta.length > 0 && fmeta.some((x) => x.includes(' · ') && /\d/.test(x)), fmeta.slice(0, 3));
   await p.click('.files-view.picker .topbar [data-icon="search"]'); await p.waitForSelector('.files-view.picker .files-search:not([hidden])');
@@ -80,10 +84,10 @@ async function page(browser, port, z, lang, multiple) {
     await row('Sub').click(); await p.waitForTimeout(500); await row('in.txt').click(); await p.waitForTimeout(200);
     await row('Deeper').click(); await p.waitForTimeout(500); await row('deep.txt').click(); await p.waitForTimeout(200);
     const bar = await p.evaluate(() => [document.querySelector('.pick-bar .pick-count').textContent, document.querySelector('.pick-bar .btn.primary').textContent]);
-    ok(L('two chosen in two folders: the count, «Add (2)»'), /2|٢|ملفان/.test(bar[0]) && /[2٢]/.test(bar[1]) && (lang === 'en' ? /Add/.test(bar[1]) : /إضافة/.test(bar[1])), bar);
+    ok(L('two chosen in two folders: the count, «Add (2)» (Arabic: «العدد: 2» beside «إضافة»)'), (lang === 'en' ? /2/.test(bar[0]) && /2/.test(bar[1]) && /Add/.test(bar[1]) : /العدد: 2/.test(bar[0]) && /إضافة/.test(bar[1])), bar);
     if (process.env.KT_SHOTS) await p.emulateMedia({ colorScheme: 'light' }); if (process.env.KT_SHOTS) await p.screenshot({ path: path.join(process.env.KT_SHOTS, lang === 'ar' ? 'F3-pick-multi-ar-light.png' : `picker-several-phone-${lang}.png`) });
     await p.evaluate(() => window.__back()); await p.waitForTimeout(500);
-    ok(L('Back: up a folder, still in the picker, the choice kept'), !!(await p.$('.files-view.picker')) && (await p.textContent('.files-title')) === 'Sub' && /2|٢|ملفان/.test(await p.textContent('.pick-bar .pick-count')));
+    ok(L('Back: up a folder, still in the picker, the choice kept'), !!(await p.$('.files-view.picker')) && (await p.textContent('.files-title')) === 'Sub' && /2/.test(await p.textContent('.pick-bar .pick-count')));
     if (lang === 'en') {
       await p.evaluate((k) => { window.__refuse = `${k}/Sub/Deeper/deep.txt`; }, K); await p.click('.pick-bar .btn.primary'); await p.waitForSelector('.pick-refused:not([hidden])', { timeout: 3000 }).catch(() => undefined);
       const note = await p.textContent('.pick-refused').catch(() => '');

@@ -50,7 +50,7 @@ for (const f of ['KtTorDirector.java', 'KtTorrentCore.java', 'KtTorrentRs.java',
 // (Stage M5 of the Rust port: the file jobs' planner and executor, the network storages' rules.)
 for (const f of ['KtFilePlan.java', 'KtFileExec.java', 'KtRemoteRules.java', /* (Tools 0.21 P5: the one name table, KtArchive's and the downloader's) */ 'KtNameSafe.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 // (Other apps' «pick a file»: the invisible activity that carries the answer back; the picker is the Files page.)
-for (const f of ['KtPickActivity.java', /* (others' «Open with» / «Share»: the same, for files handed in) */ 'KtOpenActivity.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
+for (const f of ['KtPickActivity.java', /* (others' «Open with» / «Share»: the same, for files handed in) */ 'KtOpenActivity.java', /* (D5: the browser's address rule) */ 'KtWebRules.java']) await fs.copyFile(path.join(root, 'native/android', f), path.join(pkgDir, f));
 
 // mpv's Java side (its native libraries come with the mpv pack): the class name its JNI code binds to.
 { const d = path.join(app, 'src/main/java/is/xyz/mpv'); await fs.mkdir(d, { recursive: true }); await fs.copyFile(path.join(root, 'native/android/mpv/MPVLib.java'), path.join(d, 'MPVLib.java')); }

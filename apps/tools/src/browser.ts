@@ -9,7 +9,24 @@ type Bridge = { browse?(o: { url: string }): Promise<unknown> };
 export const canBrowse = (): boolean => !!(window.kurokawaTools as unknown as Bridge | undefined)?.browse || nativePlatform() === 'android';
 const RECENT = 'kt.browser.recent';
 export const recentSites = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? '[]') as string[]; } catch { return []; } };
+/** What the browser goes to for what was typed — one rule, written the same in the phone's browser
+ *  (KtWebRules.addressOf) and the computer's bar (browser.rs INIT_JS addr): an address with its scheme as it is; a
+ *  local name or number (localhost, 192.168.1.5:8080) on plain http, as local servers are; a name with a dot in any
+ *  script, a port allowed (example.org:8443, مثال.مصر) on https; anything else — words, a space — a web search. */
+export function addressOf(text: string, search: string): { url: string; search: boolean } {
+  const t = text.trim(); if (!t) return { url: '', search: false };
+  if (/^(https?|magnet):/i.test(t)) return { url: t, search: false };
+  if (!/\s/.test(t)) {
+    const host = t.split(/[/?#]/)[0];
+    if (/^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:.]+\])(:\d{1,5})?$/i.test(host)) return { url: `http://${t}`, search: false };
+    const m = /^(?:[\p{L}\p{N}-]+\.)+([\p{L}\p{N}-]{2,})(?::\d{1,5})?$/u.exec(host); if (m && /\p{L}/u.test(m[1])) return { url: `https://${t}`, search: false };
+  }
+  return { url: search + encodeURIComponent(t), search: true };
+}
+/** (The same address asked for twice in a moment — a double tap —: opened once.) */
+let lastOpen = { url: '\u0000', at: 0 };
 export function openBrowser(url = ''): void {
+  if (lastOpen.url === url && Date.now() - lastOpen.at < 1200) return; lastOpen = { url, at: Date.now() };
   if (url) { try { localStorage.setItem(RECENT, JSON.stringify([url, ...recentSites().filter((x) => x !== url)].slice(0, 12))); } catch { /* full */ } }
   const d = window.kurokawaTools as unknown as Bridge | undefined;
   if (d?.browse) { void d.browse({ url }); return; }

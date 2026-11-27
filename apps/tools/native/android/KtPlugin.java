@@ -954,8 +954,11 @@ public class KtPlugin extends Plugin {
         final java.util.List<String> asked = new java.util.ArrayList<>();
         if (a != null) for (int i = 0; i < a.length(); i++) { String p = a.optString(i, ""); if (!p.isEmpty()) { files.add(fileOf(p)); asked.add(p); } }
         final KtPickActivity pick = KtPickActivity.current; final android.app.Activity me = getActivity();
-        if (pick == null) { call.reject("no request"); return; }
+        if (pick == null || pick.isFinishing()) { call.reject("no request"); return; }
         final String forId = call.getString("id", ""); if (forId != null && !forId.isEmpty() && !forId.equals(pick.id)) { call.resolve(); return; }
+        // (A chosen file that is no longer there — moved or deleted since the list was read —: said so, by name, nothing handed.)
+        { JSArray gone = new JSArray(); for (int i = 0; i < files.size(); i++) if (!files.get(i).isFile()) gone.put(asked.get(i));
+          if (gone.length() > 0) { JSObject r = new JSObject(); r.put("refused", gone); r.put("why", "gone"); call.resolve(r); return; } }
         pick.runOnUiThread(() -> {
             java.util.List<Integer> refused = null;
             try { refused = pick.answer(files.isEmpty() ? null : files); } catch (Throwable ignored) {}

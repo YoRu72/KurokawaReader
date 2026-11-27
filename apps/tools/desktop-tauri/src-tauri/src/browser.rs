@@ -98,16 +98,21 @@ try{Object.defineProperty(w,K,{value:api});}catch(e){w[K]=api;}return api;})"#;
 /// Every page, before the site's own scripts: new windows kept here (a magnet one goes to the app through the
 /// navigation handler), the bar, the title (with the browser's user agent) sent when it changes.
 const INIT_JS: &str = r#"(function(){if(window.top!==window)return;var S=__S__;var CMD=__CMD__;var C=__C__;
-try{window.open=function(u){try{if(u)location.assign(new URL(String(u),location.href).href);}catch(e){}return null;};}catch(e){}
+try{window.open=function(u){var ua=navigator.userActivation;if(ua&&!ua.isActive)return null;try{if(u)location.assign(new URL(String(u),location.href).href);}catch(e){}return null;};}catch(e){}
 function away(t){t=String(t||'').toLowerCase();return !!t&&t!=='_self'&&t!=='_top'&&t!=='_parent';}
 document.addEventListener('click',function(ev){var a=ev.target&&ev.target.closest?ev.target.closest('a[target]'):null;if(!a||!away(a.getAttribute('target'))||a.hasAttribute('download'))return;var to=a.href;if(!/^(https?|magnet):/i.test(to))return;ev.preventDefault();location.assign(to);},true);
 document.addEventListener('submit',function(ev){var f=ev.target;if(f&&away(f.getAttribute&&f.getAttribute('target')))f.setAttribute('target','_self');},true);
 function cmd(a){S.send('c'+Date.now().toString(36)+Math.floor(Math.random()*1e6).toString(36),{act:a,k:CMD},null,'c');}
-function addr(v){v=String(v||'').trim();if(!v)return null;if(/^(https?:\/\/|magnet:)/i.test(v))return v;if(/^[^\s/]+\.[^\s/]{2,}(\/.*)?$/.test(v)||/^localhost(:\d+)?(\/|$)/.test(v))return 'https://'+v;return 'https://duckduckgo.com/?q='+encodeURIComponent(v);}
-var CSS='form{display:flex;align-items:center;gap:2px;height:44px;padding:0 6px;box-sizing:border-box;border-radius:22px;background:#f3f1f6;color:#1c1b1f;box-shadow:0 2px 10px rgba(0,0,0,.28);font:14px system-ui,"Segoe UI",sans-serif;user-select:none}'
-+'button{all:unset;min-width:34px;height:34px;padding:0 6px;box-sizing:border-box;border-radius:17px;display:grid;place-items:center;cursor:pointer;font-size:16px;line-height:1}'
+function addr(v){v=String(v||'').trim();if(!v)return null;if(/^(https?|magnet):/i.test(v))return v;if(!/\s/.test(v)){var h=v.split(/[\/?#]/)[0];if(/^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:.]+\])(:\d{1,5})?$/i.test(h))return 'http://'+v;var m=/^(?:[\p{L}\p{N}-]+\.)+([\p{L}\p{N}-]{2,})(?::\d{1,5})?$/u.exec(h);if(m&&/\p{L}/u.test(m[1]))return 'https://'+v;}return 'https://duckduckgo.com/?q='+encodeURIComponent(v);}
+var FX=/\.(m3u8|mpd|mp4|mkv|webm|m4v|mov|mp3|m4a|flac|ogg|opus|aac|wav|zip|7z|rar|apk|pdf|epub|torrent)(\?|#|$)/i;
+function found(){var s={},n=0;function a(u){if(!u||/^(blob|data):/.test(u)||s[u])return;s[u]=1;n++;}
+document.querySelectorAll('video,audio').forEach(function(v){if(v.getAttribute('src'))a(v.src);v.querySelectorAll('source[src]').forEach(function(x){a(x.src);});});
+document.querySelectorAll('a[href]').forEach(function(x){if(FX.test(x.href))a(x.href);});
+try{performance.getEntriesByType('resource').forEach(function(r){if(/\.(m3u8|mpd)(\?|$)/i.test(r.name)||r.initiatorType==='video'||r.initiatorType==='audio')a(r.name.split('#')[0]);});}catch(e){}return n;}
+var CSS='form{display:flex;align-items:center;gap:2px;height:48px;padding:0 4px;box-sizing:border-box;border-radius:22px;background:#f3f1f6;color:#1c1b1f;box-shadow:0 2px 10px rgba(0,0,0,.28);font:14px system-ui,"Segoe UI",sans-serif;user-select:none}'
++'button{all:unset;min-width:40px;height:40px;padding:0 8px;box-sizing:border-box;border-radius:20px;display:grid;place-items:center;cursor:pointer;font-size:16px;line-height:1;white-space:nowrap}'
 +'button:hover{background:rgba(0,0,0,.08)}button:disabled{opacity:.35;cursor:default;background:none}'
-+'input{width:180px;height:32px;border-radius:16px;border:1px solid #c9c5d0;background:#fff;color:inherit;padding:0 12px;font:inherit;outline:none;direction:ltr;text-align:left;transition:width .15s}'
++'input{width:180px;height:36px;border-radius:18px;border:1px solid #c9c5d0;background:#fff;color:inherit;padding:0 12px;font:inherit;outline:none;direction:ltr;text-align:left;transition:width .15s}'
 +'input:focus{width:320px;border-color:#6750a4;box-shadow:0 0 0 1px #6750a4}'
 +'@media (prefers-color-scheme:dark){form{background:#1d1b20;color:#e6e1e5}button:hover{background:rgba(255,255,255,.1)}input{background:#2b2930;border-color:#49454f}}'
 +'@media (max-width:620px){input{width:100px}input:focus{width:180px}}';
@@ -118,11 +123,12 @@ var f=document.createElement('form');f.dir=C.rtl?'rtl':'ltr';r.appendChild(f);
 function btn(t,x,fn){var b=document.createElement('button');b.type='button';b.title=t||'';b.setAttribute('aria-label',t||'');b.textContent=x;b.onclick=fn;f.appendChild(b);return b;}
 var bk=btn(C.back,C.rtl?'→':'←',function(){history.back();});var fw=btn(C.forward,C.rtl?'←':'→',function(){history.forward();});btn(C.reload,'↻',function(){location.reload();});
 var a=document.createElement('input');a.spellcheck=false;a.autocomplete='off';a.placeholder=C.address||'';a.value=location.href;f.appendChild(a);
-btn(C.grab,'⤓',function(){cmd('grab');});btn(C.copy,'⧉',function(){cmd('copy');});btn(C.external,'↗',function(){cmd('external');});
+var gb=btn(C.grab,'⤓',function(){cmd('grab');});var gn=-1;btn(C.copy,'⧉',function(){cmd('copy');});btn(C.external,'↗',function(){cmd('external');});
 a.onfocus=function(){setTimeout(function(){a.select();},0);};f.onsubmit=function(e){e.preventDefault();var to=addr(a.value);if(to)location.assign(to);a.blur();};
-var nv=window.navigation;function upd(){if(document.activeElement!==host)a.value=location.href;if(nv&&'canGoBack' in nv){bk.disabled=!nv.canGoBack;fw.disabled=!nv.canGoForward;}}
+var nv=window.navigation;function upd(){if(document.activeElement!==host)a.value=location.href;if(nv&&'canGoBack' in nv){bk.disabled=!nv.canGoBack;fw.disabled=!nv.canGoForward;}
+var n=0;try{n=found();}catch(e){}if(n!==gn){gn=n;gb.textContent=n?'⤓ '+n:'⤓';gb.title=n?C.grab+' · '+n:C.grab;gb.setAttribute('aria-label',gb.title);}}
 root.appendChild(host);upd();setInterval(function(){if(!host.isConnected&&document.documentElement)document.documentElement.appendChild(host);upd();},1000);}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bar);else bar();
+(function early(){if(document.documentElement)bar();else setTimeout(early,100);})();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bar);
 document.addEventListener('keydown',function(e){var k=String(e.key||'').toLowerCase();
 if(e.altKey&&!e.ctrlKey&&!e.metaKey){if(e.key==='ArrowLeft'){e.preventDefault();history.back();}else if(e.key==='ArrowRight'){e.preventDefault();history.forward();}return;}
 if((e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey){if(k==='g'){e.preventDefault();cmd('grab');}else if(k==='l'){e.preventDefault();cmd('copy');}}

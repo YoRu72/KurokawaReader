@@ -45,6 +45,8 @@ public class KtPickActivity extends Activity {
             if (extra != null) for (String m : extra) if (m != null && !m.isEmpty()) mimes.put(m);
             if (mimes.length() == 0 && in != null && in.getType() != null) mimes.put(in.getType());
             r.put("mimes", mimes);
+            // (A PICK that names only a collection — content://media/external/images/media —: the page reads its kind from it.)
+            if (in != null && in.getDataString() != null) r.put("data", in.getDataString());
             String caller = getCallingPackage(); String label = "";
             if (caller != null) { try { PackageManager pm = getPackageManager(); label = String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(caller, 0))); } catch (Throwable ignored) { label = caller; } }
             r.put("caller", label);
@@ -73,6 +75,12 @@ public class KtPickActivity extends Activity {
         r.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         setResult(RESULT_OK, r); finish(); return refused;
     }
+    /** Brought to the front again without an answer — the asking app gone back to from the recent apps, the picker left
+     *  open behind —: this invisible activity would sit over that app and swallow its taps, so the request ends here,
+     *  «nothing chosen» (the page, if it answers later, is told the asking app no longer waits). */
+    private boolean launched = false;
+    @Override protected void onStop() { super.onStop(); launched = true; }
+    @Override protected void onRestart() { super.onRestart(); if (launched && !isFinishing()) { setResult(RESULT_CANCELED); finish(); } }
     /** Whether the app's documents provider is on (Settings → «In other apps' file pickers»). */
     private boolean providerOn() {
         try { return getPackageManager().getComponentEnabledSetting(new android.content.ComponentName(this, KtDocumentsProvider.class)) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED; } catch (Throwable e) { return true; }

@@ -231,6 +231,9 @@ else {
   onRoute(mount);
   mount(parseRoute());
   if (nativePlatform() === 'android') void import('./ui/restore').then((m) => m.afterRendererLoss(routeWas)).catch(() => undefined);
+  // (Another app's «pick a file» waiting when the page starts — the app opened cold by the request, the hand-over's own
+  // address lost —: the picker, once the hand-over has had its moment.)
+  if (nativePlatform() === 'android') window.setTimeout(() => void import('./native').then(async ({ ktPlugin }) => { const p = ktPlugin() as unknown as { pickRequest?(): Promise<{ request: string | null }> } | null; const r = p?.pickRequest ? await p.pickRequest().catch(() => null) : null; if (r?.request && parseRoute().name !== 'pick') navigate(`/pick?t=${Date.now()}`); }), 1200);
   // (The rest — heavy or periodic work nobody waits for — once the first screen is drawn.)
   afterFirstPaint(() => {
   animBg();

@@ -3,8 +3,8 @@
 // (refused: 204, the page stays; read as kurokawa_shell::browserlogic reads them; each acknowledged): the title sent
 // with the user agent; the bar there (closed shadow root, right-to-left when asked) and its keys (Ctrl+G → a command
 // carrying the bar's own token, Ctrl+L); the grab's answer in several pieces, whole, with main.cjs's shape; a command a
-// site forges with the wrong token is the only kind it can send and is told apart; window.open and target=_blank kept
-// in the same window. Plain node + Playwright.
+// site forges with the wrong token is the only kind it can send and is told apart; window.open (by a click only)
+// and target=_blank kept in the same window. Plain node + Playwright.
 'use strict';
 const { chromium } = require('playwright'); const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path'); const assert = require('node:assert/strict');
 const SRC = path.join(__dirname, '..', 'desktop-tauri', 'src-tauri', 'src');
@@ -27,13 +27,14 @@ const links = Array.from({ length: 120 }, (_, i) => `<a href="/files/f${i}.mkv">
 const site = http.createServer((req, res) => {
   const page = (title, body) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`); };
   if (req.url === '/') return page('KT site', `<h1>KT site</h1><video src="/v/movie.mp4"></video><a id="pop" href="/popup" target="_blank">pop</a> ${links}`);
-  if (req.url === '/popup') return page('KT popup', '<p>popup</p>');
+  if (req.url === '/popup') return page('KT popup', '<p>popup</p><button id="op" style="position:fixed;top:0;left:0;width:160px;height:48px" onclick="window.open(\'/opened\',\'_blank\')">open</button><script>setTimeout(function(){window.open(\'/ad\')},200)</script>');
   if (req.url === '/opened') return page('KT opened', '<p>opened</p>');
   res.writeHead(404); res.end();
 }).listen(0, async () => {
   const base = `http://127.0.0.1:${site.address().port}`;
   at('launch'); const br = await chromium.launch(); const ctx = await br.newContext({ viewport: { width: 900, height: 700 } }); const p = await ctx.newPage();
   const errors = []; p.on('pageerror', (e) => errors.push(e.message));
+  const cdp = await ctx.newCDPSession(p); const ackCdp = (js) => cdp.send('Runtime.evaluate', { expression: js, userGesture: false }).catch(() => undefined);
   await p.addInitScript(init);
   // (browser.rs's on_nav: parse_reply, Assembly, handle, the ack.)
   const parts = {}; const got = []; const pending = new Set();
@@ -48,7 +49,8 @@ const site = http.createServer((req, res) => {
       const a = (parts[rid] = parts[rid] || { n: total, got: {} }); a.got[part] = b64u(u.search.slice(1));
       if (Object.keys(a.got).length === a.n) { delete parts[rid]; const head = JSON.parse(a.got[0].toString('utf8')); const body = Buffer.concat(Array.from({ length: a.n - 1 }, (_, i) => a.got[i + 1])); got.push({ rid, head, body, n: a.n }); if (rid[0] === 'g') pending.delete(rid); }
     }
-    await p.evaluate(([k, id]) => { const a = window[k]; if (a) a.ack(id); }, [K, `${rid}/${part}`]).catch(() => undefined);
+    // (Acknowledged as browser.rs does — an eval that is no gesture: Playwright's evaluate would count as one, and let a page's own pop-up through.)
+    await ackCdp(`(function(){var a=window[${JSON.stringify(K)}];if(a)a.ack(${JSON.stringify(`${rid}/${part}`)});})()`);
   });
   const until = async (f, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await new Promise((r) => setTimeout(r, 50)); } throw new Error('timed out at: ' + step); };
   const onUrl = (u) => until(() => p.url() === u);
@@ -81,7 +83,11 @@ const site = http.createServer((req, res) => {
   assert.equal(got.some((m) => m.rid === 'g9'), false, 'an unasked grab taken');
   // (New windows kept in this one.)
   at('target=_blank'); /* (Not page.click: on GitHub it waits for a lane request — a navigation answered 204 — «to finish», for 30 s.) */ await p.evaluate(() => document.querySelector('#pop').click()); await onUrl(base + '/popup'); assert.equal(ctx.pages().length, 1, 'target=_blank opened a window');
-  at('window.open'); await p.evaluate(() => window.open('/opened', '_blank')); await onUrl(base + '/opened'); assert.equal(ctx.pages().length, 1, 'window.open opened a window');
+  // (A window the page opens by itself — no click — is not followed: a pop-up's way to take the window; one a click opens is, here.)
+  // (Nothing evaluated on that page first: Playwright's evaluate counts as a gesture.)
+  // (Opened afresh by the test, not by the click above: a gesture's activation follows its same-site navigation.)
+  at('window.open without a click'); { const n0 = got.length; await p.goto(base + '/popup', { waitUntil: 'commit' }); await until(() => got.slice(n0).find((m) => m.rid[0] === 't' && m.head.title === 'KT popup')); } await new Promise((r) => setTimeout(r, 600)); assert.equal(p.url(), base + '/popup', 'a window.open without a click took the window');
+  at('window.open by a click'); await p.mouse.click(80, 24); await onUrl(base + '/opened'); assert.equal(ctx.pages().length, 1, 'window.open opened a window');
   await until(() => got.find((m) => m.rid[0] === 't' && m.head.title === 'KT opened'));
   at('load finished'); await p.waitForFunction(() => document.readyState === 'complete', null, { timeout: 15000 });
   assert.deepEqual(errors, []);

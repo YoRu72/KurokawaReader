@@ -79,7 +79,9 @@ public class KtBrowserActivity extends Activity {
             if (secs <= 0) return 0; if (bw <= 0) bw = 2_500_000; return (long) (secs * bw / 8);
         } catch (Exception e) { return 0; }
     }
-    private WebView wv; private EditText bar; private ProgressBar prog;
+    private WebView wv; private EditText bar; private ProgressBar prog; private Button grabBtn;
+    /** (D5) The media this page loaded so far, on the Grab button: «Grab · 3». */
+    private void grabCount(int n) { if (grabBtn == null) return; boolean ar = ar(this); grabBtn.setText((ar ? "التقاط" : "Grab") + (n > 0 ? " · " + n : "")); grabBtn.setContentDescription((ar ? "التقاط الروابط، الوسائط المرصودة: " : "Grab links, media seen: ") + n); }
     /** The DoH chip on the bar: grey off, amber while a name is being asked, green once the resolver answered (and
      *  this page's site came through it), red when the last ask failed. Tapped: the status and the last events. */
     private Button doh; private static volatile KtBrowserActivity shown; private String pageHost = "";
@@ -229,7 +231,7 @@ public class KtBrowserActivity extends Activity {
         LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); bl.setMarginStart(dp(2)); bl.setMarginEnd(dp(2)); top.addView(bar, bl);
         top.addView(btn("↻", v -> wv.reload()));
         doh = btn("DoH", v -> dohDialog()); doh.setTextSize(12); doh.setTypeface(Typeface.DEFAULT_BOLD); top.addView(doh); paintDoh();
-        Button grab = btn(ar ? "التقِط" : "Grab", v -> grab()); grab.setTypeface(Typeface.DEFAULT_BOLD); grab.setBackground(pill(cTonal(), 20)); grab.setTextColor(cOnSurface()); grab.setPadding(dp(14), 0, dp(14), 0); top.addView(grab, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)));
+        Button grab = grabBtn = btn(ar ? "التقاط" : "Grab", v -> grab()); grab.setTypeface(Typeface.DEFAULT_BOLD); grab.setBackground(pill(cTonal(), 20)); grab.setTextColor(cOnSurface()); grab.setPadding(dp(14), 0, dp(14), 0); top.addView(grab, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)));
         top.addView(btn("⋮", v -> menu()));
         root.addView(top, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         prog = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); prog.setMax(100); prog.setIndeterminate(false);
@@ -249,6 +251,12 @@ public class KtBrowserActivity extends Activity {
             private View full; private CustomViewCallback fullCb;
             @Override public void onShowCustomView(View view, CustomViewCallback cb) { if (full != null) { cb.onCustomViewHidden(); return; } full = view; fullCb = cb; ((android.view.ViewGroup) getWindow().getDecorView()).addView(full, new android.view.ViewGroup.LayoutParams(-1, -1)); getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY); setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR); }
             @Override public void onHideCustomView() { if (full == null) return; ((android.view.ViewGroup) getWindow().getDecorView()).removeView(full); full = null; getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE); setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED); if (fullCb != null) fullCb.onCustomViewHidden(); fullCb = null; }
+            // (D5: a page's file input — «Upload», «Attach» — opens the phone's own picker; nothing chosen answers none.)
+            @Override public boolean onShowFileChooser(WebView v, android.webkit.ValueCallback<android.net.Uri[]> cb, FileChooserParams params) {
+                if (upload != null) upload.onReceiveValue(null); upload = cb;
+                try { Intent pick = params.createIntent(); if (params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true); startActivityForResult(pick, UPLOAD); return true; }
+                catch (Exception e) { upload = null; say(ar(KtBrowserActivity.this) ? "تعذّر فتح منتقي الملفات" : "The file picker could not be opened"); return false; }
+            }
             @Override public void onProgressChanged(WebView v, int p) { prog.setProgress(p); prog.setVisibility(p >= 100 ? View.INVISIBLE : View.VISIBLE);
             // (A page that never finishes loading — ads, trackers —: recorded, and its step replayed, once it is mostly there.)
             if (p >= 40) v.evaluateJavascript(TRAIL_JS, null); if (p >= 80 && replay != null) v.evaluateJavascript(replayJs(replay, replayAt), null); } });
@@ -264,7 +272,7 @@ public class KtBrowserActivity extends Activity {
                 // (Ads and trackers, and the pop-under scripts that come with download sites: answered with nothing.)
                 if (adBlock && !r.isForMainFrame() && isAd(r.getUrl().getHost(), u)) { blocked++; return new WebResourceResponse("text/plain", "utf-8", 204, "No Content", java.util.Collections.emptyMap(), new java.io.ByteArrayInputStream(new byte[0])); }
                 String kind = mediaKind(u, r.getRequestHeaders());
-                if (kind != null) { boolean fresh; synchronized (media) { fresh = media.size() < 400 && !media.containsKey(u); if (fresh) media.put(u, kind); } if (fresh) probe(u, r.getRequestHeaders()); }
+                if (kind != null) { boolean fresh; int n; synchronized (media) { fresh = media.size() < 400 && !media.containsKey(u); if (fresh) media.put(u, kind); n = media.size(); } if (fresh) { probe(u, r.getRequestHeaders()); h.post(() -> grabCount(n)); } }
                 return super.shouldInterceptRequest(v, r);
             }
             // (A page the network's own way could not reach — reset, timed out, the handshake refused, the name unknown —
@@ -285,6 +293,9 @@ public class KtBrowserActivity extends Activity {
                 String host = null; try { host = android.net.Uri.parse(error.getUrl()).getHost(); } catch (Exception ignored) {}
                 if (KrDoh.browserOn() && host != null && !KrDoh.isForcedBrowser(host)) { handler.cancel(); KrDoh.forceBrowser(host); paintDoh(); say(ar(KtBrowserActivity.this) ? "شهادة غير شهادة الموقع — يُعاد عبر DoH" : "Not the site's certificate — retrying through DoH"); final String back = error.getUrl(); h.postDelayed(() -> { if (wv != null) wv.loadUrl(back); }, 300); return; }
                 handler.cancel();
+                // (D5: said, not a blank page: the certificate is not the site's — the page is not opened.)
+                final boolean arb = ar(KtBrowserActivity.this); final String where = host == null ? "" : android.text.Html.escapeHtml(host);
+                h.post(() -> { if (wv != null) wv.loadDataWithBaseURL(null, "<!doctype html><meta name=viewport content='width=device-width'><body dir='" + (arb ? "rtl" : "ltr") + "' style='font:16px/1.5 sans-serif;padding:24px;color:" + (dark() ? "#e6e0e9;background:#141218" : "#1d1b20;background:#fef7ff") + "'><h2>" + (arb ? "شهادة غير موثوقة" : "Not a trusted certificate") + "</h2><p>" + (arb ? "لم يُفتح «⁨" + where + "⁩»: شهادته ليست شهادة الموقع، فقد يكون في الطريق من يقرأ ما يُرسَل أو يغيّره." : "«⁨" + where + "⁩» was not opened: its certificate is not the site's, so someone on the way could read or change what is sent.") + "</p></body>", "text/html", "utf-8", null); });
             }
             @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) { if (!bar.hasFocus()) bar.setText(u); try { pageHost = android.net.Uri.parse(u).getHost(); if (pageHost == null) pageHost = ""; } catch (Exception e) { pageHost = ""; } paintDoh(); }
             // (Taps recorded as soon as the page shows, not only once it has finished loading: a page still loading its ads
@@ -302,7 +313,8 @@ public class KtBrowserActivity extends Activity {
 
     private void go(String text) {
         String t = text == null ? "" : text.trim(); if (t.isEmpty()) return;
-        String u = t.matches("(?i)^(https?|magnet):.*") ? t : t.matches("^[\\w.-]+\\.[a-z]{2,}(/.*)?$") ? "https://" + t : "https://duckduckgo.com/?q=" + android.net.Uri.encode(t);
+        // (One rule with the page's and the computer's: KtWebRules.)
+        String u = KtWebRules.addressOf(t, "https://duckduckgo.com/?q=");
         if (u.startsWith("magnet:")) { hand(u, null, null); return; }
         synchronized (trail) { trail.clear(); } startUrl = u;
         bar.clearFocus(); try { ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(bar.getWindowToken(), 0); } catch (Exception ignored) {}
@@ -402,6 +414,18 @@ public class KtBrowserActivity extends Activity {
                 case 8: go("https://duckduckgo.com/"); break;
             }
         }).show();
+    }
+    private static final int UPLOAD = 4811; private android.webkit.ValueCallback<android.net.Uri[]> upload;
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        if (req != UPLOAD) { super.onActivityResult(req, res, data); return; }
+        android.webkit.ValueCallback<android.net.Uri[]> cb = upload; upload = null; if (cb == null) return;
+        android.net.Uri[] got = res == RESULT_OK && data != null && data.getClipData() != null ? clipUris(res, data) : WebChromeClient.FileChooserParams.parseResult(res, data);
+        cb.onReceiveValue(got);
+    }
+    /** Several files chosen (ClipData): their links, for a page's «multiple» input. */
+    private static android.net.Uri[] clipUris(int res, Intent data) {
+        if (res != RESULT_OK || data == null || data.getClipData() == null) return null;
+        android.content.ClipData c = data.getClipData(); android.net.Uri[] us = new android.net.Uri[c.getItemCount()]; for (int i = 0; i < us.length; i++) us[i] = c.getItemAt(i).getUri(); return us;
     }
     @Override protected void onResume() { super.onResume(); shown = this; paintDoh(); }
     @Override protected void onPause() { super.onPause(); if (shown == this) shown = null; }

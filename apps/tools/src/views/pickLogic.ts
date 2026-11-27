@@ -3,6 +3,13 @@
 // the kinds of file wanted (MIME types, «image/*»…), the asking app's name. A file's kind is told from its name.
 export type PickRequest = { id: string; action: string; multiple: boolean; mimes: string[]; caller: string };
 
+/** The kind a PICK means when it names a media collection instead of a type (content://media/…/images/media, or the
+ *  collection's own type «vnd.android.cursor.dir/image»): «image/*», «video/*», «audio/*»; '' for anything else. */
+export function kindOfCollection(s: string): string {
+  const m = /^vnd\.android\.cursor\.(?:dir|item)\/(image|video|audio)$/.exec(s) ?? /^content:\/\/media\/[^/]+\/(images|video|audio)\/media(?:\/|$|\?)/.exec(s);
+  return m ? `${m[1].replace(/s$/, '')}/*` : '';
+}
+
 /** The request read once: any field missing or of the wrong sort falls back to «one file, any kind». */
 export function parsePick(raw: unknown): PickRequest | null {
   let o: unknown = raw;
@@ -10,7 +17,9 @@ export function parsePick(raw: unknown): PickRequest | null {
   if (!o || typeof o !== 'object') return null;
   const r = o as Record<string, unknown>;
   const mimes = (Array.isArray(r.mimes) ? r.mimes : typeof r.mimes === 'string' ? [r.mimes] : [])
-    .filter((m): m is string => typeof m === 'string').map((m) => m.trim().toLowerCase()).filter((m) => /^[a-z0-9.+*-]+\/[a-z0-9.+*-]+$/.test(m));
+    .filter((m): m is string => typeof m === 'string').map((m) => m.trim().toLowerCase()).map((m) => kindOfCollection(m) || m).filter((m) => /^[a-z0-9.+*-]+\/[a-z0-9.+*-]+$/.test(m));
+  // (A PICK that names only a collection — the pictures, the videos —: that kind.)
+  if (!mimes.length && typeof r.data === 'string' && kindOfCollection(r.data.trim())) mimes.push(kindOfCollection(r.data.trim()));
   return { id: typeof r.id === 'string' ? r.id : '', action: typeof r.action === 'string' ? r.action : '', multiple: r.multiple === true, mimes: [...new Set(mimes)], caller: typeof r.caller === 'string' ? r.caller.trim() : '' };
 }
 

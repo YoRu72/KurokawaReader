@@ -56,9 +56,19 @@ function table() {
     const ov = fs.readFileSync(path.join(A, 'overlay.mjs'), 'utf8'); const m = /if \(!fp\.includes\('kt_vol'\)\) fp = fp\.replace\('<\/paths>', '(.*?)\\n<\/paths>'\);/.exec(ov);
     ok('FileProvider paths: the other volumes (<root-path … path="storage/">), added even where the older paths are', !!m && /<root-path name="kt_vol" path="storage\/" \/>/.test(m[1]), m && m[1]);
     const pick = fs.readFileSync(path.join(A, 'KtPickActivity.java'), 'utf8');
-    ok('the picker grants read only, and never drops a file it cannot link', pick.includes('FLAG_GRANT_READ_URI_PERMISSION') && !pick.includes('FLAG_GRANT_WRITE_URI_PERMISSION') && /if \(!refused\.isEmpty\(\)\) return refused;/.test(pick)); }
+    ok('the picker grants read only, and never drops a file it cannot link', pick.includes('FLAG_GRANT_READ_URI_PERMISSION') && !pick.includes('FLAG_GRANT_WRITE_URI_PERMISSION') && /if \(!refused\.isEmpty\(\)\) return refused;/.test(pick));
+    // (D5, the hand-over read line by line: each rule relied on, held here.)
+    ok('D5 MainActivity: kurokawatools://pick → #/pick?t=<now> (each request its own mark, so a second one rebuilds the picker)', /"pick"\.equals\(d\.getHost\(\)\)[^\n]*#\/pick\?t="\s*\+\s*System\.currentTimeMillis\(\)/.test(main));
+    ok('D5 MainActivity: the app\'s own links (files, pick, open, screen) are read before the player\'s and the generic links', main.indexOf('"pick".equals(d.getHost())') > 0 && main.indexOf('"pick".equals(d.getHost())') < main.indexOf('if (isMedia(intent, d))') && main.indexOf('"files".equals(d.getHost())') < main.indexOf('if (isMedia(intent, d))'));
+    const router = fs.readFileSync(path.join(ROOT, 'src', 'router.ts'), 'utf8');
+    ok('D5 router: #/pick keeps its mark ?t=', /if \(p\.startsWith\('\/pick'\)\) return \{ name: 'pick', t: sp\.get\('t'\)/.test(router));
+    const mainTs = fs.readFileSync(path.join(ROOT, 'src', 'main.ts'), 'utf8');
+    ok('D5 main.ts: a request waiting when the page starts (a cold start\'s hand-over lost) opens the picker', /pickRequest\(\)[\s\S]{0,160}navigate\(`\/pick\?t=/.test(mainTs));
+    ok('D5 KtPlugin.pickDone: an answer to a request that is gone or finishing is refused («no request»: the page says so), a file no longer there is named (why «gone»), an answer for another request changes nothing', /if \(pick == null \|\| pick\.isFinishing\(\)\) \{ call\.reject\("no request"\)/.test(plugin) && /r\.put\("why", "gone"\)/.test(plugin) && /!forId\.equals\(pick\.id\)\) \{ call\.resolve\(\); return; \}/.test(plugin));
+    ok('D5 KtPickActivity: a PICK\'s collection carried («data»), brought back unanswered → cancelled', /r\.put\("data", in\.getDataString\(\)\)/.test(pick) && /protected void onRestart\(\)[^\n]*setResult\(RESULT_CANCELED\); finish\(\);/.test(pick)); }
   let javac = false; try { execFileSync('javac', ['-version'], { stdio: 'ignore' }); javac = true; } catch { /* none */ }
   if (javac) { try { const out = execFileSync('sh', [path.join(__dirname, 'native', 'openwith.sh')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); ok('KtOpenActivity compiles against the stubs and maps its aliases', /all passed/.test(out), out); } catch (e) { ok('KtOpenActivity compiles against the stubs', false, String(e.stdout || e.message)); } }
+  if (javac) { try { const out = execFileSync('sh', [path.join(__dirname, 'native', 'pickact.sh')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); ok('KtPickActivity compiles against the stubs: a collection carried, a second request cancels the first, brought back unanswered cancels, a refused file kept', /all passed/.test(out), out); } catch (e) { ok('KtPickActivity compiles against the stubs', false, String(e.stdout || e.message)); } }
   else console.log('skip KtOpenActivity javac check (no javac)');
   return L;
 }

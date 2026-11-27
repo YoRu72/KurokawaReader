@@ -290,6 +290,8 @@
     "playerwalk.cjs": 311,
     "streamwalk.cjs": 806,
     "dlwalk.cjs": 93,
+    "browsewalk.cjs": 87,
+    "pickwalk.cjs": 161,
     "playertr.cjs": 1,
     "prism.cjs": 3,
     "relink.cjs ar": 5,
