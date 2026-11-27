@@ -139,7 +139,7 @@ export async function watchWith(o: { title: string; have?: () => Promise<Task | 
         const same = best.hash ? (await eng.list().catch(() => [] as Task[])).find((x) => x.kind === 'torrent' && (x.source.magnet ?? '').toLowerCase().includes(best.hash.toLowerCase())) : undefined;
         if (my !== gen) return;
         if (same) task = same; else {
-          task = await eng.add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: true, files: !best.url && best.fileIdx !== undefined ? [best.fileIdx] : undefined, meta: o.meta(best) });
+          task = await eng.add({ source: best.url ? { url: best.url } : { magnet: magnetOf(best) }, name: best.url ? best.title : undefined, sequential: true, files: !best.url && best.fileIdx !== undefined ? [best.fileIdx] : undefined, meta: { ...o.meta(best), streamMade: true } as Task['meta'] });
           madeHere = true; K.markMade(task.id);
           if (my !== gen) { taskId = task.id; await leave(); return; }
         }

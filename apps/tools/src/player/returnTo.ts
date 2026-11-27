@@ -19,6 +19,8 @@ const write = (f: From | null) => { try { if (f) localStorage.setItem(FROM_KEY, 
 export function notePlayerOpen(meta?: { anilistId?: number; episode?: number }): void {
   write({ hash: location.hash || '#/', at: Date.now(), scroll: scroller()?.scrollTop ?? 0, anilistId: meta?.anilistId, episode: meta?.episode, paths: routerInternals.stack.slice(-12), tabs: tabTrail.map((s) => [s, tabPath.get(s) ?? '']) });
 }
+/** The record dropped: the video went to another app, or never opened (the app started again must not go back to a page for it). */
+export function forgetPlayerOpen(): void { write(null); }
 /** The player still open: the record kept fresh (called as it plays). */
 export function touchPlayerOpen(): void { const f = read(); if (f) { f.at = Date.now(); write(f); } }
 /** The player closed (its Back, the end, a swipe): back to where it was opened from, scrolled as it was; a watched

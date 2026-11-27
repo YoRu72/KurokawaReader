@@ -61,7 +61,7 @@ const FIXTURE = (lang, port, size, pc) => {
     setFiles: async () => ({}), resume: async () => ({}), siblings: async () => ({ paths: [] }), orientation: async () => ({}), pip: async () => ({ ok: true }), pipAuto: async () => ({}),
     httpRequest: async (o) => window.__http(o),
   };
-  window.__seed = (n) => { const t = { id: 'seed', kind: 'torrent', name: 'Seeded show 01', source: { magnet: 'magnet:?xt=urn:btih:' + '1'.repeat(40) }, dir: '/sdcard/Download', state: 'downloading', done: Math.floor(size / 3), total: size, downSpeed: 1e6, upSpeed: 0, peers: 5, files: [{ index: 0, path: 'Seeded show 01/clip.webm', size, done: Math.floor(size / 3), priority: 2 }], addedAt: Date.now() - 1e4, meta: {} }; E.tasks = [...E.tasks, t]; E.bytes.seed = t.done; void n; };
+  window.__seed = (n) => { const o = n || {}; const dn = o.done ?? Math.floor(size / 3); const t = { id: 'seed', kind: 'torrent', name: 'Seeded show 01', source: { magnet: 'magnet:?xt=urn:btih:' + '1'.repeat(40) }, dir: '/sdcard/Download', state: o.state || 'downloading', done: dn, total: size, downSpeed: o.state ? 0 : 1e6, upSpeed: 0, peers: 5, files: [{ index: 0, path: 'Seeded show 01/clip.webm', size, done: dn, priority: 2 }], addedAt: Date.now() - 1e4, meta: {} }; E.tasks = [...E.tasks, t]; E.bytes.seed = t.done; };
   const plugin = new Proxy(api, { get: (t, k) => (k in t ? t[k] : k === 'then' ? undefined : async () => ({})) });
   window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { KurokawaTools: plugin }, PluginHeaders: [] };
   try {
@@ -226,6 +226,21 @@ const COMBOS = (process.env.ENTER_SIZES || '360,412,1280').split(',').map(Number
       T('a stream that cannot start: the sheet (Try again / Back), no «Another stream» without a chooser', await until(() => !!document.querySelector('.kt-problem'), null, 6000) && (await p.$$('.kt-problem .ext-error-actions .btn')).length === 2);
       await (await p.$$('.kt-problem .ext-error-actions .btn'))[1].click();
       T('…Back leaves, the page as it was', (await until(() => !document.querySelector('.kt-start') && !document.querySelector('.kt-problem'), null, 4000)) && (await hashNow()) === '#/task/seed');
+      // ===== 7. a download that was there before is never the stream's: cancelled, failed or left, it stays with its data =====
+      for (const [label, o, stale] of [['a queued download with no bytes', { state: 'queued', done: 0 }, false], ['a paused, partly downloaded one', { state: 'paused', done: 400000 }, false], ['one an old stream list still names (no marker on it)', { state: 'downloading', done: 0 }, true]]) {
+        await p.evaluate(() => document.querySelectorAll('.sheet, .scrim, .sheet-scrim').forEach((e) => e.remove())); await resetEngine();
+        await p.goto('about:blank'); await p.goto(`${base}#/`); await p.waitForSelector('.downloads-view', { timeout: 10000 });
+        await p.evaluate(([oo, st]) => { window.__seed(oo); if (st) localStorage.setItem('kt.stream.made', JSON.stringify(['seed'])); window.__eng.metaMs = 5000; location.hash = '#/task/seed'; }, [o, stale]); await p.waitForSelector('.task-detail-actions', { timeout: 10000 });
+        const kept = await p.evaluate(() => ({ done: window.__eng.tasks[0].done }));
+        await p.getByRole('button', { name: /Play while downloading|تشغيل في أثناء التنزيل/ }).first().click(); await p.waitForSelector('.kt-start, .kt-player', { timeout: 4000 }); await p.waitForTimeout(400);
+        await p.click('.kt-start .kt-start-actions .btn, .kt-player .kt-top button'); await p.waitForTimeout(1000);
+        T(`[7] ${label}: streamed, then cancelled: the card is still there, nothing removed, its data kept`, await p.evaluate((d) => window.__eng.tasks.some((x) => x.id === 'seed') && window.__eng.removed.length === 0 && 'seed' in window.__eng.bytes && window.__eng.tasks[0].done === d, kept.done) && !(await p.$('.kt-keep')), await p.evaluate(() => ({ r: window.__eng.removed, t: window.__eng.tasks.length })));
+      }
+      // a stream-made download carries its marker from the moment it was made, and a restart before its first data leaves it to be asked about, not removed
+      await p.evaluate(() => document.querySelectorAll('.sheet, .scrim, .sheet-scrim').forEach((e) => e.remove())); await resetEngine();
+      await open(true); await p.evaluate(() => { window.__eng.metaMs = 5000; }); await watchNow(); await until(() => window.__eng.adds === 1, null, 6000);
+      T('[7] a download the stream made: marked on the task itself at creation, and in the list of ids', await p.evaluate(() => window.__eng.tasks[0].meta && window.__eng.tasks[0].meta.streamMade === true && JSON.parse(localStorage.getItem('kt.stream.made') || '[]').includes('t1')));
+      T('[7] …a restart before its first data: the marker survives (the id list is kept; the app removes nothing on starting)', await (async () => { await p.goto('about:blank'); await p.goto(`${base}#/`); await p.waitForSelector('.downloads-view', { timeout: 10000 }); await p.waitForTimeout(800); return p.evaluate(() => JSON.parse(localStorage.getItem('kt.stream.made') || '[]').includes('t1')); })());
       T('no page error', errs.length === 0, errs);
     } catch (e) { ok(`[${tag}] the walk ended by itself: ${String(e.message || e).split('\n')[0]}`, false); await shot(`ST2-fail-${W}.png`); }
     await ctx.close();

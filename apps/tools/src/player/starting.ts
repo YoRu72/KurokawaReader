@@ -23,7 +23,7 @@ export interface Start {
 }
 export function openStart(o: { title: string; meta?: { anilistId?: number; episode?: number }; onCancel: () => void; /** The page's sheet put back when the start is left (the chooser the stream was picked in). */ after?: () => void }): Start {
   notePlayerOpen(o.meta);
-  let gone = false; let cancelled = false; let failed = false; let sheetClose: (() => void) | null = null;
+  let gone = false; let handed = false; let cancelled = false; let failed = false; let sheetClose: (() => void) | null = null;
   const line = h('div', { class: 'kt-wait kt-start-line', role: 'status', 'aria-live': 'polite' }, t('streamStarting'));
   const bar = h('div', { class: 'kt-start-bar', hidden: true }, h('i'));
   const root = h('div', { class: 'player-view kt-player kt-start', role: 'dialog', 'aria-label': o.title },
@@ -35,7 +35,7 @@ export function openStart(o: { title: string; meta?: { anilistId?: number; episo
   function end() { if (gone) return; gone = true; sheetClose?.(); sheetClose = null; unBack(); root.remove(); }
   function cancel() { if (gone) return; cancelled = true; end(); o.onCancel(); playerClosed({ watched: false, meta: o.meta, at: location.hash }); o.after?.(); }
   return {
-    get cancelled() { return cancelled || gone; },
+    get cancelled() { return cancelled || (gone && !handed); },
     status(text, pct) { if (gone) return; line.textContent = text; if (pct !== undefined && isFinite(pct)) { bar.hidden = false; (bar.firstChild as HTMLElement).style.width = `${Math.max(3, Math.min(100, Math.round(pct)))}%`; } },
     fail(why, a) {
       if (gone || sheetClose) return; failed = true; root.querySelector('.kt-centre')?.classList.remove('busy');
@@ -46,7 +46,7 @@ export function openStart(o: { title: string; meta?: { anilistId?: number; episo
         act(t('streamBack'), 'back', 'tonal', () => cancel()),
         ...(a.another ? [act(t('streamAnother'), 'list', 'tonal', () => { cancelled = true; end(); o.onCancel(); playerClosed({ watched: false, meta: o.meta, at: location.hash }); a.another!(); })] : [])));
     },
-    handover() { if (!failed) end(); },
+    handover() { if (!failed) { handed = true; end(); } },
     close() { end(); },
   };
 }

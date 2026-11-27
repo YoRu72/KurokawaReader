@@ -8,6 +8,7 @@ import { openExternal, ktPlugin, nativePlatform, openFolder } from '../native';
 import { getSettings, updateSettings } from '../settings';
 import { getEngine, isVideo } from '../engine';
 import type { Task } from '../engine/types';
+import { forgetPlayerOpen } from '../player/returnTo';
 
 type PlayOpts = { task?: Task; fileIndex?: number; localPath?: string; playlist?: { url: string; name: string; localPath?: string; task?: Task; fileIndex?: number }[]; meta?: Task['meta']; subtitles?: { url: string; name: string; lang?: string; isDefault?: boolean }[]; headers?: Record<string, string>; startAt?: number; forCaller?: boolean;
   /** An online source as the site gives it (its headers, HLS or not): another app gets it through the relay; the app's own player gets `inAppUrl()` (the proxy the web view needs). */ origin?: { url: string; headers: Record<string, string>; hls?: boolean }; inAppUrl?: () => Promise<string>;
@@ -36,8 +37,8 @@ async function openPlayerNow(url: string, name: string, opts: PlayOpts): Promise
     const key = opts.localPath ?? srcUrl.replace(/^http:\/\/127\.0\.0\.1:\d+/, 'stream:');
     const service = serviceOf({ taskKind: opts.task?.kind, localPath: opts.localPath, headers, online: !!opts.origin });
     const handled = await ext.playExternally({ src: ext.sourceFor({ url: srcUrl, name, localPath: opts.localPath, headers, hls: opts.origin?.hls, subtitles: opts.subtitles, startAt: opts.startAt, key }), service, key, task: opts.task, fileIndex: opts.fileIndex, meta: opts.meta, fallback: () => void inApp(url, name, opts) });
-    if (handled) return;
-    if (await external(url, name, opts.localPath)) return;
+    if (handled) { forgetPlayerOpen(); return; }
+    if (await external(url, name, opts.localPath)) { forgetPlayerOpen(); return; }
   }
   await inApp(url, name, opts);
 }
