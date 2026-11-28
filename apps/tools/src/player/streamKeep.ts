@@ -34,7 +34,8 @@ async function ask(): Promise<void> {
     const ids = [...sitting]; sitting.clear();
     // (Made by a stream before the app was closed and never settled — it carries the marker still: asked about now, with no data or some, never removed unasked.)
     const older = readMade().filter((id) => !thisRun.has(id) && !ids.includes(id));
-    let all: Task[] = []; try { all = await getEngine().list(); } catch { /* none */ }
+    // (The list not to be had: nothing is decided and no marker lost; the question comes at the next leaving.)
+    let all: Task[]; try { all = await getEngine().list(); } catch { for (const id of ids) sitting.add(id); return; }
     const orphans = older.map((id) => all.find((x) => x.id === id)).filter((x): x is Task => !!x && isMade(x.id, x));
     for (const id of older) if (!orphans.some((x) => x.id === id)) unmark(id);
     const mine = ids.map((id) => all.find((x) => x.id === id)).filter((x): x is Task => !!x && isMade(x.id, x));
@@ -44,8 +45,10 @@ async function ask(): Promise<void> {
     for (const id of ids) if (!mine.some((x) => x.id === id)) unmark(id);
     if (!tasks.length) return;
     const mode = getSettings().streamKeep ?? 'ask';
-    if (mode === 'keep') { for (const x of tasks) unmark(x.id); return; }
-    if (mode === 'delete') { await drop(tasks.map((x) => x.id)); toast(t('keepDeleted')); return; }
+    // (One left over from before a restart is never settled by a remembered choice: it is asked about, whatever the choice.)
+    const own = tasks.filter((x) => !orphans.includes(x));
+    if (mode === 'keep') { for (const x of own) unmark(x.id); if (!orphans.length) return; await sheet(orphans); return; }
+    if (mode === 'delete') { if (own.length) { await drop(own.map((x) => x.id)); toast(t('keepDeleted')); } if (orphans.length) await sheet(orphans); return; }
     await sheet(tasks);
   } finally { asking = false; }
 }

@@ -117,7 +117,8 @@ export async function watchWith(o: { title: string; have?: () => Promise<Task | 
   async function leave() {
     if (!taskId || !madeHere) return; const id = taskId;
     const x = (await getEngine().list().catch(() => [] as Task[])).find((y) => y.id === id);
-    if (x && (x.done ?? 0) <= 0) { try { await getEngine().remove(id, true); } catch { /* gone */ } K.unmark(id); } else K.unmark(id);
+    // (Only a task this very action created — it carries the marker from its creation — ever goes; a download the user already had is never touched.)
+    if (x && (x.meta as { streamMade?: boolean } | undefined)?.streamMade === true && (x.done ?? 0) <= 0) { try { await getEngine().remove(id, true); } catch { /* gone */ } K.unmark(id); } else K.unmark(id);
   }
   const fail = (why: string, retry = true) => { start.fail(why, { retry: retry ? () => void run() : undefined, another: o.choose }); };
   async function run(): Promise<void> {

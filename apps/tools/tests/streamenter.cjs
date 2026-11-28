@@ -240,9 +240,17 @@ const COMBOS = (process.env.ENTER_SIZES || '360,412,1280').split(',').map(Number
       await p.evaluate(() => document.querySelectorAll('.sheet, .scrim, .sheet-scrim').forEach((e) => e.remove())); await resetEngine();
       await open(true); await p.evaluate(() => { window.__eng.metaMs = 5000; }); await watchNow(); await until(() => window.__eng.adds === 1, null, 6000);
       T('[7] a download the stream made: marked on the task itself at creation, and in the list of ids', await p.evaluate(() => window.__eng.tasks[0].meta && window.__eng.tasks[0].meta.streamMade === true && JSON.parse(localStorage.getItem('kt.stream.made') || '[]').includes('t1')));
-      T('[7] …a restart before its first data: the marker survives (the id list is kept; the app removes nothing on starting)', await (async () => { await p.goto('about:blank'); await p.goto(`${base}#/`); await p.waitForSelector('.downloads-view', { timeout: 10000 }); await p.waitForTimeout(800); return p.evaluate(() => JSON.parse(localStorage.getItem('kt.stream.made') || '[]').includes('t1')); })());
+      T('[7] …a restart before its first data: the marker survives (the id list is kept; the app removes nothing on starting)', await (async () => { await p.goto('about:blank'); await p.goto(`${base}#/`); await p.waitForFunction(() => document.body.innerText.length > 80, null, { timeout: 10000 }); await p.waitForTimeout(800); return p.evaluate(() => JSON.parse(localStorage.getItem('kt.stream.made') || '[]').includes('t1') && !document.querySelector('.kt-keep') && window.__eng.removed.length === 0); })());
+      // a download the user already had never shows in the question, even when an old list of stream ids names it: only the stream's own episode is asked about
+      await p.evaluate(() => document.querySelectorAll('.sheet, .scrim, .sheet-scrim, .toast').forEach((e) => e.remove())); await resetEngine(); await open(true);
+      await p.evaluate(() => { window.__seed({ state: 'paused', done: 400000 }); localStorage.setItem('kt.stream.made', JSON.stringify(['seed'])); });
+      await watchNow(); await until(() => !!document.querySelector('.kt-player:not(.kt-start) video'), null, 15000); await until(() => window.__eng.tasks.some((x) => x.id !== 'seed' && x.done > 0), null, 8000);
+      await p.click(leaveBtn); await p.waitForSelector('.kt-keep', { timeout: 8000 });
+      T('[7] the question names only the stream\'s own episode, never the download that was already there', await p.evaluate(() => { const k = document.querySelector('.kt-keep'); return !k.querySelector('.kt-keep-list') && !/Seeded show 01/.test(k.textContent); }));
+      await (await p.$$('.kt-keep .kt-keep-actions .btn'))[1].click(); await p.waitForTimeout(1000);
+      T('[7] …Delete from cache removes that episode only: the earlier download keeps its card and its data', await p.evaluate(() => window.__eng.tasks.length === 1 && window.__eng.tasks[0].id === 'seed' && window.__eng.removed.length === 1 && window.__eng.removed[0].id !== 'seed' && 'seed' in window.__eng.bytes));
       T('no page error', errs.length === 0, errs);
-    } catch (e) { ok(`[${tag}] the walk ended by itself: ${String(e.message || e).split('\n')[0]}`, false); await shot(`ST2-fail-${W}.png`); }
+    } catch (e) { ok(`[${tag}] the walk ended by itself: ${String(e.message || e).split('\n')[0]}`, false); if (process.env.ENTER_STACK) console.log(String(e.stack).split("\n").filter((l) => /streamenter/.test(l)).join("\n"), await p.evaluate(() => `${location.hash} | ${document.body.className} | ${document.body.innerText.slice(0, 200).replace(/\s+/g, " ")} | ${[...document.querySelectorAll(".sheet,.kt-start,.kt-player")].map((x) => x.className).join(",")}`).catch((x) => String(x))); await shot(`ST2-fail-${W}.png`); }
     await ctx.close();
   }
   await br.close(); web.close(); web.closeAllConnections?.();
